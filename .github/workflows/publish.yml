@@ -3,47 +3,22 @@ name: Publish Kolla images
 on:
   workflow_dispatch:
     inputs:
-      release:
-        description: OpenStack release to plan
+      stream:
+        description: Exact build stream ID from config/build-matrix.json
         required: true
-        type: choice
-        default: "2025.1"
-        options:
-          - "2025.1"
-      distro:
-        description: Base distribution
-        required: true
-        type: choice
-        default: rocky
-        options:
-          - rocky
-          - ubuntu
-      distro_version:
-        description: Base distribution version
-        required: true
-        type: choice
-        default: "9"
-        options:
-          - "9"
-          - "24.04"
+        type: string
       profile:
-        description: Image profile
+        description: Image profile to publish
         required: true
-        type: choice
+        type: string
         default: core
-        options:
-          - core
-          - deployment
       image:
         description: Image to publish, or all for a full profile
         required: true
-        type: choice
+        type: string
         default: keystone
-        options:
-          - keystone
-          - all
       dry_run:
-        description: Print the publish plan without building or pushing
+        description: Render the frozen publish plan without registry mutation
         required: true
         type: boolean
         default: true
@@ -54,570 +29,1127 @@ on:
         default: ""
 
 concurrency:
-  group: kolla-publish-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+  group: kolla-publish-${{ inputs.stream }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
-env:
-  DOCKER_BUILDKIT: "1"
-  KOLLA_VERSION: "20.4.0"
-
 jobs:
   publish-plan:
-    name: Render publish plan
+    name: Render frozen publish plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    outputs:
-      parent_matrix: ${{ steps.build-matrix.outputs.parent_matrix }}
-      build_matrix: ${{ steps.build-matrix.outputs.build_matrix }}
 
     steps:
+      - name: Require repository-owned invocation
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REPOSITORY" != "supergate-hub/kolla-container-images" ]; then
+            echo "This publish workflow only accepts repository-owned dispatches." >&2
+            exit 1
+          fi
+
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Validate repository configuration
         run: python3 scripts/validate-config.py
 
-      - name: Render publish plan
+      - name: Render frozen publish plan
+        env:
+          STREAM: ${{ inputs.stream }}
+          PROFILE: ${{ inputs.profile }}
+          IMAGE: ${{ inputs.image }}
+          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          mkdir -p artifacts/logs artifacts/manifests artifacts/plan
+          set -euo pipefail
+          mkdir -p artifacts/plan
           plan_args=(
-            --profile '${{ inputs.profile }}'
-            --release '${{ inputs.release }}'
-            --distro '${{ inputs.distro }}'
-            --distro-version '${{ inputs.distro_version }}'
+            --stream "$STREAM"
+            --profile "$PROFILE"
+            --candidate-id "$CANDIDATE_ID"
             --dry-run
           )
-          if [ '${{ inputs.image }}' != 'all' ]; then
-            plan_args+=(--image '${{ inputs.image }}')
+          if [ "$IMAGE" != "all" ]; then
+            plan_args+=(--image "$IMAGE")
           fi
-          python3 scripts/plan-publish.py "${plan_args[@]}" | tee artifacts/plan/publish-plan.json
+          python3 scripts/plan-publish.py "${plan_args[@]}" > artifacts/plan/publish-plan.json
 
-      - name: Render parent and service build matrices
-        id: build-matrix
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
+      - name: Upload publish plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/plan/publish-plan.json
+          if-no-files-found: error
 
-          plan = json.loads(pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8"))
-          def runner_for(arch):
-              return "ubuntu-24.04-arm" if arch == "arm64" else "ubuntu-24.04"
+  authorize-publish:
+    name: Authorize frozen publish plan
+    if: ${{ !inputs.dry_run }}
+    needs: publish-plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ghcr-publish
+    permissions:
+      contents: read
 
-          parent_matrix = {
-              "include": [
-                  {
-                      "arch": arch["arch"],
-                      "runner": runner_for(arch["arch"]),
-                  }
-                  for arch in plan["build"]["parents"]["architectures"]
-              ]
-          }
-          build_matrix = {
-              "include": [
-                  {
-                      "group": group["name"],
-                      "arch": arch["arch"],
-                      "runner": runner_for(arch["arch"]),
-                  }
-                  for group in plan["build"]["groups"]
-                  for arch in group["architectures"]
-              ]
-          }
-          with pathlib.Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-              output.write(f"parent_matrix={json.dumps(parent_matrix, sort_keys=True)}\n")
-              output.write(f"build_matrix={json.dumps(build_matrix, sort_keys=True)}\n")
-          PY
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download publish plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/plan
 
       - name: Validate publish approval
-        if: ${{ !inputs.dry_run }}
         env:
           ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
           ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
           ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
           APPROVAL: ${{ inputs.approval }}
-        run: |
-          python3 scripts/validate-publish-approval.py \
-            --profile '${{ inputs.profile }}' \
-            --image '${{ inputs.image }}' \
-            --release '${{ inputs.release }}' \
-            --distro '${{ inputs.distro }}' \
-            --distro-version '${{ inputs.distro_version }}'
+          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          python3 scripts/validate-publish-approval.py
+          --publish-plan artifacts/plan/publish-plan.json
+          --expected-candidate-id "$CANDIDATE_ID"
 
-      - name: Upload dry-run publish artifacts
-        if: ${{ inputs.dry_run }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: kolla-publish-${{ inputs.image }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts/
-          if-no-files-found: error
-
-      - name: Upload publish plan artifact
-        if: ${{ !inputs.dry_run }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts/plan/
-          if-no-files-found: error
-
-  build-parents:
-    name: Build shared parents ${{ matrix.arch }}
+  build-native:
+    name: Build native ${{ matrix.arch }} images
     if: ${{ !inputs.dry_run }}
-    needs: publish-plan
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    needs: authorize-publish
+    runs-on: [self-hosted, linux, "${{ matrix.runner_arch }}", "kolla-${{ 'build' }}"]
+    timeout-minutes: 240
     permissions:
-      actions: read
+      contents: read
       packages: write
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix: ${{ fromJson(needs.publish-plan.outputs.parent_matrix) }}
+      matrix:
+        include:
+          - arch: amd64
+            runner_arch: x64
+            runner_machine: x86_64
+          - arch: arm64
+            runner_arch: ARM64
+            runner_machine: aarch64
 
     steps:
-      - name: Download publish plan
-        uses: actions/download-artifact@v8
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          persist-credentials: false
+
+      - name: Download publish plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/plan
 
-      - name: Set up Docker Buildx builder
-        uses: docker/setup-buildx-action@v4
+      - name: Revalidate publish approval
+        env:
+          ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
+          ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
+          ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
+          APPROVAL: ${{ inputs.approval }}
+          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          python3 scripts/validate-publish-approval.py
+          --publish-plan artifacts/plan/publish-plan.json
+          --expected-candidate-id "$CANDIDATE_ID"
 
-      - name: Install Kolla tooling
+      - name: Check native runner architecture
+        env:
+          EXPECTED_RUNNER_MACHINE: ${{ matrix.runner_machine }}
         run: |
+          python3 - <<'PY'
+          import os
+          import platform
+
+          expected = os.environ["EXPECTED_RUNNER_MACHINE"]
+          actual = platform.machine()
+          if actual != expected:
+              raise SystemExit(
+                  f"native runner architecture must be {expected}, got {actual}"
+              )
+          print(f"Native runner architecture verified: {actual}")
+          PY
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: config/build-matrix.json
+
+      - name: Install the frozen Kolla and Docker SDK versions in a virtual environment
+        run: |
+          set -euo pipefail
+          KOLLA_VERSION="$(
+            python3 - <<'PY'
+          import json
+          import pathlib
+
+          plan = json.loads(
+              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
+          )
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          streams = [entry for entry in matrix["streams"] if entry["id"] == plan["stream"]]
+          if len(streams) != 1:
+              raise SystemExit("frozen plan stream must resolve exactly once")
+          stream = streams[0]
+          if plan["kolla_version"] != stream["kolla_version"]:
+              raise SystemExit("frozen plan Kolla pin does not match the stream matrix pin")
+          print(plan["kolla_version"])
+          PY
+          )"
+          if [ -z "$KOLLA_VERSION" ]; then
+            echo "Frozen Kolla version is empty" >&2
+            exit 1
+          fi
           python3 -m venv .venv
-          . .venv/bin/activate
-          python3 -m pip install --upgrade pip
-          python3 -m pip install "kolla==${KOLLA_VERSION}" docker
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install "kolla==$KOLLA_VERSION" "docker==7.1.0"
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Check publish tooling
+      - name: Preflight isolated build environment
         run: |
-          command -v python3
-          command -v docker
-          docker version
-          docker buildx version
-          docker buildx inspect --bootstrap
-          command -v kolla-build
-          kolla-build --version || true
+          set -euo pipefail
+          .venv/bin/python - <<'PY'
+          import docker
+
+          if docker.__version__ != "7.1.0":
+              raise SystemExit(
+                  f"Docker SDK must be 7.1.0, got {docker.__version__}"
+              )
+          print(f"Docker SDK verified: {docker.__version__}")
+          PY
+          .venv/bin/kolla-build --version
+
+      - name: Prepare ephemeral Docker client state
+        env:
+          DOCKER_CONFIG_SUFFIX: native-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/kolla-docker-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$DOCKER_CONFIG_SUFFIX"
+          case "$docker_config" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config path: $docker_config" >&2; exit 1 ;;
+          esac
+          rm -rf -- "$docker_config"
+          install -d -m 0700 "$docker_config"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Validate native local Docker daemon
+        env:
+          EXPECTED_DOCKER_ARCH: ${{ matrix.runner_machine }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKER_CONTEXT:-}" ]; then
+            endpoint="$(docker context inspect "$DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}')"
+          elif [ -n "${DOCKER_HOST:-}" ]; then
+            endpoint="$DOCKER_HOST"
+          else
+            endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
+          fi
+          if [[ "$endpoint" != unix:///* ]]; then
+            echo "Docker endpoint must be a local Unix socket, got $endpoint" >&2
+            exit 1
+          fi
+          server_os="$(docker info --format '{{.OSType}}')"
+          server_arch="$(docker info --format '{{.Architecture}}')"
+          if [ "$server_os" != linux ]; then
+            echo "Docker server OS must be linux, got $server_os" >&2
+            exit 1
+          fi
+          if [ "$server_arch" != "$EXPECTED_DOCKER_ARCH" ]; then
+            echo "Docker server architecture must be $EXPECTED_DOCKER_ARCH, got $server_arch" >&2
+            exit 1
+          fi
+          printf 'DOCKER_HOST=%s\n' "$endpoint" >> "$GITHUB_ENV"
+          printf 'DOCKER_CONTEXT=\n' >> "$GITHUB_ENV"
+          echo "Native local Docker daemon verified: $server_os/$server_arch $endpoint"
+
+      - name: Check Docker storage capacity
+        run: |
+          set -euo pipefail
+          docker_root="$(docker info --format '{{.DockerRootDir}}')"
+          if [ -z "$docker_root" ]; then
+            echo "DockerRootDir is empty" >&2
+            exit 1
+          fi
+          available_blocks="$(df -Pk "$docker_root" | awk 'NR == 2 {print $4}')"
+          minimum_blocks=$((150 * 1024 * 1024))
+          if ! [[ "$available_blocks" =~ ^[0-9]+$ ]]; then
+            echo "Could not determine free 1 KiB blocks for $docker_root" >&2
+            exit 1
+          fi
+          if (( available_blocks < minimum_blocks )); then
+            echo "Docker root requires at least 150 GiB free; found $available_blocks KiB" >&2
+            exit 1
+          fi
+          echo "Docker storage floor passed. The operational runner target is 300 GB."
 
       - name: Log in to GHCR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
-      - name: Build and inspect shared parent images
+      - name: Build, inspect, and smoke native images
         env:
-          PLAN_PATH: artifacts/plan/publish-plan.json
           ARCH: ${{ matrix.arch }}
+          RUNNER_MACHINE: ${{ matrix.runner_machine }}
         run: |
           python3 - <<'PY'
           import json
           import os
           import pathlib
-          import shlex
+          import re
           import subprocess
+          import sys
 
-          plan = json.loads(pathlib.Path(os.environ["PLAN_PATH"]).read_text(encoding="utf-8"))
+          DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+          PLAN_PATH = pathlib.Path("artifacts/plan/publish-plan.json")
+
+          plan = json.loads(PLAN_PATH.read_text(encoding="utf-8"))
           arch_name = os.environ["ARCH"]
-          arch = next(
+          runner_machine = os.environ["RUNNER_MACHINE"]
+          matching_architectures = [
               entry
-              for entry in plan["build"]["parents"]["architectures"]
+              for entry in plan["build"]["architectures"]
               if entry["arch"] == arch_name
-          )
+          ]
+          if len(matching_architectures) != 1:
+              raise SystemExit(f"plan must contain exactly one {arch_name} build")
+          architecture = matching_architectures[0]
+          platform = architecture["platform"]
+          if platform != f"linux/{arch_name}":
+              raise SystemExit(f"unexpected planned platform: {platform}")
 
-          logs_dir = pathlib.Path("artifacts/logs")
-          parent_dir = pathlib.Path("artifacts/parents")
+          pathlib.Path("artifacts/arch").mkdir(parents=True, exist_ok=True)
           pathlib.Path("artifacts/kolla-summary").mkdir(parents=True, exist_ok=True)
-          (pathlib.Path("artifacts/kolla-logs") / f"parents-{arch_name}").mkdir(
-              parents=True,
-              exist_ok=True,
+          pathlib.Path("artifacts/kolla-logs").mkdir(parents=True, exist_ok=True)
+
+          command = architecture["commands"]["kolla_build_push"]
+          if not isinstance(command, list) or not all(
+              isinstance(part, str) for part in command
+          ):
+              raise SystemExit("planned Kolla command must be a structured argv list")
+          summary_positions = [
+              index for index, part in enumerate(command) if part == "--summary-json-file"
+          ]
+          if len(summary_positions) != 1 or summary_positions[0] + 1 >= len(command):
+              raise SystemExit("planned Kolla command must contain one summary path")
+          summary_path = pathlib.Path(command[summary_positions[0] + 1])
+          expected_summary_path = pathlib.Path(
+              f"artifacts/kolla-summary/{plan['stream']}-{arch_name}.json"
           )
-          logs_dir.mkdir(parents=True, exist_ok=True)
-          parent_dir.mkdir(parents=True, exist_ok=True)
-
-          def run_command(name, command, log_path):
-              print(f"Running {name}: {' '.join(shlex.quote(part) for part in command)}")
-              with log_path.open("w", encoding="utf-8") as log_file:
-                  log_file.write("$ " + " ".join(shlex.quote(part) for part in command) + "\n")
-                  log_file.flush()
-                  subprocess.run(command, check=True, stdout=log_file, stderr=subprocess.STDOUT)
-
-          build_log = logs_dir / f"parents-{arch_name}-build.log"
-          run_command(
-              f"build shared parents {arch_name}",
-              arch["commands"]["kolla_build_push"],
-              build_log,
+          if summary_path != expected_summary_path:
+              raise SystemExit("planned Kolla summary path is invalid")
+          summary_path.unlink(missing_ok=True)
+          subprocess.run(command, check=True)
+          subprocess.run(
+              [
+                  sys.executable,
+                  "scripts/validate-kolla-build-summary.py",
+                  "--kolla-summary", str(summary_path),
+                  "--publish-plan", str(PLAN_PATH),
+                  "--arch", arch_name,
+              ],
+              check=True,
           )
 
-          inspected = []
-          for parent_ref in arch["parent_refs"]:
-              parent_name = parent_ref.rsplit("/", 1)[-1].split(":", 1)[0]
-              inspect_log = logs_dir / f"{parent_name}-{arch_name}-inspect.log"
-              run_command(
-                  f"inspect {parent_name} {arch_name}",
-                  ["docker", "buildx", "imagetools", "inspect", parent_ref],
-                  inspect_log,
+          expected_prefix = (
+              f"{plan['registry']}/{plan['owner']}/{plan['repository']}/"
+          )
+
+          def inspect_remote_descriptor(image_name, arch_ref):
+              expected_repository = f"{expected_prefix}{image_name}"
+              expected_arch_ref = f"{expected_repository}:{architecture['arch_tag']}"
+              if arch_ref != expected_arch_ref:
+                  raise SystemExit(
+                      f"architecture ref for {image_name} must be {expected_arch_ref}, "
+                      f"got {arch_ref!r}"
+                  )
+              result = subprocess.run(
+                  [
+                      "docker",
+                      "buildx",
+                      "imagetools",
+                      "inspect",
+                      arch_ref,
+                      "--format",
+                      "{{json .Manifest}}",
+                  ],
+                  check=True,
+                  text=True,
+                  capture_output=True,
               )
-              inspected.append(
+              try:
+                  descriptor = json.loads(result.stdout)
+              except json.JSONDecodeError as exc:
+                  raise SystemExit(
+                      f"remote descriptor for {arch_ref} is not JSON: {exc}"
+                  ) from exc
+              if not isinstance(descriptor, dict):
+                  raise SystemExit(f"remote descriptor for {arch_ref} must be one object")
+              if "manifests" in descriptor:
+                  if "annotations" in descriptor:
+                      raise SystemExit(f"remote index annotations are not allowed: {arch_ref}")
+                  if (
+                      not isinstance(descriptor["manifests"], list)
+                      or len(descriptor["manifests"]) != 1
+                  ):
+                      raise SystemExit(
+                          f"remote index for {arch_ref} must contain exactly one descriptor"
+                      )
+                  child_descriptor = descriptor["manifests"][0]
+                  if not isinstance(child_descriptor, dict):
+                      raise SystemExit(f"remote child descriptor is invalid: {arch_ref}")
+                  if "annotations" in child_descriptor:
+                      raise SystemExit(
+                          f"remote child descriptor annotations are not allowed: {arch_ref}"
+                      )
+                  descriptor_platform = child_descriptor.get("platform")
+                  if not isinstance(descriptor_platform, dict):
+                      raise SystemExit(
+                          f"remote child descriptor platform is invalid: {arch_ref}"
+                      )
+                  actual_platform = (
+                      f"{descriptor_platform.get('os')}/"
+                      f"{descriptor_platform.get('architecture')}"
+                  )
+                  if actual_platform != platform:
+                      raise SystemExit(
+                          f"remote child descriptor platform for {arch_ref} must be "
+                          f"{platform}, got {actual_platform}"
+                      )
+                  descriptor_digest = child_descriptor.get("digest")
+              else:
+                  descriptor_digest = descriptor.get("digest")
+                  descriptor_platform = descriptor.get("platform")
+                  if descriptor_platform is not None:
+                      if not isinstance(descriptor_platform, dict):
+                          raise SystemExit(
+                              f"remote descriptor platform for {arch_ref} is invalid"
+                          )
+                      actual_platform = (
+                          f"{descriptor_platform.get('os')}/"
+                          f"{descriptor_platform.get('architecture')}"
+                      )
+                      if actual_platform != platform:
+                          raise SystemExit(
+                              f"remote descriptor platform for {arch_ref} must be "
+                              f"{platform}, got {actual_platform}"
+                          )
+              if not isinstance(descriptor_digest, str) or not DIGEST_RE.fullmatch(descriptor_digest):
+                  raise SystemExit(f"remote descriptor for {arch_ref} has no SHA256 digest")
+              repository = expected_repository
+              immutable_ref = f"{repository}@{descriptor_digest}"
+              subprocess.run(
+                  ["docker", "pull", "--platform", platform, immutable_ref],
+                  check=True,
+              )
+              inspect_result = subprocess.run(
+                  [
+                      "docker",
+                      "image",
+                      "inspect",
+                      immutable_ref,
+                      "--format",
+                      "{{.Os}}/{{.Architecture}}",
+                  ],
+                  check=True,
+                  text=True,
+                  capture_output=True,
+              )
+              if inspect_result.stdout.strip() != platform:
+                  raise SystemExit(
+                      f"immutable image {immutable_ref} must be {platform}, "
+                      f"got {inspect_result.stdout.strip()}"
+                  )
+              return descriptor_digest, immutable_ref
+
+          expected_parent_names = [entry["image"] for entry in architecture["parents"]]
+          if len(expected_parent_names) != len(set(expected_parent_names)):
+              raise SystemExit("frozen plan contains duplicate parent images")
+          parent_evidence = []
+          for parent in architecture["parents"]:
+              digest, immutable_ref = inspect_remote_descriptor(
+                  parent["image"], parent["arch_ref"]
+              )
+              parent_evidence.append(
                   {
-                      "image": parent_name,
-                      "arch": arch_name,
-                      "arch_ref": parent_ref,
-                      "inspect_log": str(inspect_log),
+                      "image": parent["image"],
+                      "arch_ref": parent["arch_ref"],
+                      "digest": digest,
+                      "immutable_ref": immutable_ref,
                   }
               )
 
-          (parent_dir / f"parents-{arch_name}.json").write_text(
-              json.dumps(
-                  {
-                      "arch": arch_name,
-                      "build_log": str(build_log),
-                      "images": inspected,
-                  },
-                  indent=2,
-                  sort_keys=True,
+          expected_image_names = [entry["image"] for entry in architecture["images"]]
+          if len(expected_image_names) != len(set(expected_image_names)):
+              raise SystemExit("frozen plan contains duplicate leaf images")
+          image_evidence = []
+          for image in architecture["images"]:
+              digest, immutable_ref = inspect_remote_descriptor(
+                  image["image"], image["arch_ref"]
               )
-              + "\n",
+              subprocess.run(
+                  [
+                      "docker",
+                      "run",
+                      "--rm",
+                      "--platform",
+                      platform,
+                      "--entrypoint",
+                      "/bin/true",
+                      immutable_ref,
+                  ],
+                  check=True,
+              )
+              image_evidence.append(
+                  {
+                      "image": image["image"],
+                      "arch_ref": image["arch_ref"],
+                      "digest": digest,
+                      "immutable_ref": immutable_ref,
+                      "smoke": {
+                          "platform": platform,
+                          "entrypoint": "/bin/true",
+                          "passed": True,
+                      },
+                  }
+              )
+
+          parent_evidence_by_name = {entry["image"]: entry for entry in parent_evidence}
+          image_evidence_by_name = {entry["image"]: entry for entry in image_evidence}
+          if len(parent_evidence_by_name) != len(parent_evidence):
+              raise SystemExit("native evidence contains duplicate parent images")
+          if len(image_evidence_by_name) != len(image_evidence):
+              raise SystemExit("native evidence contains duplicate leaf images")
+          if set(parent_evidence_by_name) != set(expected_parent_names):
+              raise SystemExit("native parent evidence does not match the frozen plan")
+          if set(image_evidence_by_name) != set(expected_image_names):
+              raise SystemExit("native leaf evidence does not match the frozen plan")
+
+          evidence = {
+              "schema_version": 1,
+              "stream": plan["stream"],
+              "arch": arch_name,
+              "platform": platform,
+              "runner_machine": runner_machine,
+              "kolla_version": plan["kolla_version"],
+              "parents": parent_evidence,
+              "images": image_evidence,
+          }
+          evidence_path = pathlib.Path(f"artifacts/arch/native-{arch_name}.json")
+          evidence_path.write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
 
-      - name: Upload parent build artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+      - name: Upload native evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: kolla-parents-${{ matrix.arch }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts/
+          name: native-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/arch/native-${{ matrix.arch }}.json
           if-no-files-found: error
 
-  build-images:
-    name: Build ${{ matrix.group }} ${{ matrix.arch }}
-    if: ${{ !inputs.dry_run }}
-    needs:
-      - publish-plan
-      - build-parents
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    permissions:
-      actions: read
-      packages: write
-    strategy:
-      fail-fast: false
-      max-parallel: 8
-      matrix: ${{ fromJson(needs.publish-plan.outputs.build_matrix) }}
-
-    steps:
-      - name: Download publish plan
-        uses: actions/download-artifact@v8
-        with:
-          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts/plan
-
-      - name: Set up Docker Buildx builder
-        uses: docker/setup-buildx-action@v4
-
-      - name: Install Kolla tooling
-        run: |
-          python3 -m venv .venv
-          . .venv/bin/activate
-          python3 -m pip install --upgrade pip
-          python3 -m pip install "kolla==${KOLLA_VERSION}" docker
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-
-      - name: Check publish tooling
-        run: |
-          command -v python3
-          command -v docker
-          docker version
-          docker buildx version
-          docker buildx inspect --bootstrap
-          command -v kolla-build
-          kolla-build --version || true
-
-      - name: Log in to GHCR
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-
-      - name: Build and inspect service group
-        env:
-          PLAN_PATH: artifacts/plan/publish-plan.json
-          GROUP: ${{ matrix.group }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
-          import shlex
-          import subprocess
-
-          plan = json.loads(pathlib.Path(os.environ["PLAN_PATH"]).read_text(encoding="utf-8"))
-          group_name = os.environ["GROUP"]
-          arch_name = os.environ["ARCH"]
-          group = next(entry for entry in plan["build"]["groups"] if entry["name"] == group_name)
-          arch = next(entry for entry in group["architectures"] if entry["arch"] == arch_name)
-
-          logs_dir = pathlib.Path("artifacts/logs")
-          arch_dir = pathlib.Path("artifacts/arch")
-          pathlib.Path("artifacts/kolla-summary").mkdir(parents=True, exist_ok=True)
-          (pathlib.Path("artifacts/kolla-logs") / f"{group_name}-{arch_name}").mkdir(
-              parents=True,
-              exist_ok=True,
-          )
-          logs_dir.mkdir(parents=True, exist_ok=True)
-          arch_dir.mkdir(parents=True, exist_ok=True)
-
-          def run_command(name, command, log_path):
-              print(f"Running {name}: {' '.join(shlex.quote(part) for part in command)}")
-              with log_path.open("w", encoding="utf-8") as log_file:
-                  log_file.write("$ " + " ".join(shlex.quote(part) for part in command) + "\n")
-                  log_file.flush()
-                  subprocess.run(command, check=True, stdout=log_file, stderr=subprocess.STDOUT)
-
-          parent_pull_logs = []
-          for parent_ref in arch["parent_refs"]:
-              parent_name = parent_ref.rsplit("/", 1)[-1].split(":", 1)[0]
-              parent_pull_log = logs_dir / f"{group_name}-{parent_name}-{arch_name}-pull.log"
-              run_command(
-                  f"pull {parent_name} for {group_name} {arch_name}",
-                  ["docker", "pull", "--platform", arch["platform"], parent_ref],
-                  parent_pull_log,
-              )
-              parent_pull_logs.append(str(parent_pull_log))
-
-          build_log = logs_dir / f"{group_name}-{arch_name}-build.log"
-          run_command(
-              f"build {group_name} {arch_name}",
-              arch["commands"]["kolla_build_push"],
-              build_log,
-          )
-
-          for image_name, arch_ref in zip(group["images"], arch["image_refs"], strict=True):
-              image = next(entry for entry in plan["images"] if entry["image"] == image_name)
-              image_arch = next(
-                  entry for entry in image["architectures"] if entry["arch"] == arch_name
-              )
-              inspect_log = logs_dir / f"{image_name}-{arch_name}-inspect.log"
-              run_command(
-                  f"inspect {image_name} {arch_name}",
-                  ["docker", "buildx", "imagetools", "inspect", arch_ref],
-                  inspect_log,
-              )
-              (arch_dir / f"{image_name}-{arch_name}.json").write_text(
-                  json.dumps(
-                      {
-                          "image": image_name,
-                          "group": group_name,
-                          "arch": arch_name,
-                          "platform": arch["platform"],
-                          "arch_ref": arch_ref,
-                          "arch_tag": image_arch["arch_tag"],
-                          "build_log": str(build_log),
-                          "inspect_log": str(inspect_log),
-                          "parent_pull_logs": parent_pull_logs,
-                      },
-                      indent=2,
-                      sort_keys=True,
-                  )
-                  + "\n",
-                  encoding="utf-8",
-              )
-          PY
-
-      - name: Upload service build artifacts
+      - name: Upload native diagnostics
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: kolla-leaf-${{ matrix.group }}-${{ matrix.arch }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts/
-          if-no-files-found: error
+          name: native-diagnostics-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/kolla-summary/
+            artifacts/kolla-logs/
+          if-no-files-found: warn
+
+      - name: Remove ephemeral Docker client state
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKER_CONFIG:-}" ]; then
+            exit 0
+          fi
+          case "$DOCKER_CONFIG" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config cleanup: $DOCKER_CONFIG" >&2; exit 1 ;;
+          esac
+          rm -f -- "$DOCKER_CONFIG/config.json"
 
   finalize-publish:
-    name: Finalize manifests and candidate lock
+    name: Finalize manifests, summary, and candidate lock
     if: ${{ !inputs.dry_run }}
-    needs:
-      - publish-plan
-      - build-images
+    needs: build-native
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     permissions:
-      actions: read
       contents: read
       packages: write
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       - name: Download publish plan
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/plan
 
-      - name: Download architecture build artifacts
-        uses: actions/download-artifact@v8
+      - name: Download amd64 evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: kolla-leaf-*-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts
-          merge-multiple: true
+          name: native-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/arch
 
-      - name: Set up Docker Buildx builder
-        uses: docker/setup-buildx-action@v4
+      - name: Download arm64 evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: native-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/arch
+
+      - name: Revalidate publish approval
+        env:
+          ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
+          ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
+          ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
+          APPROVAL: ${{ inputs.approval }}
+          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          python3 scripts/validate-publish-approval.py
+          --publish-plan artifacts/plan/publish-plan.json
+          --expected-candidate-id "$CANDIDATE_ID"
+
+      - name: Prepare ephemeral Docker client state
+        env:
+          DOCKER_CONFIG_SUFFIX: finalize
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/kolla-docker-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$DOCKER_CONFIG_SUFFIX"
+          case "$docker_config" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config path: $docker_config" >&2; exit 1 ;;
+          esac
+          rm -rf -- "$docker_config"
+          install -d -m 0700 "$docker_config"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
-      - name: Create manifest and publish summary
-        env:
-          PLAN_PATH: artifacts/plan/publish-plan.json
+      - name: Create and verify candidate multi-architecture manifests
         run: |
           python3 - <<'PY'
+          import hashlib
           import json
-          import os
           import pathlib
-          import shlex
+          import re
           import subprocess
 
-          plan_path = pathlib.Path(os.environ["PLAN_PATH"])
-          plan = json.loads(plan_path.read_text(encoding="utf-8"))
-          images = plan["images"]
+          DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+          MULTIARCH_MEDIA_TYPES = {
+              "application/vnd.oci.image.index.v1+json",
+              "application/vnd.docker.distribution.manifest.list.v2+json",
+          }
+          EXPECTED_ARCHES = ("amd64", "arm64")
+          EXPECTED_MACHINES = {"amd64": "x86_64", "arm64": "aarch64"}
+          EXPECTED_EVIDENCE_KEYS = {
+              "schema_version",
+              "stream",
+              "arch",
+              "platform",
+              "runner_machine",
+              "kolla_version",
+              "parents",
+              "images",
+          }
+          EXPECTED_PARENT_KEYS = {"image", "arch_ref", "digest", "immutable_ref"}
+          EXPECTED_IMAGE_KEYS = {
+              "image",
+              "arch_ref",
+              "digest",
+              "immutable_ref",
+              "smoke",
+          }
 
-          logs_dir = pathlib.Path("artifacts/logs")
-          arch_dir = pathlib.Path("artifacts/arch")
+          plan = json.loads(
+              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
+          )
+          planned_architectures = plan["build"]["architectures"]
+          if [entry["arch"] for entry in planned_architectures] != list(EXPECTED_ARCHES):
+              raise SystemExit("frozen plan architectures must be exactly amd64 and arm64")
+          planned_by_arch = {entry["arch"]: entry for entry in planned_architectures}
+          expected_image_names = [entry["image"] for entry in plan["images"]]
+          if len(expected_image_names) != len(set(expected_image_names)):
+              raise SystemExit("frozen plan contains duplicate leaf images")
+
+          evidence_by_arch = {}
+          for arch in EXPECTED_ARCHES:
+              evidence_path = pathlib.Path(f"artifacts/arch/native-{arch}.json")
+              evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+              if not isinstance(evidence, dict) or set(evidence) != EXPECTED_EVIDENCE_KEYS:
+                  raise SystemExit(f"native-{arch} evidence schema is invalid")
+              if type(evidence["schema_version"]) is not int or evidence["schema_version"] != 1:
+                  raise SystemExit(f"native-{arch} evidence schema version must be 1")
+              if evidence["stream"] != plan["stream"]:
+                  raise SystemExit(f"native-{arch} stream does not match frozen scope")
+              if evidence["arch"] != arch or evidence["platform"] != f"linux/{arch}":
+                  raise SystemExit(f"native-{arch} architecture identity is invalid")
+              if evidence["runner_machine"] != EXPECTED_MACHINES[arch]:
+                  raise SystemExit(f"native-{arch} runner machine is invalid")
+              if evidence["kolla_version"] != plan["kolla_version"]:
+                  raise SystemExit(f"native-{arch} Kolla pin does not match frozen plan")
+
+              planned_arch = planned_by_arch[arch]
+              expected_parent_names = [
+                  entry["image"] for entry in planned_arch["parents"]
+              ]
+              expected_leaf_names = [entry["image"] for entry in planned_arch["images"]]
+              if expected_leaf_names != expected_image_names:
+                  raise SystemExit(f"native-{arch} planned leaf order is inconsistent")
+
+              def validate_records(records, planned_records, expected_keys, label):
+                  if not isinstance(records, list):
+                      raise SystemExit(f"native-{arch} {label} must be a list")
+                  records_by_name = {}
+                  for record in records:
+                      if not isinstance(record, dict) or set(record) != expected_keys:
+                          raise SystemExit(f"native-{arch} {label} record schema is invalid")
+                      name = record["image"]
+                      if not isinstance(name, str) or name in records_by_name:
+                          raise SystemExit(f"native-{arch} {label} contains a duplicate image")
+                      records_by_name[name] = record
+                  planned_by_name = {entry["image"]: entry for entry in planned_records}
+                  if len(planned_by_name) != len(planned_records):
+                      raise SystemExit(f"frozen plan contains duplicate {label}")
+                  if set(records_by_name) != set(planned_by_name):
+                      raise SystemExit(f"native-{arch} {label} set does not match frozen plan")
+                  for name, record in records_by_name.items():
+                      planned_record = planned_by_name[name]
+                      if record["arch_ref"] != planned_record["arch_ref"]:
+                          raise SystemExit(f"native-{arch} {label} arch ref mismatch: {name}")
+                      digest = record["digest"]
+                      if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
+                          raise SystemExit(f"native-{arch} {label} digest is invalid: {name}")
+                      image_repository, separator, tag = record["arch_ref"].rpartition(":")
+                      if not separator or not tag:
+                          raise SystemExit(f"native-{arch} {label} ref is invalid: {name}")
+                      immutable_ref = f"{image_repository}@{digest}"
+                      if record["immutable_ref"] != immutable_ref:
+                          raise SystemExit(
+                              f"native-{arch} {label} immutable ref mismatch: {name}"
+                          )
+                  return records_by_name
+
+              parents_by_name = validate_records(
+                  evidence["parents"],
+                  planned_arch["parents"],
+                  EXPECTED_PARENT_KEYS,
+                  "parents",
+              )
+              if set(parents_by_name) != set(expected_parent_names):
+                  raise SystemExit(f"native-{arch} parent evidence is incomplete")
+              images_by_name = validate_records(
+                  evidence["images"],
+                  planned_arch["images"],
+                  EXPECTED_IMAGE_KEYS,
+                  "images",
+              )
+              if set(images_by_name) != set(expected_image_names):
+                  raise SystemExit(f"native-{arch} leaf evidence is incomplete")
+              for name, record in images_by_name.items():
+                  if (
+                      not isinstance(record["smoke"], dict)
+                      or set(record["smoke"]) != {"platform", "entrypoint", "passed"}
+                      or record["smoke"].get("platform") != f"linux/{arch}"
+                      or record["smoke"].get("entrypoint") != "/bin/true"
+                      or record["smoke"].get("passed") is not True
+                  ):
+                      raise SystemExit(f"native-{arch} smoke evidence is invalid: {name}")
+              evidence_by_arch[arch] = {
+                  "parents": parents_by_name,
+                  "images": images_by_name,
+              }
+
           manifests_dir = pathlib.Path("artifacts/manifests")
-          logs_dir.mkdir(parents=True, exist_ok=True)
           manifests_dir.mkdir(parents=True, exist_ok=True)
-
           publish_summary = {
+              "candidate_id": plan["candidate_id"],
+              "stream": plan["stream"],
               "release": plan["release"],
               "distro": plan["distro"],
               "distro_version": plan["distro_version"],
               "profile": plan["profile"],
+              "scope": plan["scope"],
               "registry": plan["registry"],
               "owner": plan["owner"],
               "repository": plan["repository"],
               "images": [],
           }
 
-          def run_command(name, command, log_path):
-              print(f"Running {name}: {' '.join(shlex.quote(part) for part in command)}")
-              with log_path.open("w", encoding="utf-8") as log_file:
-                  log_file.write("$ " + " ".join(shlex.quote(part) for part in command) + "\n")
-                  log_file.flush()
-                  subprocess.run(command, check=True, stdout=log_file, stderr=subprocess.STDOUT)
-
-          for image in images:
+          for image in plan["images"]:
               image_name = image["image"]
-              summary = {
-                  "image": image_name,
-                  "kolla_ansible_variables": image["kolla_ansible_variables"],
-                  "deploy_ref": image["deploy_ref"],
-                  "deploy_tag": image["deploy_tag"],
-                  "manifest_metadata_file": image["manifest_metadata_file"],
-                  "architectures": [],
-              }
-              for arch in image["architectures"]:
-                  arch_name = arch["arch"]
-                  arch_summary_path = arch_dir / f"{image_name}-{arch_name}.json"
-                  if not arch_summary_path.exists():
-                      raise SystemExit(f"architecture summary not found: {arch_summary_path}")
-                  summary["architectures"].append(
-                      json.loads(arch_summary_path.read_text(encoding="utf-8"))
+              deploy_ref = image["deploy_ref"]
+              recorded_child_digests = {}
+              child_refs = []
+              architecture_summaries = []
+              for arch in EXPECTED_ARCHES:
+                  record = evidence_by_arch[arch]["images"][image_name]
+                  repository = record["arch_ref"].rsplit(":", 1)[0]
+                  child_ref = f"{repository}@{record['digest']}"
+                  if child_ref != record["immutable_ref"]:
+                      raise SystemExit(f"recorded immutable child ref mismatch: {image_name}")
+                  child_refs.append(child_ref)
+                  recorded_child_digests[f"linux/{arch}"] = record["digest"]
+                  architecture_summaries.append(
+                      {
+                          "arch": arch,
+                          "platform": f"linux/{arch}",
+                          "arch_ref": record["arch_ref"],
+                          "digest": record["digest"],
+                      }
                   )
 
-              run_command(
-                  f"create manifest {image_name}",
-                  image["commands"]["manifest_create"],
-                  logs_dir / f"{image_name}-manifest-create.log",
-              )
-              run_command(
-                  f"inspect manifest {image_name}",
-                  image["commands"]["manifest_inspect"],
-                  logs_dir / f"{image_name}-manifest-inspect.log",
-              )
-
               metadata_path = pathlib.Path(image["manifest_metadata_file"])
-              if not metadata_path.exists():
-                  raise SystemExit(f"manifest metadata not found: {metadata_path}")
+              metadata_path.parent.mkdir(parents=True, exist_ok=True)
+              create_command = [
+                  "docker",
+                  "buildx",
+                  "imagetools",
+                  "create",
+                  "--tag",
+                  deploy_ref,
+                  "--metadata-file",
+                  str(metadata_path),
+                  *child_refs,
+              ]
+              subprocess.run(create_command, check=True)
 
               manifest_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-              manifest_digest = manifest_metadata.get("containerimage.digest")
-              if manifest_digest is None:
-                  descriptor = manifest_metadata.get("containerimage.descriptor")
-                  if isinstance(descriptor, dict):
-                      manifest_digest = descriptor.get("digest")
-              if not isinstance(manifest_digest, str) or not manifest_digest.startswith("sha256:"):
-                  raise SystemExit("manifest metadata is missing containerimage.digest")
+              if not isinstance(manifest_metadata, dict):
+                  raise SystemExit(f"manifest metadata must be an object: {image_name}")
+              manifest_descriptor = manifest_metadata.get("containerimage.descriptor")
+              if not isinstance(manifest_descriptor, dict):
+                  raise SystemExit(
+                      f"manifest metadata descriptor is invalid: {image_name}"
+                  )
+              manifest_digest = manifest_descriptor.get("digest")
+              if not isinstance(manifest_digest, str) or not DIGEST_RE.fullmatch(manifest_digest):
+                  raise SystemExit(f"manifest metadata digest is invalid: {image_name}")
+              metadata_digest = manifest_metadata.get("containerimage.digest")
+              if metadata_digest is not None and metadata_digest != manifest_digest:
+                  raise SystemExit(
+                      f"manifest metadata digest fields disagree: {image_name}"
+                  )
+              manifest_media_type = manifest_descriptor.get("mediaType")
+              if manifest_media_type not in MULTIARCH_MEDIA_TYPES:
+                  raise SystemExit(
+                      f"manifest metadata media type is invalid: {image_name}"
+                  )
+              manifest_size = manifest_descriptor.get("size")
+              if type(manifest_size) is not int or manifest_size <= 0:
+                  raise SystemExit(f"manifest metadata size is invalid: {image_name}")
 
-              summary["manifest_metadata"] = manifest_metadata
-              summary["manifest_digest"] = manifest_digest
+              repository, separator, deploy_tag = deploy_ref.rpartition(":")
+              if not separator or not repository or not deploy_tag:
+                  raise SystemExit(f"deploy reference is invalid: {image_name}")
+              immutable_manifest_ref = f"{repository}@{manifest_digest}"
+              raw_result = subprocess.run(
+                  [
+                      "docker",
+                      "buildx",
+                      "imagetools",
+                      "inspect",
+                      "--raw",
+                      immutable_manifest_ref,
+                  ],
+                  check=True,
+                  capture_output=True,
+              )
+              raw_bytes = raw_result.stdout
+              raw_digest = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"
+              if raw_digest != manifest_digest:
+                  raise SystemExit(
+                      f"raw multi-architecture manifest digest does not match metadata: {image_name}"
+                  )
+              if manifest_size != len(raw_bytes):
+                  raise SystemExit(
+                      f"raw multi-architecture manifest size does not match metadata: {image_name}"
+                  )
+
+              tagged_raw_result = subprocess.run(
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", deploy_ref],
+                  check=True,
+                  capture_output=True,
+              )
+              if tagged_raw_result.stdout != raw_bytes:
+                  raise SystemExit(
+                      f"deploy tag moved during manifest validation: {image_name}"
+                  )
+
+              raw_path = manifests_dir / f"{image_name}-{plan['stream']}-multiarch-manifest.json"
+              raw_path.write_bytes(raw_bytes)
+              try:
+                  index = json.loads(raw_bytes)
+              except json.JSONDecodeError as exc:
+                  raise SystemExit(
+                      f"raw multi-architecture manifest is not JSON: {image_name}: {exc}"
+                  ) from exc
+              if not isinstance(index, dict):
+                  raise SystemExit(
+                      f"raw multi-architecture manifest must be an object: {image_name}"
+                  )
+              if index.get("schemaVersion") != 2:
+                  raise SystemExit(
+                      f"raw multi-architecture manifest schemaVersion must be 2: {image_name}"
+                  )
+              if index.get("mediaType") != manifest_media_type:
+                  raise SystemExit(
+                      f"raw manifest media type does not match metadata: {image_name}"
+                  )
+              if "annotations" in index:
+                  raise SystemExit(
+                      f"multi-architecture manifest annotations are not allowed: {image_name}"
+                  )
+              if not isinstance(index.get("manifests"), list) or len(index["manifests"]) != 2:
+                  raise SystemExit(
+                      f"multi-architecture manifest must contain exactly two descriptors: {image_name}"
+                  )
+
+              descriptors_by_platform = {}
+              for descriptor in index["manifests"]:
+                  if not isinstance(descriptor, dict):
+                      raise SystemExit(
+                          f"multi-architecture descriptor must be an object: {image_name}"
+                      )
+                  if "annotations" in descriptor:
+                      raise SystemExit(
+                          f"multi-architecture descriptor annotations are not allowed: {image_name}"
+                      )
+                  descriptor_platform = descriptor.get("platform")
+                  if not isinstance(descriptor_platform, dict):
+                      raise SystemExit(
+                          f"multi-architecture descriptor platform is invalid: {image_name}"
+                      )
+                  platform_name = (
+                      f"{descriptor_platform.get('os')}/"
+                      f"{descriptor_platform.get('architecture')}"
+                  )
+                  if platform_name in descriptors_by_platform:
+                      raise SystemExit(
+                          f"multi-architecture manifest contains duplicate platform: {platform_name}"
+                      )
+                  digest = descriptor.get("digest")
+                  if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
+                      raise SystemExit(
+                          f"multi-architecture descriptor digest is invalid: {image_name}"
+                      )
+                  descriptors_by_platform[platform_name] = digest
+              if set(descriptors_by_platform) != {"linux/amd64", "linux/arm64"}:
+                  raise SystemExit(
+                      f"multi-architecture manifest platforms are invalid: {image_name}"
+                  )
+              if descriptors_by_platform != recorded_child_digests:
+                  raise SystemExit(
+                      f"multi-architecture child digests do not match evidence: {image_name}"
+                  )
+
               publish_summary["images"].append(
                   {
                       "image": image_name,
                       "kolla_ansible_variables": image["kolla_ansible_variables"],
-                      "deploy_ref": image["deploy_ref"],
                       "deploy_tag": image["deploy_tag"],
+                      "deploy_ref": deploy_ref,
                       "manifest_digest": manifest_digest,
-                      "architectures": summary["architectures"],
+                      "architectures": architecture_summaries,
                   }
               )
 
-              image_summary = json.dumps(summary, indent=2, sort_keys=True) + "\n"
-              (manifests_dir / f"{image_name}-publish-summary.json").write_text(
-                  image_summary,
-                  encoding="utf-8",
-              )
-              if len(images) == 1:
-                  (manifests_dir / "smoke-publish-summary.json").write_text(
-                      image_summary,
-                      encoding="utf-8",
-                  )
-
-          pathlib.Path(plan["publish_summary_file"]).write_text(
+          summary_path = pathlib.Path(plan["publish_summary_file"])
+          expected_summary_path = pathlib.Path(
+              f"artifacts/publish-summary-{plan['stream']}.json"
+          )
+          if summary_path != expected_summary_path:
+              raise SystemExit("frozen plan publish summary path is invalid")
+          summary_path.write_text(
               json.dumps(publish_summary, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
 
-      - name: Validate publish summary
+      - name: Validate summary and generate eligible candidate lock
         run: |
-          validate_args=(
-            --publish-summary 'artifacts/publish-summary-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}.json'
-            --profile '${{ inputs.profile }}'
-            --release '${{ inputs.release }}'
-            --distro '${{ inputs.distro }}'
-            --distro-version '${{ inputs.distro_version }}'
-          )
-          if [ '${{ inputs.image }}' != 'all' ]; then
-            validate_args+=(--allow-partial --image '${{ inputs.image }}')
-          fi
-          python3 scripts/validate-publish-summary.py "${validate_args[@]}"
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
 
-      - name: Generate full-profile candidate lock
-        if: ${{ inputs.image == 'all' }}
-        run: |
-          lock_path='artifacts/kolla-ansible-image-lock-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}.yml'
-          python3 scripts/generate-lock.py \
-            --publish-summary 'artifacts/publish-summary-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}.json' \
-            --profile '${{ inputs.profile }}' \
-            --release '${{ inputs.release }}' \
-            --distro '${{ inputs.distro }}' \
-            --distro-version '${{ inputs.distro_version }}' \
-            --output "$lock_path"
+          plan = json.loads(
+              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
+          )
+          summary_path = pathlib.Path(plan["publish_summary_file"])
+          validate_command = [
+              sys.executable,
+              "scripts/validate-publish-summary.py",
+              "--publish-summary",
+              str(summary_path),
+              "--stream",
+              plan["stream"],
+              "--profile",
+              plan["profile"],
+              "--candidate-id",
+              plan["candidate_id"],
+          ]
+          if plan["image_filter"] is not None:
+              validate_command.extend(["--allow-partial", "--image", plan["image_filter"]])
+          subprocess.run(validate_command, check=True)
+
+          if plan["scope"] == {
+              "profile": "deployment",
+              "image": "all",
+              "image_count": len(plan["images"]),
+          }:
+              lock_path = pathlib.Path(plan["kolla_ansible_lock_file"])
+              expected_lock_path = pathlib.Path(
+                  f"artifacts/kolla-ansible-image-lock-{plan['stream']}.yml"
+              )
+              if lock_path != expected_lock_path:
+                  raise SystemExit("frozen plan candidate lock path is invalid")
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "scripts/generate-lock.py",
+                      "--publish-summary",
+                      str(summary_path),
+                      "--stream",
+                      plan["stream"],
+                      "--profile",
+                      "deployment",
+                      "--candidate-id",
+                      plan["candidate_id"],
+                      "--output",
+                      str(lock_path),
+                  ],
+                  check=True,
+              )
+          else:
+              if plan["kolla_ansible_lock_file"] is not None:
+                  raise SystemExit("candidate lock is forbidden outside deployment/all")
+          PY
 
       - name: Upload publish artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: kolla-publish-${{ inputs.image }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
-          path: artifacts/
+          name: publish-${{ inputs.stream }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/publish-summary-${{ inputs.stream }}.json
+            artifacts/kolla-ansible-image-lock-${{ inputs.stream }}.yml
+            artifacts/manifests/
           if-no-files-found: error
+
+      - name: Update convenience stream aliases
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import re
+          import subprocess
+
+          DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+          plan = json.loads(
+              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
+          )
+          summary = json.loads(
+              pathlib.Path(plan["publish_summary_file"]).read_text(encoding="utf-8")
+          )
+          if summary.get("candidate_id") != plan.get("candidate_id"):
+              raise SystemExit("publish summary candidate ID does not match frozen plan")
+          planned_images = plan.get("images")
+          summary_images = summary.get("images")
+          if not isinstance(planned_images, list) or not isinstance(summary_images, list):
+              raise SystemExit("candidate plan and summary images must be lists")
+          summary_by_name = {entry.get("image"): entry for entry in summary_images}
+          if len(summary_by_name) != len(summary_images):
+              raise SystemExit("publish summary contains duplicate image names")
+          if set(summary_by_name) != {entry.get("image") for entry in planned_images}:
+              raise SystemExit("publish summary images do not match frozen plan")
+
+          for planned_image in planned_images:
+              image_name = planned_image["image"]
+              summary_image = summary_by_name[image_name]
+              stream_ref = planned_image["stream_ref"]
+              candidate_ref = summary_image["deploy_ref"]
+              if candidate_ref != planned_image["deploy_ref"]:
+                  raise SystemExit(f"candidate ref mismatch: {image_name}")
+              repository, separator, candidate_tag = candidate_ref.rpartition(":")
+              stream_repository, stream_separator, stream_tag = stream_ref.rpartition(":")
+              if (
+                  not separator
+                  or not stream_separator
+                  or not candidate_tag
+                  or not stream_tag
+                  or repository != stream_repository
+              ):
+                  raise SystemExit(f"candidate/stream ref mismatch: {image_name}")
+              manifest_digest = summary_image["manifest_digest"]
+              if not isinstance(manifest_digest, str) or not DIGEST_RE.fullmatch(manifest_digest):
+                  raise SystemExit(f"candidate digest is invalid: {image_name}")
+              immutable_ref = f"{repository}@{manifest_digest}"
+              immutable_raw = subprocess.run(
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", immutable_ref],
+                  check=True,
+                  capture_output=True,
+              )
+              subprocess.run(
+                  [
+                      "docker", "buildx", "imagetools", "create",
+                      "--tag", stream_ref, immutable_ref,
+                  ],
+                  check=True,
+              )
+              stream_raw = subprocess.run(
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", stream_ref],
+                  check=True,
+                  capture_output=True,
+              )
+              if stream_raw.stdout != immutable_raw.stdout:
+                  raise SystemExit(f"stream alias bytes do not match candidate: {image_name}")
+          PY
+
+      - name: Remove ephemeral Docker client state
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKER_CONFIG:-}" ]; then
+            exit 0
+          fi
+          case "$DOCKER_CONFIG" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config cleanup: $DOCKER_CONFIG" >&2; exit 1 ;;
+          esac
+          rm -f -- "$DOCKER_CONFIG/config.json"

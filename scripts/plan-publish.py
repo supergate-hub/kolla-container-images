@@ -6,13 +6,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
+from publish_approval import approval_requirement
+from profile_resolver import (
+    LOCAL_DRY_RUN_CANDIDATE_ID,
+    find_stream,
+    load_matrix,
+    load_profile,
+    render_candidate_tag,
+    render_tag,
+    resolve_profile,
+    validate_candidate_id,
+)
 
-ROOT = Path(__file__).resolve().parents[1]
-MATRIX_PATH = ROOT / "config" / "build-matrix.json"
-PROFILES_DIR = ROOT / "config" / "profiles"
+
 ARCH_TO_KOLLA_BASE_ARCH = {
     "amd64": "x86_64",
     "arm64": "aarch64",
@@ -21,57 +29,36 @@ ARCH_TO_PLATFORM = {
     "amd64": "linux/amd64",
     "arm64": "linux/arm64",
 }
+ARCH_TO_RUNNER_LABELS = {
+    "amd64": ["self-hosted", "linux", "x64", "kolla-build"],
+    "arm64": ["self-hosted", "linux", "ARM64", "kolla-build"],
+}
 KOLLA_BUILD_THREADS = 4
 KOLLA_PUSH_THREADS = 1
-
-
-def load_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as file_obj:
-        return json.load(file_obj)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Render a dry-run Kolla image publish plan from repository config."
     )
+    parser.add_argument("--stream", required=True, help="Build stream ID")
     parser.add_argument("--profile", required=True, help="Profile name under config/profiles")
-    parser.add_argument("--release", required=True, help="OpenStack release, for example 2025.1")
-    parser.add_argument("--distro", required=True, help="Base distro name, for example rocky")
-    parser.add_argument("--distro-version", required=True, help="Base distro version, for example 9")
     parser.add_argument("--image", help="Optional image name from the selected profile")
+    parser.add_argument(
+        "--candidate-id",
+        default=LOCAL_DRY_RUN_CANDIDATE_ID,
+        help=(
+            "Workflow run candidate ID; local read-only plans default to "
+            f"{LOCAL_DRY_RUN_CANDIDATE_ID}"
+        ),
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
+        required=True,
         help="Required safety flag. This planner never builds or pushes images.",
     )
     return parser.parse_args()
-
-
-def find_distro(matrix: dict[str, Any], name: str, version: str) -> dict[str, str]:
-    for distro in matrix["distros"]:
-        if distro["name"] == name and distro["version"] == version:
-            return distro
-    raise ValueError(f"unsupported distro/version: {name}-{version}")
-
-
-def load_profile(name: str) -> dict[str, Any]:
-    profile_path = PROFILES_DIR / f"{name}.json"
-    if not profile_path.exists():
-        raise ValueError(f"profile does not exist: {profile_path.relative_to(ROOT)}")
-    profile = load_json(profile_path)
-    if profile.get("name") != name:
-        raise ValueError(f"profile name mismatch in {profile_path.relative_to(ROOT)}")
-    return profile
-
-
-def render_tag(template: str, release: str, distro: dict[str, str], arch: str | None = None) -> str:
-    values = {
-        "release": release,
-        "distro": distro["name"],
-        "distro_version": distro["version"],
-        "arch": arch or "",
-    }
-    return template.format(**values)
 
 
 def image_ref(registry: str, owner: str, repository: str, image: str, tag: str) -> str:
@@ -82,12 +69,12 @@ def manifest_metadata_file(image: str, deploy_tag: str) -> str:
     return f"artifacts/manifests/{image}-{deploy_tag}.json"
 
 
-def publish_summary_file(deploy_tag: str) -> str:
-    return f"artifacts/publish-summary-{deploy_tag}.json"
+def publish_summary_file(stream_id: str) -> str:
+    return f"artifacts/publish-summary-{stream_id}.json"
 
 
-def kolla_ansible_lock_file(deploy_tag: str) -> str:
-    return f"artifacts/kolla-ansible-image-lock-{deploy_tag}.yml"
+def kolla_ansible_lock_file(stream_id: str) -> str:
+    return f"artifacts/kolla-ansible-image-lock-{stream_id}.yml"
 
 
 def profile_images(profile: dict[str, Any], image_filter: str | None) -> list[dict[str, Any]]:
@@ -107,54 +94,40 @@ def selected_build_groups(
     groups = []
     for group in profile["build_groups"]:
         group_images = [image for image in group["images"] if image in selected_names]
-        if group_images:
-            parents = group.get("parents")
-            if parents is None:
-                parents = list(
-                    dict.fromkeys(["base", "openstack-base", group["parent"]])
-                )
-            groups.append(
-                {
-                    "name": group["name"],
-                    "parent": group["parent"],
-                    "parents": parents,
-                    "images": group_images,
-                }
-            )
+        if not group_images:
+            continue
+        parents = group.get("parents")
+        if parents is None:
+            parents = list(dict.fromkeys(["base", "openstack-base", group["parent"]]))
+        groups.append({**group, "parents": parents, "images": group_images})
     return groups
 
 
 def kolla_build_command(
-    registry: str,
-    owner: str,
-    repository: str,
+    matrix: dict[str, Any],
+    stream: dict[str, Any],
     images: list[str],
-    release: str,
-    distro: dict[str, str],
     arch: str,
     arch_tag: str,
-    summary_file: str,
-    logs_dir: str,
-    skip_existing: bool = False,
 ) -> list[str]:
-    command = [
+    return [
         "kolla-build",
         "--engine",
         "docker",
         "--base",
-        distro["name"],
+        stream["distro"],
         "--base-tag",
-        distro["version"],
+        stream["base_tag"],
         "--base-arch",
         ARCH_TO_KOLLA_BASE_ARCH[arch],
         "--platform",
         ARCH_TO_PLATFORM[arch],
         "--openstack-release",
-        release,
+        stream["release"],
         "--registry",
-        registry,
+        matrix["registry"],
         "--namespace",
-        f"{owner}/{repository}",
+        f"{matrix['owner']}/{matrix['repository']}",
         "--tag",
         arch_tag,
         "--threads",
@@ -162,42 +135,45 @@ def kolla_build_command(
         "--push-threads",
         str(KOLLA_PUSH_THREADS),
         "--summary-json-file",
-        summary_file,
+        f"artifacts/kolla-summary/{stream['id']}-{arch}.json",
         "--logs-dir",
-        logs_dir,
+        f"artifacts/kolla-logs/{stream['id']}-{arch}",
+        "--push",
+        *[f"^{image}$" for image in images],
     ]
-    if skip_existing:
-        command.append("--skip-existing")
-    command.extend(
-        [
-            "--push",
-            *[f"^{image}$" for image in images],
-        ]
-    )
-    return command
 
 
 def build_plan(
     matrix: dict[str, Any],
     profile: dict[str, Any],
-    release: str,
-    distro: dict[str, str],
+    stream: dict[str, Any],
     image_filter: str | None = None,
+    candidate_id: str = LOCAL_DRY_RUN_CANDIDATE_ID,
 ) -> dict[str, Any]:
-    tag_policy = matrix["tag_policy"]
+    candidate_id = validate_candidate_id(candidate_id)
+    stream_tag = render_tag(matrix, stream)
+    candidate_tag = render_candidate_tag(matrix, stream, candidate_id)
     registry = matrix["registry"]
     owner = matrix["owner"]
     repository = matrix["repository"]
-    deploy_tag = render_tag(tag_policy["deploy_tag_template"], release, distro)
     selected_images = profile_images(profile, image_filter)
-    build_groups = selected_build_groups(profile, selected_images)
+    selected_groups = selected_build_groups(profile, selected_images)
+    selected_names = [entry["name"] for entry in selected_images]
+    scope_image = image_filter or "all"
+    requirement = approval_requirement(
+        f"{registry}/{owner}/{repository}",
+        stream["id"],
+        profile["name"],
+        scope_image,
+        len(selected_images),
+    )
 
     images = []
     for image_entry in selected_images:
         image = image_entry["name"]
         architectures = []
         for arch in matrix["architectures"]:
-            arch_tag = render_tag(tag_policy["arch_tag_template"], release, distro, arch)
+            arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
             arch_ref = image_ref(registry, owner, repository, image, arch_tag)
             architectures.append(
                 {
@@ -210,17 +186,22 @@ def build_plan(
                 }
             )
 
-        deploy_ref = image_ref(registry, owner, repository, image, deploy_tag)
-        arch_refs = [arch_plan["arch_ref"] for arch_plan in architectures]
-        metadata_file = manifest_metadata_file(image, deploy_tag)
+        deploy_ref = image_ref(
+            registry, owner, repository, image, candidate_tag
+        )
+        stream_ref = image_ref(
+            registry, owner, repository, image, stream_tag
+        )
+        arch_refs = [architecture["arch_ref"] for architecture in architectures]
         images.append(
             {
                 "image": image,
                 "kolla_ansible_variables": image_entry["kolla_ansible_variables"],
-                "deploy_tag": deploy_tag,
+                "deploy_tag": candidate_tag,
                 "deploy_ref": deploy_ref,
+                "stream_ref": stream_ref,
                 "expected_ghcr_ref": deploy_ref,
-                "manifest_metadata_file": metadata_file,
+                "manifest_metadata_file": manifest_metadata_file(image, candidate_tag),
                 "architectures": architectures,
                 "commands": {
                     "manifest_create": [
@@ -231,7 +212,7 @@ def build_plan(
                         "--tag",
                         deploy_ref,
                         "--metadata-file",
-                        metadata_file,
+                        manifest_metadata_file(image, candidate_tag),
                         *arch_refs,
                     ],
                     "manifest_inspect": [
@@ -247,107 +228,86 @@ def build_plan(
 
     parent_images = list(
         dict.fromkeys(
-            [
-                "base",
-                "openstack-base",
-                *[
-                    parent
-                    for group in build_groups
-                    for parent in group["parents"]
-                ],
-            ]
+            parent for group in selected_groups for parent in group["parents"]
         )
     )
-    parent_architectures = []
+    images_by_name = {image["image"]: image for image in images}
+    build_architectures = []
     for arch in matrix["architectures"]:
-        arch_tag = render_tag(tag_policy["arch_tag_template"], release, distro, arch)
-        parent_architectures.append(
+        arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+        platform = ARCH_TO_PLATFORM[arch]
+        build_architectures.append(
             {
                 "arch": arch,
                 "arch_tag": arch_tag,
-                "platform": ARCH_TO_PLATFORM[arch],
-                "parent_refs": [
-                    image_ref(registry, owner, repository, parent, arch_tag)
+                "kolla_base_arch": ARCH_TO_KOLLA_BASE_ARCH[arch],
+                "platform": platform,
+                "runner_labels": ARCH_TO_RUNNER_LABELS[arch],
+                "parents": [
+                    {
+                        "image": parent,
+                        "arch_ref": image_ref(
+                            registry, owner, repository, parent, arch_tag
+                        ),
+                    }
                     for parent in parent_images
+                ],
+                "images": [
+                    {
+                        "image": image,
+                        "arch_ref": next(
+                            architecture["arch_ref"]
+                            for architecture in images_by_name[image]["architectures"]
+                            if architecture["arch"] == arch
+                        ),
+                        "smoke": {
+                            "ref_source": "recorded_child_digest",
+                            "platform": platform,
+                            "inspect_platform": True,
+                            "entrypoint": "/bin/true",
+                        },
+                    }
+                    for image in selected_names
                 ],
                 "commands": {
                     "kolla_build_push": kolla_build_command(
-                        registry,
-                        owner,
-                        repository,
-                        parent_images,
-                        release,
-                        distro,
-                        arch,
-                        arch_tag,
-                        f"artifacts/kolla-summary/parents-{arch}.json",
-                        f"artifacts/kolla-logs/parents-{arch}",
+                        matrix, stream, selected_names, arch, arch_tag
                     )
                 },
             }
         )
 
-    planned_build_groups = []
-    images_by_name = {image["image"]: image for image in images}
-    for group in build_groups:
-        group_architectures = []
-        for arch in matrix["architectures"]:
-            arch_tag = render_tag(tag_policy["arch_tag_template"], release, distro, arch)
-            group_architectures.append(
-                {
-                    "arch": arch,
-                    "arch_tag": arch_tag,
-                    "platform": ARCH_TO_PLATFORM[arch],
-                    "parent_refs": [
-                        image_ref(registry, owner, repository, parent, arch_tag)
-                        for parent in group["parents"]
-                    ],
-                    "image_refs": [
-                        next(
-                            arch_plan["arch_ref"]
-                            for arch_plan in images_by_name[image]["architectures"]
-                            if arch_plan["arch"] == arch
-                        )
-                        for image in group["images"]
-                    ],
-                    "commands": {
-                        "kolla_build_push": kolla_build_command(
-                            registry,
-                            owner,
-                            repository,
-                            group["images"],
-                            release,
-                            distro,
-                            arch,
-                            arch_tag,
-                            f"artifacts/kolla-summary/{group['name']}-{arch}.json",
-                            f"artifacts/kolla-logs/{group['name']}-{arch}",
-                            skip_existing=True,
-                        )
-                    },
-                }
-            )
-        planned_build_groups.append({**group, "architectures": group_architectures})
-
     return {
         "dry_run": True,
-        "release": release,
-        "distro": distro["name"],
-        "distro_version": distro["version"],
+        "candidate_id": candidate_id,
+        "stream": stream["id"],
+        "release": stream["release"],
+        "distro": stream["distro"],
+        "distro_version": stream["base_tag"],
+        "kolla_version": stream["kolla_version"],
+        "kolla_ansible_version": stream["kolla_ansible_version"],
         "profile": profile["name"],
         "image_filter": image_filter,
+        "scope": {
+            "profile": profile["name"],
+            "image": scope_image,
+            "image_count": len(selected_images),
+        },
+        "approval": {
+            "allowed": requirement is not None,
+            "required_variable": requirement.variable if requirement else None,
+            "phrase": requirement.phrase if requirement else None,
+        },
         "registry": registry,
         "owner": owner,
         "repository": repository,
-        "publish_summary_file": publish_summary_file(deploy_tag),
-        "kolla_ansible_lock_file": kolla_ansible_lock_file(deploy_tag),
-        "build": {
-            "parents": {
-                "images": parent_images,
-                "architectures": parent_architectures,
-            },
-            "groups": planned_build_groups,
-        },
+        "publish_summary_file": publish_summary_file(stream["id"]),
+        "kolla_ansible_lock_file": (
+            kolla_ansible_lock_file(stream["id"])
+            if profile["name"] == "deployment" and image_filter is None
+            else None
+        ),
+        "build": {"architectures": build_architectures},
         "images": images,
     }
 
@@ -358,15 +318,17 @@ def main() -> int:
         print("Refusing to render publish plan without --dry-run.", file=sys.stderr)
         return 2
 
-    matrix = load_json(MATRIX_PATH)
-    if args.release != matrix["release"]:
-        print(f"Unsupported release: {args.release}", file=sys.stderr)
-        return 2
-
     try:
-        distro = find_distro(matrix, args.distro, args.distro_version)
-        profile = load_profile(args.profile)
-        plan = build_plan(matrix, profile, args.release, distro, args.image)
+        matrix = load_matrix()
+        stream = find_stream(matrix, args.stream)
+        profile = resolve_profile(load_profile(args.profile), stream)
+        plan = build_plan(
+            matrix,
+            profile,
+            stream,
+            args.image,
+            args.candidate_id,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

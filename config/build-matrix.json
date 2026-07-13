@@ -1,29 +1,22 @@
 {
-  "schema_version": 1,
-  "owner": "supergate-jhbyun",
+  "schema_version": 2,
+  "owner": "supergate-hub",
   "repository": "kolla-container-images",
   "registry": "ghcr.io",
-  "release": "2025.1",
-  "profiles": [
-    "core",
-    "deployment"
+  "profiles": ["core", "deployment"],
+  "streams": [
+    {"id": "2025.1-rocky-9", "release": "2025.1", "kolla_version": "20.4.0", "kolla_ansible_version": "20.4.0", "distro": "rocky", "base_tag": "9", "tag_token": "9", "publish_enabled": true},
+    {"id": "2025.1-rocky-10", "release": "2025.1", "kolla_version": "20.4.0", "kolla_ansible_version": "20.4.0", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
+    {"id": "2025.1-ubuntu-noble", "release": "2025.1", "kolla_version": "20.4.0", "kolla_ansible_version": "20.4.0", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true},
+    {"id": "2025.2-rocky-10", "release": "2025.2", "kolla_version": "21.1.0", "kolla_ansible_version": "21.1.0", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
+    {"id": "2025.2-ubuntu-noble", "release": "2025.2", "kolla_version": "21.1.0", "kolla_ansible_version": "21.1.0", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true},
+    {"id": "2026.1-rocky-10", "release": "2026.1", "kolla_version": "22.0.0", "kolla_ansible_version": "22.0.0", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
+    {"id": "2026.1-ubuntu-noble", "release": "2026.1", "kolla_version": "22.0.0", "kolla_ansible_version": "22.0.0", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true}
   ],
-  "distros": [
-    {
-      "name": "rocky",
-      "version": "9"
-    },
-    {
-      "name": "ubuntu",
-      "version": "24.04"
-    }
-  ],
-  "architectures": [
-    "amd64",
-    "arm64"
-  ],
+  "architectures": ["amd64", "arm64"],
   "tag_policy": {
-    "deploy_tag_template": "{release}-{distro}-{distro_version}",
-    "arch_tag_template": "{release}-{distro}-{distro_version}-{arch}"
+    "deploy_tag_template": "{release}-{distro}-{tag_token}",
+    "candidate_tag_template": "{release}-{distro}-{tag_token}-candidate-{candidate_id}",
+    "candidate_arch_tag_template": "{release}-{distro}-{tag_token}-candidate-{candidate_id}-{arch}"
   }
 }

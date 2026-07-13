@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.profile_resolver import find_stream, resolve_profile
+
 
 ROOT = Path(__file__).resolve().parents[1]
+MATRIX_PATH = ROOT / "config" / "build-matrix.json"
 PROFILE_PATH = ROOT / "config" / "profiles" / "deployment.json"
-PLAN_PUBLISH = ROOT / "scripts" / "plan-publish.py"
-GENERATE_LOCK = ROOT / "scripts" / "generate-lock.py"
-VALIDATE_SUMMARY = ROOT / "scripts" / "validate-publish-summary.py"
 
-EXPECTED_LEAVES = {
+EXPECTED_COUNTS = {
+    "2025.1-rocky-9": 63,
+    "2025.1-rocky-10": 63,
+    "2025.1-ubuntu-noble": 64,
+    "2025.2-rocky-10": 63,
+    "2025.2-ubuntu-noble": 64,
+    "2026.1-rocky-10": 65,
+    "2026.1-ubuntu-noble": 66,
+}
+
+BASE_LEAVES = {
     "cron",
     "fluentd",
     "glance-api",
@@ -69,288 +76,313 @@ EXPECTED_LEAVES = {
     "rabbitmq",
 }
 
-EXPECTED_VARIABLES = {
-    "cron": ["cron_image_full"],
-    "fluentd": ["fluentd_image_full"],
-    "glance-api": ["glance_api_image_full"],
-    "grafana": ["grafana_image_full"],
-    "haproxy": ["haproxy_image_full"],
-    "heat-api": ["heat_api_image_full"],
-    "heat-api-cfn": ["heat_api_cfn_image_full"],
-    "heat-engine": ["heat_engine_image_full"],
-    "horizon": ["horizon_image_full"],
-    "keepalived": ["keepalived_image_full"],
-    "keystone": ["keystone_image_full"],
-    "keystone-fernet": ["keystone_fernet_image_full"],
-    "keystone-ssh": ["keystone_ssh_image_full"],
-    "kolla-toolbox": ["kolla_toolbox_image_full"],
-    "mariadb-server": ["mariadb_image_full"],
-    "memcached": ["memcached_image_full"],
-    "neutron-metadata-agent": [
-        "neutron_metadata_agent_image_full",
-        "neutron_ovn_metadata_agent_image_full",
-    ],
-    "neutron-server": ["neutron_server_image_full"],
-    "nova-api": ["nova_api_image_full"],
-    "nova-compute": ["nova_compute_image_full"],
-    "nova-conductor": [
-        "nova_conductor_image_full",
-        "nova_super_conductor_image_full",
-    ],
-    "nova-libvirt": ["nova_libvirt_image_full"],
-    "nova-novncproxy": ["nova_novncproxy_image_full"],
-    "nova-scheduler": ["nova_scheduler_image_full"],
-    "nova-ssh": ["nova_ssh_image_full"],
-    "octavia-api": ["octavia_api_image_full"],
-    "octavia-driver-agent": ["octavia_driver_agent_image_full"],
-    "octavia-health-manager": ["octavia_health_manager_image_full"],
-    "octavia-housekeeping": ["octavia_housekeeping_image_full"],
-    "octavia-worker": ["octavia_worker_image_full"],
-    "opensearch": ["opensearch_image_full"],
-    "opensearch-dashboards": ["opensearch_dashboards_image_full"],
-    "openvswitch-db-server": ["openvswitch_db_image_full"],
-    "openvswitch-vswitchd": ["openvswitch_vswitchd_image_full"],
-    "ovn-controller": ["ovn_controller_image_full"],
-    "ovn-nb-db-server": ["ovn_nb_db_image_full"],
-    "ovn-northd": ["ovn_northd_image_full"],
-    "ovn-sb-db-relay": ["ovn_sb_db_relay_image_full"],
-    "ovn-sb-db-server": ["ovn_sb_db_image_full"],
-    "placement-api": ["placement_api_image_full"],
-    "prometheus-alertmanager": ["prometheus_alertmanager_image_full"],
-    "prometheus-blackbox-exporter": ["prometheus_blackbox_exporter_image_full"],
-    "prometheus-cadvisor": ["prometheus_cadvisor_image_full"],
-    "prometheus-elasticsearch-exporter": [
-        "prometheus_elasticsearch_exporter_image_full"
-    ],
-    "prometheus-libvirt-exporter": ["prometheus_libvirt_exporter_image_full"],
-    "prometheus-memcached-exporter": [
-        "prometheus_memcached_exporter_image_full"
-    ],
-    "prometheus-mysqld-exporter": ["prometheus_mysqld_exporter_image_full"],
-    "prometheus-node-exporter": ["prometheus_node_exporter_image_full"],
-    "prometheus-openstack-exporter": [
-        "prometheus_openstack_exporter_image_full"
-    ],
-    "prometheus-server": ["prometheus_server_image_full"],
-    "proxysql": ["proxysql_image_full"],
-    "rabbitmq": ["rabbitmq_image_full"],
+CINDER_LEAVES = {
+    "cinder-api",
+    "cinder-backup",
+    "cinder-scheduler",
+    "cinder-volume",
 }
-
-EXPECTED_PARENTS = {
-    "base",
-    "glance-base",
-    "heat-base",
-    "keystone-base",
-    "mariadb-base",
-    "neutron-base",
-    "nova-base",
-    "octavia-base",
-    "openstack-base",
-    "openvswitch-base",
-    "ovn-base",
-    "placement-base",
-    "prometheus-base",
+MANILA_LEAVES = {
+    "manila-api",
+    "manila-data",
+    "manila-scheduler",
+    "manila-share",
 }
+OCTAVIA_LEAVES = {
+    "octavia-api",
+    "octavia-driver-agent",
+    "octavia-health-manager",
+    "octavia-housekeeping",
+    "octavia-worker",
+}
+VALKEY_LEAVES = {"valkey-server", "valkey-sentinel"}
+LOGGING_LEAVES = {"fluentd", "opensearch", "opensearch-dashboards"}
+BASE_PROMETHEUS_IMAGES = [
+    "prometheus-alertmanager",
+    "prometheus-blackbox-exporter",
+    "prometheus-cadvisor",
+    "prometheus-elasticsearch-exporter",
+    "prometheus-libvirt-exporter",
+    "prometheus-memcached-exporter",
+    "prometheus-mysqld-exporter",
+    "prometheus-node-exporter",
+    "prometheus-openstack-exporter",
+    "prometheus-server",
+]
+COMMON_ADDITIONS = CINDER_LEAVES | MANILA_LEAVES | VALKEY_LEAVES | {"iscsid"}
+NEW_2026_EXPORTERS = {
+    "prometheus-openstack-network-exporter",
+    "prometheus-valkey-exporter",
+}
+NEUTRON_ALIASES = [
+    "neutron_rpc_server_image_full",
+    "neutron_periodic_worker_image_full",
+    "neutron_ovn_maintenance_worker_image_full",
+]
+EXCLUDED_LEAVES = {"etcd", "multipathd", "redis", "redis-sentinel"}
+EXCLUDED_FAMILY_PREFIXES = ("ceph-", "designate-", "swift-", "ironic-")
 
-
-def load_profile() -> dict:
-    return json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
-
-
-def run_plan() -> dict:
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(PLAN_PUBLISH),
-            "--profile",
-            "deployment",
-            "--release",
-            "2025.1",
-            "--distro",
-            "rocky",
-            "--distro-version",
-            "9",
-            "--dry-run",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        raise AssertionError(result.stderr)
-    return json.loads(result.stdout)
-
-
-def digest(index: int) -> str:
-    return f"sha256:{index:064x}"
-
-
-def deployment_summary(profile: dict) -> dict:
-    tag = "2025.1-rocky-9"
-    return {
-        "release": "2025.1",
-        "distro": "rocky",
-        "distro_version": "9",
-        "profile": "deployment",
-        "registry": "ghcr.io",
-        "owner": "supergate-jhbyun",
-        "repository": "kolla-container-images",
+EXPECTED_NEW_GROUPS = {
+    "coordination": {
+        "name": "coordination",
+        "parent": "valkey-base",
+        "parents": ["base", "valkey-base"],
+        "images": ["valkey-server", "valkey-sentinel"],
+    },
+    "storage-runtime": {
+        "name": "storage-runtime",
+        "parent": "base",
+        "parents": ["base"],
+        "images": ["iscsid", "tgtd"],
+    },
+    "cinder": {
+        "name": "cinder",
+        "parent": "cinder-base",
+        "parents": ["base", "openstack-base", "cinder-base"],
         "images": [
-            {
-                "image": image["name"],
-                "kolla_ansible_variables": image["kolla_ansible_variables"],
-                "deploy_ref": (
-                    "ghcr.io/supergate-jhbyun/kolla-container-images/"
-                    f"{image['name']}:{tag}"
-                ),
-                "deploy_tag": tag,
-                "manifest_digest": digest(index),
-                "architectures": [
-                    {
-                        "arch": arch,
-                        "platform": f"linux/{arch}",
-                        "arch_ref": (
-                            "ghcr.io/supergate-jhbyun/kolla-container-images/"
-                            f"{image['name']}:{tag}-{arch}"
-                        ),
-                    }
-                    for arch in ("amd64", "arm64")
-                ],
-            }
-            for index, image in enumerate(profile["images"], 1)
+            "cinder-api",
+            "cinder-backup",
+            "cinder-scheduler",
+            "cinder-volume",
         ],
-    }
+    },
+    "manila": {
+        "name": "manila",
+        "parent": "manila-base",
+        "parents": ["base", "openstack-base", "manila-base"],
+        "images": [
+            "manila-api",
+            "manila-data",
+            "manila-scheduler",
+            "manila-share",
+        ],
+    },
+}
+
+EXPECTED_NEW_IMAGE_MAPPINGS = {
+    "cinder-api": {
+        "name": "cinder-api",
+        "kolla_ansible_variables": ["cinder_api_image_full"],
+    },
+    "cinder-backup": {
+        "name": "cinder-backup",
+        "kolla_ansible_variables": ["cinder_backup_image_full"],
+    },
+    "cinder-scheduler": {
+        "name": "cinder-scheduler",
+        "kolla_ansible_variables": ["cinder_scheduler_image_full"],
+    },
+    "cinder-volume": {
+        "name": "cinder-volume",
+        "kolla_ansible_variables": ["cinder_volume_image_full"],
+    },
+    "iscsid": {
+        "name": "iscsid",
+        "kolla_ansible_variables": ["iscsid_image_full"],
+    },
+    "manila-api": {
+        "name": "manila-api",
+        "kolla_ansible_variables": ["manila_api_image_full"],
+    },
+    "manila-data": {
+        "name": "manila-data",
+        "kolla_ansible_variables": ["manila_data_image_full"],
+    },
+    "manila-scheduler": {
+        "name": "manila-scheduler",
+        "kolla_ansible_variables": ["manila_scheduler_image_full"],
+    },
+    "manila-share": {
+        "name": "manila-share",
+        "kolla_ansible_variables": ["manila_share_image_full"],
+    },
+    "valkey-server": {
+        "name": "valkey-server",
+        "kolla_ansible_variables": ["valkey_image_full"],
+    },
+    "valkey-sentinel": {
+        "name": "valkey-sentinel",
+        "kolla_ansible_variables": ["valkey_sentinel_image_full"],
+    },
+    "tgtd": {
+        "name": "tgtd",
+        "kolla_ansible_variables": ["tgtd_image_full"],
+        "applies_to": {"distros": ["ubuntu"]},
+    },
+    "prometheus-openstack-network-exporter": {
+        "name": "prometheus-openstack-network-exporter",
+        "kolla_ansible_variables": [
+            "prometheus_openstack_network_exporter_image_full"
+        ],
+        "applies_to": {"releases": ["2026.1"]},
+    },
+    "prometheus-valkey-exporter": {
+        "name": "prometheus-valkey-exporter",
+        "kolla_ansible_variables": ["prometheus_valkey_exporter_image_full"],
+        "applies_to": {"releases": ["2026.1"]},
+    },
+}
+
+
+def load_json(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 class DeploymentProfileTest(unittest.TestCase):
-    def test_observed_candidates_equal_fresh_deploy_closure(self) -> None:
-        profile_images = {image["name"] for image in load_profile()["images"]}
+    def setUp(self) -> None:
+        self.matrix = load_json(MATRIX_PATH)
+        self.profile = load_json(PROFILE_PATH)
 
-        self.assertEqual(len(profile_images), 52)
-        self.assertEqual(profile_images, EXPECTED_LEAVES)
-        self.assertEqual(EXPECTED_LEAVES - profile_images, set())
-        self.assertEqual(profile_images - EXPECTED_LEAVES, set())
+    def test_resolved_closure_is_exact_for_every_stream(self) -> None:
+        required_common = (
+            CINDER_LEAVES
+            | MANILA_LEAVES
+            | OCTAVIA_LEAVES
+            | VALKEY_LEAVES
+            | LOGGING_LEAVES
+            | set(BASE_PROMETHEUS_IMAGES)
+            | {"grafana", "iscsid"}
+        )
 
-    def test_image_variable_mapping_is_exact_and_aliases_are_present(self) -> None:
-        profile = load_profile()
-        actual = {
-            image["name"]: image["kolla_ansible_variables"]
-            for image in profile["images"]
+        for stream_id, expected_count in EXPECTED_COUNTS.items():
+            with self.subTest(stream=stream_id):
+                stream = find_stream(self.matrix, stream_id)
+                resolved = resolve_profile(self.profile, stream)
+                images = resolved["images"]
+                image_names = {image["name"] for image in images}
+
+                expected_names = BASE_LEAVES | COMMON_ADDITIONS
+                if stream["distro"] == "ubuntu":
+                    expected_names |= {"tgtd"}
+                if stream["release"] == "2026.1":
+                    expected_names |= NEW_2026_EXPORTERS
+
+                self.assertEqual(len(image_names), expected_count)
+                self.assertEqual(image_names, expected_names)
+                self.assertEqual(len(images), len(image_names))
+                self.assertTrue(required_common <= image_names)
+
+                self.assertEqual("tgtd" in image_names, stream["distro"] == "ubuntu")
+                self.assertEqual(
+                    NEW_2026_EXPORTERS <= image_names,
+                    stream["release"] == "2026.1",
+                )
+                if stream["release"] != "2026.1":
+                    self.assertTrue(NEW_2026_EXPORTERS.isdisjoint(image_names))
+
+                self.assertTrue(EXCLUDED_LEAVES.isdisjoint(image_names))
+                self.assertFalse(
+                    any(
+                        image == "ceph"
+                        or image == "designate"
+                        or image == "swift"
+                        or image == "ironic"
+                        or image.startswith(EXCLUDED_FAMILY_PREFIXES)
+                        for image in image_names
+                    )
+                )
+                self.assertFalse(
+                    any(
+                        image == "redis" or image.startswith("redis-")
+                        for image in image_names
+                    )
+                )
+
+                neutron = next(
+                    image for image in images if image["name"] == "neutron-server"
+                )
+                expected_neutron_variables = ["neutron_server_image_full"]
+                if stream["release"] in {"2025.2", "2026.1"}:
+                    expected_neutron_variables.extend(NEUTRON_ALIASES)
+                self.assertEqual(
+                    neutron["kolla_ansible_variables"], expected_neutron_variables
+                )
+
+                grouped = [
+                    image
+                    for group in resolved["build_groups"]
+                    for image in group["images"]
+                ]
+                self.assertEqual(len(grouped), len(set(grouped)))
+                self.assertEqual(set(grouped), image_names)
+
+                variables = [
+                    variable
+                    for image in images
+                    for variable in image["kolla_ansible_variables"]
+                ]
+                self.assertTrue(
+                    all("applies_to" not in image for image in resolved["images"])
+                )
+                self.assertEqual(len(variables), len(set(variables)))
+
+    def test_new_build_groups_and_monitoring_membership_are_exact(self) -> None:
+        groups = {group["name"]: group for group in self.profile["build_groups"]}
+        actual_new_groups = {
+            name: groups[name] for name in EXPECTED_NEW_GROUPS if name in groups
         }
-        variables = [variable for values in actual.values() for variable in values]
 
-        self.assertEqual(actual, EXPECTED_VARIABLES)
-        self.assertEqual(len(variables), 54)
-        self.assertEqual(len(variables), len(set(variables)))
-
-    def test_build_groups_cover_every_leaf_exactly_once(self) -> None:
-        profile = load_profile()
-        grouped = [image for group in profile["build_groups"] for image in group["images"]]
-
-        self.assertEqual(len(profile["build_groups"]), 17)
-        self.assertEqual(len(grouped), 52)
-        self.assertEqual(len(grouped), len(set(grouped)))
-        self.assertEqual(set(grouped), EXPECTED_LEAVES)
-
-    def test_planner_has_exact_parent_dependency_closure(self) -> None:
-        plan = run_plan()
-
-        self.assertEqual(set(plan["build"]["parents"]["images"]), EXPECTED_PARENTS)
-        self.assertEqual(len(plan["build"]["parents"]["images"]), 13)
-        ovn = next(group for group in plan["build"]["groups"] if group["name"] == "ovn")
+        self.assertEqual(actual_new_groups, EXPECTED_NEW_GROUPS)
         self.assertEqual(
-            ovn["parents"],
-            ["base", "openvswitch-base", "ovn-base"],
-        )
-        self.assertEqual(
-            [ref.rsplit("/", 1)[-1].split(":", 1)[0] for ref in ovn["architectures"][0]["parent_refs"]],
-            ovn["parents"],
+            groups["monitoring"]["images"],
+            BASE_PROMETHEUS_IMAGES
+            + [
+                "prometheus-openstack-network-exporter",
+                "prometheus-valkey-exporter",
+            ],
         )
 
-    def test_planner_renders_all_native_architecture_and_deploy_refs(self) -> None:
-        plan = run_plan()
-        arch_refs = [
-            architecture["arch_ref"]
-            for image in plan["images"]
-            for architecture in image["architectures"]
-        ]
-        deploy_refs = [image["deploy_ref"] for image in plan["images"]]
+    def test_new_image_mappings_and_selectors_are_exact(self) -> None:
+        images = {image["name"]: image for image in self.profile["images"]}
+        actual_new_mappings = {
+            name: images[name]
+            for name in EXPECTED_NEW_IMAGE_MAPPINGS
+            if name in images
+        }
 
-        self.assertEqual(len(plan["build"]["parents"]["architectures"]), 2)
-        self.assertEqual(len(plan["build"]["groups"]), 17)
+        self.assertEqual(actual_new_mappings, EXPECTED_NEW_IMAGE_MAPPINGS)
+
+    def test_database_parent_chain_is_pinned_to_each_kolla_release(self) -> None:
+        groups = {group["name"]: group for group in self.profile["build_groups"]}
         self.assertEqual(
-            sum(len(group["architectures"]) for group in plan["build"]["groups"]),
-            34,
+            groups["database-2025-1"],
+            {
+                "name": "database-2025-1",
+                "parent": "mariadb-base",
+                "parents": ["base", "mariadb-base"],
+                "images": ["mariadb-server"],
+                "applies_to": {"releases": ["2025.1"]},
+            },
         )
-        self.assertEqual(len(arch_refs), 104)
-        self.assertEqual(len(set(arch_refs)), 104)
-        self.assertEqual(len(deploy_refs), 52)
-        self.assertEqual(len(set(deploy_refs)), 52)
         self.assertEqual(
-            {architecture["platform"] for image in plan["images"] for architecture in image["architectures"]},
-            {"linux/amd64", "linux/arm64"},
+            groups["database-modern"],
+            {
+                "name": "database-modern",
+                "parent": "base",
+                "parents": ["base"],
+                "images": ["mariadb-server"],
+                "applies_to": {"releases": ["2025.2", "2026.1"]},
+            },
         )
+        self.assertNotIn("database", groups)
 
-    def test_full_summary_generates_digest_pinned_candidate_lock(self) -> None:
-        profile = load_profile()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            summary_path = temp_path / "publish-summary.json"
-            lock_path = temp_path / "deployment-lock.yml"
-            summary = deployment_summary(profile)
-            summary_path.write_text(
-                json.dumps(summary),
-                encoding="utf-8",
-            )
-
-            summary_result = subprocess.run(
-                [
-                    sys.executable,
-                    str(VALIDATE_SUMMARY),
-                    "--publish-summary",
-                    str(summary_path),
-                    "--profile",
-                    "deployment",
-                    "--release",
-                    "2025.1",
-                    "--distro",
-                    "rocky",
-                    "--distro-version",
-                    "9",
-                ],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(summary_result.returncode, 0, summary_result.stderr)
-
-            generate_result = subprocess.run(
-                [
-                    sys.executable,
-                    str(GENERATE_LOCK),
-                    "--publish-summary",
-                    str(summary_path),
-                    "--profile",
-                    "deployment",
-                    "--release",
-                    "2025.1",
-                    "--distro",
-                    "rocky",
-                    "--distro-version",
-                    "9",
-                    "--output",
-                    str(lock_path),
-                ],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(generate_result.returncode, 0, generate_result.stderr)
-            lock = lock_path.read_text(encoding="utf-8")
-            for image in summary["images"]:
-                expected_ref = f'{image["deploy_ref"]}@{image["manifest_digest"]}'
-                for variable in image["kolla_ansible_variables"]:
-                    self.assertIn(f'{variable}: "{expected_ref}"', lock)
+        for stream_id in EXPECTED_COUNTS:
+            with self.subTest(stream=stream_id):
+                stream = find_stream(self.matrix, stream_id)
+                resolved = resolve_profile(self.profile, stream)
+                database = next(
+                    group
+                    for group in resolved["build_groups"]
+                    if "mariadb-server" in group["images"]
+                )
+                expected_parents = (
+                    ["base", "mariadb-base"]
+                    if stream["release"] == "2025.1"
+                    else ["base"]
+                )
+                self.assertEqual(database["parents"], expected_parents)
+                self.assertEqual(database["parent"], expected_parents[-1])
+                self.assertNotIn("applies_to", database)
 
 
 if __name__ == "__main__":

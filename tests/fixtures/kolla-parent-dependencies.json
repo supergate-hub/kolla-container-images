@@ -1,0 +1,280 @@
+{
+  "schema_version": 1,
+  "source": {
+    "command": "kolla-build --list-dependencies",
+    "command_template": "kolla-build --base <distro> --base-tag <base_tag> --base-arch x86_64 --platform linux/amd64 --openstack-release <release> --list-dependencies <anchored_leaf_regexes>",
+    "leaf_arguments": "One ^<image>$ argument per resolved scope leaf, in resolved profile image order",
+    "normalization": "Verify every declared parent edge against the Kolla dependency graph, then walk resolved build groups in catalog order and each root-to-leaf parents list in order; emit each non-leaf parent on first occurrence"
+  },
+  "streams": [
+    {
+      "id": "2025.1-rocky-9",
+      "kolla_version": "20.4.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "mariadb-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2025.1-rocky-10",
+      "kolla_version": "20.4.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "mariadb-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2025.1-ubuntu-noble",
+      "kolla_version": "20.4.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "mariadb-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2025.2-rocky-10",
+      "kolla_version": "21.1.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2025.2-ubuntu-noble",
+      "kolla_version": "21.1.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2026.1-rocky-10",
+      "kolla_version": "22.0.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2026.1-ubuntu-noble",
+      "kolla_version": "22.0.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    }
+  ]
+}

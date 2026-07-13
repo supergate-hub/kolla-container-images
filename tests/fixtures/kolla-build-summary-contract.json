@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "source_extraction": "ast.get_source_segment for KollaWorker.summary",
+  "summary_method_source": "def summary(self):\n        \"\"\"Walk the dictionary of images statuses and print results.\"\"\"\n        # For debug we print the logs again if the image error'd. This is to\n        # help us debug and it will be extra helpful in the gate.\n        for image in self.images:\n            if image.status in STATUS_ERRORS:\n                LOG.debug(\"Image %s failed\", image.name)\n\n        self.get_image_statuses()\n        results = {\n            'built': [],\n            'failed': [],\n            'not_matched': [],\n            'skipped': [],\n            'unbuildable': [],\n        }\n\n        if self.image_statuses_good:\n            LOG.info(\"=========================\")\n            LOG.info(\"Successfully built images\")\n            LOG.info(\"=========================\")\n            for name in sorted(self.image_statuses_good.keys()):\n                LOG.info(name)\n                results['built'].append({\n                    'name': name,\n                })\n\n        if self.image_statuses_bad or self.image_statuses_allowed_to_fail:\n            LOG.info(\"===========================\")\n            LOG.info(\"Images that failed to build\")\n            LOG.info(\"===========================\")\n            all_bad_statuses = self.image_statuses_bad.copy()\n            all_bad_statuses.update(self.image_statuses_allowed_to_fail)\n            for name, status in sorted(all_bad_statuses.items()):\n                if name in self.image_statuses_allowed_to_fail:\n                    LOG.error('%s Failed with status: %s (allowed to fail)',\n                              name, status.value)\n                else:\n                    LOG.error('%s Failed with status: %s', name, status.value)\n\n                results['failed'].append({\n                    'name': name,\n                    'status': status.value,\n                })\n                if self.conf.logs_dir and status == Status.ERROR:\n                    linkname = os.path.join(self.conf.logs_dir,\n                                            \"000_FAILED_%s.log\" % name)\n                    try:\n                        os.lstat(linkname)\n                        os.remove(linkname)\n                    except OSError:\n                        pass\n\n                    os.symlink(\"%s.log\" % name, linkname)\n\n        if self.image_statuses_unmatched:\n            LOG.debug(\"=====================================\")\n            LOG.debug(\"Images not matched for build by regex\")\n            LOG.debug(\"=====================================\")\n            for name in sorted(self.image_statuses_unmatched.keys()):\n                LOG.debug(name)\n                results['not_matched'].append({\n                    'name': name,\n                })\n\n        if self.image_statuses_skipped:\n            LOG.info(\"===================================\")\n            LOG.info(\"Images skipped due to build options\")\n            LOG.info(\"===================================\")\n            for name in sorted(self.image_statuses_skipped.keys()):\n                LOG.info(name)\n                results['skipped'].append({\n                    'name': name,\n                })\n\n        if self.image_statuses_unbuildable:\n            LOG.info(\"=========================================\")\n            LOG.info(\"Images not buildable due to build options\")\n            LOG.info(\"=========================================\")\n            for name in sorted(self.image_statuses_unbuildable.keys()):\n                LOG.info(name)\n                results['unbuildable'].append({\n                    'name': name,\n                })\n\n        if self.conf.format == 'json':\n\n            def json_summary(f, **kwargs):\n                json.dump(results, f, **kwargs)\n\n            if self.conf.summary_json_file:\n                try:\n                    with open(self.conf.summary_json_file, \"w\") as f:\n                        json_summary(f, indent=4)\n                except OSError as e:\n                    LOG.error('Failed to write JSON build summary to '\n                              f'{self.conf.summary_json_file}')\n                    LOG.error(f'Exception caught: {e}')\n                    sys.exit(1)\n\n            else:\n                # NOTE(mgoddard): Keep single line output for\n                # backwards-compatibility.\n                json_summary(sys.stdout)\n\n        return results",
+  "summary_method_sha256": "02c656c628dc9f127ada22d993e0693feae6c94ee5f42c5d06e9a54fccd959f0",
+  "versions": {
+    "20.4.0": {
+      "distribution": "kolla==20.4.0",
+      "source_path": "kolla/image/kolla_worker.py",
+      "module_sha256": "6a035d50858519474d9b60bf7e502621603c151375ca1bbfc9d06abb7fdf658a",
+      "summary_method_sha256": "02c656c628dc9f127ada22d993e0693feae6c94ee5f42c5d06e9a54fccd959f0"
+    },
+    "21.1.0": {
+      "distribution": "kolla==21.1.0",
+      "source_path": "kolla/image/kolla_worker.py",
+      "module_sha256": "fbaac910754a33c79490d781f9c137953d40ef6ed1624cdd74661970c0d86721",
+      "summary_method_sha256": "02c656c628dc9f127ada22d993e0693feae6c94ee5f42c5d06e9a54fccd959f0"
+    },
+    "22.0.0": {
+      "distribution": "kolla==22.0.0",
+      "source_path": "kolla/image/kolla_worker.py",
+      "module_sha256": "a70c25776f2a10c73aa02fe90a9143fe269af1a1ca39bb2e6f989d737205ef9f",
+      "summary_method_sha256": "02c656c628dc9f127ada22d993e0693feae6c94ee5f42c5d06e9a54fccd959f0"
+    }
+  },
+  "top_level_keys": ["built", "failed", "not_matched", "skipped", "unbuildable"],
+  "entry_keys": {
+    "built": ["name"],
+    "failed": ["name", "status"],
+    "not_matched": ["name"],
+    "skipped": ["name"],
+    "unbuildable": ["name"]
+  },
+  "failed_status_values": ["connection_error", "error", "parent_error", "push_error"]
+}

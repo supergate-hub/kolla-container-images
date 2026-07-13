@@ -1,174 +1,186 @@
 #!/usr/bin/env python3
-"""Generate a digest-pinned Kolla-Ansible image lock from a publish summary."""
+"""Generate a generic digest-bound candidate lock from a publish summary."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from profile_resolver import (
+    find_stream,
+    load_matrix,
+    load_profile,
+    resolve_profile,
+    validate_candidate_id,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
-MATRIX_PATH = ROOT / "config" / "build-matrix.json"
-PROFILES_DIR = ROOT / "config" / "profiles"
-DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+SUMMARY_VALIDATOR_PATH = ROOT / "scripts" / "validate-publish-summary.py"
+
+
+def yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        result[key] = value
+    return result
 
 
 def load_json(path: Path) -> Any:
     with path.open(encoding="utf-8") as file_obj:
-        return json.load(file_obj)
+        return json.load(file_obj, object_pairs_hook=reject_duplicate_keys)
+
+
+def load_summary_validator() -> Callable[..., list[str]]:
+    spec = importlib.util.spec_from_file_location(
+        "_validate_publish_summary",
+        SUMMARY_VALIDATOR_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load summary validator: {SUMMARY_VALIDATOR_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.validate_publish_summary
+
+
+VALIDATE_PUBLISH_SUMMARY = load_summary_validator()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render a Kolla-Ansible *_image_full lock from publish digest output."
+        description="Render a generic Kolla-Ansible candidate lock from publish output."
     )
     parser.add_argument("--publish-summary", required=True, type=Path)
+    parser.add_argument("--stream", required=True, help="Build stream ID")
     parser.add_argument("--profile", required=True)
-    parser.add_argument("--release", required=True)
-    parser.add_argument("--distro", required=True)
-    parser.add_argument("--distro-version", required=True)
+    parser.add_argument("--candidate-id", required=True)
     parser.add_argument("--output", type=Path, help="Write YAML lock here instead of stdout")
     return parser.parse_args()
 
 
-def find_distro(matrix: dict[str, Any], name: str, version: str) -> dict[str, str]:
-    for distro in matrix["distros"]:
-        if distro["name"] == name and distro["version"] == version:
-            return distro
-    raise ValueError(f"unsupported distro/version: {name}-{version}")
-
-
-def load_profile(name: str) -> dict[str, Any]:
-    profile_path = PROFILES_DIR / f"{name}.json"
-    if not profile_path.exists():
-        raise ValueError(f"profile does not exist: {profile_path.relative_to(ROOT)}")
-    profile = load_json(profile_path)
-    if profile.get("name") != name:
-        raise ValueError(f"profile name mismatch in {profile_path.relative_to(ROOT)}")
-    return profile
-
-
-def render_tag(template: str, release: str, distro: dict[str, str]) -> str:
-    return template.format(
-        release=release,
-        distro=distro["name"],
-        distro_version=distro["version"],
+def exact_mapping(actual: Any, expected: dict[str, Any]) -> bool:
+    if not isinstance(actual, dict) or set(actual) != set(expected):
+        return False
+    return all(
+        type(actual[key]) is type(expected_value) and actual[key] == expected_value
+        for key, expected_value in expected.items()
     )
-
-
-def image_ref(registry: str, owner: str, repository: str, image: str, tag: str) -> str:
-    return f"{registry}/{owner}/{repository}/{image}:{tag}"
-
-
-def validate_summary_scope(
-    summary: dict[str, Any],
-    matrix: dict[str, Any],
-    profile_name: str,
-    release: str,
-    distro: dict[str, str],
-) -> None:
-    expected = {
-        "release": release,
-        "distro": distro["name"],
-        "distro_version": distro["version"],
-        "profile": profile_name,
-        "registry": matrix["registry"],
-        "owner": matrix["owner"],
-        "repository": matrix["repository"],
-    }
-    for key, expected_value in expected.items():
-        actual = summary.get(key)
-        if actual != expected_value:
-            raise ValueError(f"publish summary {key} must be {expected_value!r}, got {actual!r}")
-
-
-def manifest_digest(image_summary: dict[str, Any]) -> str:
-    digest = image_summary.get("manifest_digest") or image_summary.get("digest")
-    if digest is None:
-        metadata = image_summary.get("manifest_metadata")
-        if isinstance(metadata, dict):
-            digest = metadata.get("containerimage.digest")
-    if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
-        image = image_summary.get("image", "<unknown>")
-        raise ValueError(f"{image} manifest_digest must be sha256:<64 hex chars>")
-    return digest
-
-
-def summary_by_image(summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    images = summary.get("images")
-    if not isinstance(images, list):
-        raise ValueError("publish summary images must be a list")
-
-    result: dict[str, dict[str, Any]] = {}
-    for index, image_summary in enumerate(images):
-        if not isinstance(image_summary, dict):
-            raise ValueError(f"publish summary images[{index}] must be an object")
-        image = image_summary.get("image")
-        if not isinstance(image, str) or not image:
-            raise ValueError(f"publish summary images[{index}].image must be a string")
-        if image in result:
-            raise ValueError(f"publish summary contains duplicate image: {image}")
-        result[image] = image_summary
-    return result
 
 
 def render_lock(
     matrix: dict[str, Any],
     profile: dict[str, Any],
-    release: str,
-    distro: dict[str, str],
+    stream: dict[str, Any],
     summary: dict[str, Any],
+    candidate_id: str,
 ) -> str:
-    validate_summary_scope(summary, matrix, profile["name"], release, distro)
+    candidate_id = validate_candidate_id(candidate_id)
+    if profile.get("name") != "deployment":
+        raise ValueError("candidate lock requires profile 'deployment'")
+    if not isinstance(summary, dict):
+        raise ValueError("publish summary must be an object")
+    if summary.get("candidate_id") != candidate_id:
+        raise ValueError(
+            "publish summary candidate ID does not match expected candidate ID"
+        )
 
-    deploy_tag = render_tag(matrix["tag_policy"]["deploy_tag_template"], release, distro)
-    images = summary_by_image(summary)
+    expected_scope = {
+        "profile": "deployment",
+        "image": "all",
+        "image_count": len(profile["images"]),
+    }
+    if not exact_mapping(summary.get("scope"), expected_scope):
+        raise ValueError(
+            "candidate lock requires exact deployment/all scope "
+            f"{expected_scope!r}, got {summary.get('scope')!r}"
+        )
+
+    errors = VALIDATE_PUBLISH_SUMMARY(
+        matrix,
+        profile,
+        stream,
+        summary,
+        False,
+        None,
+        candidate_id,
+    )
+    if errors:
+        details = "\n".join(f"- {error}" for error in errors)
+        raise ValueError(f"publish summary validation failed:\n{details}")
+
+    images = {image["image"]: image for image in summary["images"]}
     lines = [
-        "# Generated by scripts/generate-lock.py from a publish summary.",
-        "# Use this file as a Kolla-Ansible extra vars file.",
+        "# Generated by scripts/generate-lock.py from a complete publish summary.",
+        "# Root-level *_image_full values use deploy tags compatible with Kolla-Ansible.",
+        "# _kolla_candidate_lock binds those tags to immutable manifest digests.",
+        "_kolla_candidate_lock:",
+        "  schema_version: 1",
+        f"  stream: {yaml_string(stream['id'])}",
+        "  scope:",
+        '    profile: "deployment"',
+        '    image: "all"',
+        f"    image_count: {expected_scope['image_count']}",
+        "  images:",
     ]
+    assignment_lines: list[str] = []
+    emitted_variables: set[str] = set()
 
     for profile_image in profile["images"]:
-        image = profile_image["name"]
-        if image not in images:
-            raise ValueError(f"publish summary is missing core image: {image}")
+        image_summary = images[profile_image["name"]]
+        deploy_ref = image_summary["deploy_ref"]
+        manifest_digest = image_summary["manifest_digest"]
+        repository, _deploy_tag = deploy_ref.rsplit(":", 1)
+        immutable_ref = f"{repository}@{manifest_digest}"
+        variables = profile_image["kolla_ansible_variables"]
 
-        image_summary = images[image]
-        expected_ref = image_ref(
-            matrix["registry"],
-            matrix["owner"],
-            matrix["repository"],
-            image,
-            deploy_tag,
-        )
-        deploy_ref = image_summary.get("deploy_ref", expected_ref)
-        if deploy_ref != expected_ref:
-            raise ValueError(
-                f"{image} deploy_ref must be {expected_ref!r}, got {deploy_ref!r}"
+        lines.extend(
+            (
+                f"    {yaml_string(profile_image['name'])}:",
+                f"      deploy_ref: {yaml_string(deploy_ref)}",
+                f"      manifest_digest: {yaml_string(manifest_digest)}",
+                f"      immutable_ref: {yaml_string(immutable_ref)}",
+                "      kolla_ansible_variables:",
             )
+        )
+        for variable in variables:
+            if variable in emitted_variables:
+                raise ValueError(
+                    f"resolved profile contains duplicate variable: {variable}"
+                )
+            emitted_variables.add(variable)
+            lines.append(f"        - {yaml_string(variable)}")
+            assignment_lines.append(f"{variable}: {yaml_string(deploy_ref)}")
 
-        digest_pinned_ref = f"{deploy_ref}@{manifest_digest(image_summary)}"
-        for variable in profile_image["kolla_ansible_variables"]:
-            lines.append(f'{variable}: "{digest_pinned_ref}"')
-
+    lines.extend(assignment_lines)
     return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     args = parse_args()
-    matrix = load_json(MATRIX_PATH)
 
     try:
-        if args.release != matrix["release"]:
-            raise ValueError(f"unsupported release: {args.release}")
-        distro = find_distro(matrix, args.distro, args.distro_version)
-        profile = load_profile(args.profile)
+        matrix = load_matrix()
+        stream = find_stream(matrix, args.stream)
+        profile = resolve_profile(load_profile(args.profile), stream)
         summary = load_json(args.publish_summary)
-        lock_yaml = render_lock(matrix, profile, args.release, distro, summary)
+        lock_yaml = render_lock(
+            matrix,
+            profile,
+            stream,
+            summary,
+            args.candidate_id,
+        )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
