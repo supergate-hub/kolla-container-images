@@ -1,0 +1,199 @@
+{
+  "schema_version": 2,
+  "name": "core",
+  "description": "Digest-lockable Kolla image profile for core OpenStack smoke validation.",
+  "build_groups": [
+    {
+      "name": "identity",
+      "parent": "keystone-base",
+      "images": [
+        "keystone",
+        "keystone-fernet",
+        "keystone-ssh"
+      ]
+    },
+    {
+      "name": "glance",
+      "parent": "glance-base",
+      "images": [
+        "glance-api"
+      ]
+    },
+    {
+      "name": "placement",
+      "parent": "placement-base",
+      "images": [
+        "placement-api"
+      ]
+    },
+    {
+      "name": "compute",
+      "parent": "nova-base",
+      "images": [
+        "nova-api",
+        "nova-scheduler",
+        "nova-conductor",
+        "nova-compute",
+        "nova-libvirt",
+        "nova-ssh",
+        "nova-novncproxy"
+      ]
+    },
+    {
+      "name": "network",
+      "parent": "neutron-base",
+      "images": [
+        "neutron-server",
+        "neutron-dhcp-agent",
+        "neutron-l3-agent",
+        "neutron-metadata-agent",
+        "neutron-openvswitch-agent"
+      ]
+    },
+    {
+      "name": "orchestration",
+      "parent": "heat-base",
+      "images": [
+        "heat-api",
+        "heat-api-cfn",
+        "heat-engine"
+      ]
+    },
+    {
+      "name": "dashboard",
+      "parent": "openstack-base",
+      "images": [
+        "horizon"
+      ]
+    }
+  ],
+  "images": [
+    {
+      "name": "keystone",
+      "kolla_ansible_variables": [
+        "keystone_image_full"
+      ]
+    },
+    {
+      "name": "keystone-fernet",
+      "kolla_ansible_variables": [
+        "keystone_fernet_image_full"
+      ]
+    },
+    {
+      "name": "keystone-ssh",
+      "kolla_ansible_variables": [
+        "keystone_ssh_image_full"
+      ]
+    },
+    {
+      "name": "glance-api",
+      "kolla_ansible_variables": [
+        "glance_api_image_full"
+      ]
+    },
+    {
+      "name": "placement-api",
+      "kolla_ansible_variables": [
+        "placement_api_image_full"
+      ]
+    },
+    {
+      "name": "nova-api",
+      "kolla_ansible_variables": [
+        "nova_api_image_full"
+      ]
+    },
+    {
+      "name": "nova-scheduler",
+      "kolla_ansible_variables": [
+        "nova_scheduler_image_full"
+      ]
+    },
+    {
+      "name": "nova-conductor",
+      "kolla_ansible_variables": [
+        "nova_super_conductor_image_full",
+        "nova_conductor_image_full"
+      ]
+    },
+    {
+      "name": "nova-compute",
+      "kolla_ansible_variables": [
+        "nova_compute_image_full"
+      ]
+    },
+    {
+      "name": "nova-libvirt",
+      "kolla_ansible_variables": [
+        "nova_libvirt_image_full"
+      ]
+    },
+    {
+      "name": "nova-ssh",
+      "kolla_ansible_variables": [
+        "nova_ssh_image_full"
+      ]
+    },
+    {
+      "name": "nova-novncproxy",
+      "kolla_ansible_variables": [
+        "nova_novncproxy_image_full"
+      ]
+    },
+    {
+      "name": "neutron-server",
+      "kolla_ansible_variables": [
+        "neutron_server_image_full"
+      ]
+    },
+    {
+      "name": "neutron-dhcp-agent",
+      "kolla_ansible_variables": [
+        "neutron_dhcp_agent_image_full"
+      ]
+    },
+    {
+      "name": "neutron-l3-agent",
+      "kolla_ansible_variables": [
+        "neutron_l3_agent_image_full"
+      ]
+    },
+    {
+      "name": "neutron-metadata-agent",
+      "kolla_ansible_variables": [
+        "neutron_metadata_agent_image_full"
+      ]
+    },
+    {
+      "name": "neutron-openvswitch-agent",
+      "kolla_ansible_variables": [
+        "neutron_openvswitch_agent_image_full"
+      ]
+    },
+    {
+      "name": "heat-api",
+      "kolla_ansible_variables": [
+        "heat_api_image_full"
+      ]
+    },
+    {
+      "name": "heat-api-cfn",
+      "kolla_ansible_variables": [
+        "heat_api_cfn_image_full"
+      ]
+    },
+    {
+      "name": "heat-engine",
+      "kolla_ansible_variables": [
+        "heat_engine_image_full"
+      ]
+    },
+    {
+      "name": "horizon",
+      "kolla_ansible_variables": [
+        "horizon_image_full"
+      ]
+    }
+  ]
+}

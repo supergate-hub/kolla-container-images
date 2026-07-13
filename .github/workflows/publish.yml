@@ -1,0 +1,623 @@
+name: Publish Kolla images
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: OpenStack release to plan
+        required: true
+        type: choice
+        default: "2025.1"
+        options:
+          - "2025.1"
+      distro:
+        description: Base distribution
+        required: true
+        type: choice
+        default: rocky
+        options:
+          - rocky
+          - ubuntu
+      distro_version:
+        description: Base distribution version
+        required: true
+        type: choice
+        default: "9"
+        options:
+          - "9"
+          - "24.04"
+      profile:
+        description: Image profile
+        required: true
+        type: choice
+        default: core
+        options:
+          - core
+          - deployment
+      image:
+        description: Image to publish, or all for a full profile
+        required: true
+        type: choice
+        default: keystone
+        options:
+          - keystone
+          - all
+      dry_run:
+        description: Print the publish plan without building or pushing
+        required: true
+        type: boolean
+        default: true
+      approval:
+        description: Exact approval phrase required when dry_run is false
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: kolla-publish-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILDKIT: "1"
+  KOLLA_VERSION: "20.4.0"
+
+jobs:
+  publish-plan:
+    name: Render publish plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      parent_matrix: ${{ steps.build-matrix.outputs.parent_matrix }}
+      build_matrix: ${{ steps.build-matrix.outputs.build_matrix }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate repository configuration
+        run: python3 scripts/validate-config.py
+
+      - name: Render publish plan
+        run: |
+          mkdir -p artifacts/logs artifacts/manifests artifacts/plan
+          plan_args=(
+            --profile '${{ inputs.profile }}'
+            --release '${{ inputs.release }}'
+            --distro '${{ inputs.distro }}'
+            --distro-version '${{ inputs.distro_version }}'
+            --dry-run
+          )
+          if [ '${{ inputs.image }}' != 'all' ]; then
+            plan_args+=(--image '${{ inputs.image }}')
+          fi
+          python3 scripts/plan-publish.py "${plan_args[@]}" | tee artifacts/plan/publish-plan.json
+
+      - name: Render parent and service build matrices
+        id: build-matrix
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          plan = json.loads(pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8"))
+          def runner_for(arch):
+              return "ubuntu-24.04-arm" if arch == "arm64" else "ubuntu-24.04"
+
+          parent_matrix = {
+              "include": [
+                  {
+                      "arch": arch["arch"],
+                      "runner": runner_for(arch["arch"]),
+                  }
+                  for arch in plan["build"]["parents"]["architectures"]
+              ]
+          }
+          build_matrix = {
+              "include": [
+                  {
+                      "group": group["name"],
+                      "arch": arch["arch"],
+                      "runner": runner_for(arch["arch"]),
+                  }
+                  for group in plan["build"]["groups"]
+                  for arch in group["architectures"]
+              ]
+          }
+          with pathlib.Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"parent_matrix={json.dumps(parent_matrix, sort_keys=True)}\n")
+              output.write(f"build_matrix={json.dumps(build_matrix, sort_keys=True)}\n")
+          PY
+
+      - name: Validate publish approval
+        if: ${{ !inputs.dry_run }}
+        env:
+          ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
+          ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
+          ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
+          APPROVAL: ${{ inputs.approval }}
+        run: |
+          python3 scripts/validate-publish-approval.py \
+            --profile '${{ inputs.profile }}' \
+            --image '${{ inputs.image }}' \
+            --release '${{ inputs.release }}' \
+            --distro '${{ inputs.distro }}' \
+            --distro-version '${{ inputs.distro_version }}'
+
+      - name: Upload dry-run publish artifacts
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: kolla-publish-${{ inputs.image }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: Upload publish plan artifact
+        if: ${{ !inputs.dry_run }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/plan/
+          if-no-files-found: error
+
+  build-parents:
+    name: Build shared parents ${{ matrix.arch }}
+    if: ${{ !inputs.dry_run }}
+    needs: publish-plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJson(needs.publish-plan.outputs.parent_matrix) }}
+
+    steps:
+      - name: Download publish plan
+        uses: actions/download-artifact@v8
+        with:
+          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/plan
+
+      - name: Set up Docker Buildx builder
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install Kolla tooling
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "kolla==${KOLLA_VERSION}" docker
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Check publish tooling
+        run: |
+          command -v python3
+          command -v docker
+          docker version
+          docker buildx version
+          docker buildx inspect --bootstrap
+          command -v kolla-build
+          kolla-build --version || true
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Build and inspect shared parent images
+        env:
+          PLAN_PATH: artifacts/plan/publish-plan.json
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shlex
+          import subprocess
+
+          plan = json.loads(pathlib.Path(os.environ["PLAN_PATH"]).read_text(encoding="utf-8"))
+          arch_name = os.environ["ARCH"]
+          arch = next(
+              entry
+              for entry in plan["build"]["parents"]["architectures"]
+              if entry["arch"] == arch_name
+          )
+
+          logs_dir = pathlib.Path("artifacts/logs")
+          parent_dir = pathlib.Path("artifacts/parents")
+          pathlib.Path("artifacts/kolla-summary").mkdir(parents=True, exist_ok=True)
+          (pathlib.Path("artifacts/kolla-logs") / f"parents-{arch_name}").mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+          logs_dir.mkdir(parents=True, exist_ok=True)
+          parent_dir.mkdir(parents=True, exist_ok=True)
+
+          def run_command(name, command, log_path):
+              print(f"Running {name}: {' '.join(shlex.quote(part) for part in command)}")
+              with log_path.open("w", encoding="utf-8") as log_file:
+                  log_file.write("$ " + " ".join(shlex.quote(part) for part in command) + "\n")
+                  log_file.flush()
+                  subprocess.run(command, check=True, stdout=log_file, stderr=subprocess.STDOUT)
+
+          build_log = logs_dir / f"parents-{arch_name}-build.log"
+          run_command(
+              f"build shared parents {arch_name}",
+              arch["commands"]["kolla_build_push"],
+              build_log,
+          )
+
+          inspected = []
+          for parent_ref in arch["parent_refs"]:
+              parent_name = parent_ref.rsplit("/", 1)[-1].split(":", 1)[0]
+              inspect_log = logs_dir / f"{parent_name}-{arch_name}-inspect.log"
+              run_command(
+                  f"inspect {parent_name} {arch_name}",
+                  ["docker", "buildx", "imagetools", "inspect", parent_ref],
+                  inspect_log,
+              )
+              inspected.append(
+                  {
+                      "image": parent_name,
+                      "arch": arch_name,
+                      "arch_ref": parent_ref,
+                      "inspect_log": str(inspect_log),
+                  }
+              )
+
+          (parent_dir / f"parents-{arch_name}.json").write_text(
+              json.dumps(
+                  {
+                      "arch": arch_name,
+                      "build_log": str(build_log),
+                      "images": inspected,
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload parent build artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: kolla-parents-${{ matrix.arch }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/
+          if-no-files-found: error
+
+  build-images:
+    name: Build ${{ matrix.group }} ${{ matrix.arch }}
+    if: ${{ !inputs.dry_run }}
+    needs:
+      - publish-plan
+      - build-parents
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJson(needs.publish-plan.outputs.build_matrix) }}
+
+    steps:
+      - name: Download publish plan
+        uses: actions/download-artifact@v8
+        with:
+          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/plan
+
+      - name: Set up Docker Buildx builder
+        uses: docker/setup-buildx-action@v4
+
+      - name: Install Kolla tooling
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "kolla==${KOLLA_VERSION}" docker
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Check publish tooling
+        run: |
+          command -v python3
+          command -v docker
+          docker version
+          docker buildx version
+          docker buildx inspect --bootstrap
+          command -v kolla-build
+          kolla-build --version || true
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Build and inspect service group
+        env:
+          PLAN_PATH: artifacts/plan/publish-plan.json
+          GROUP: ${{ matrix.group }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shlex
+          import subprocess
+
+          plan = json.loads(pathlib.Path(os.environ["PLAN_PATH"]).read_text(encoding="utf-8"))
+          group_name = os.environ["GROUP"]
+          arch_name = os.environ["ARCH"]
+          group = next(entry for entry in plan["build"]["groups"] if entry["name"] == group_name)
+          arch = next(entry for entry in group["architectures"] if entry["arch"] == arch_name)
+
+          logs_dir = pathlib.Path("artifacts/logs")
+          arch_dir = pathlib.Path("artifacts/arch")
+          pathlib.Path("artifacts/kolla-summary").mkdir(parents=True, exist_ok=True)
+          (pathlib.Path("artifacts/kolla-logs") / f"{group_name}-{arch_name}").mkdir(
+              parents=True,
+              exist_ok=True,
+          )
+          logs_dir.mkdir(parents=True, exist_ok=True)
+          arch_dir.mkdir(parents=True, exist_ok=True)
+
+          def run_command(name, command, log_path):
+              print(f"Running {name}: {' '.join(shlex.quote(part) for part in command)}")
+              with log_path.open("w", encoding="utf-8") as log_file:
+                  log_file.write("$ " + " ".join(shlex.quote(part) for part in command) + "\n")
+                  log_file.flush()
+                  subprocess.run(command, check=True, stdout=log_file, stderr=subprocess.STDOUT)
+
+          parent_pull_logs = []
+          for parent_ref in arch["parent_refs"]:
+              parent_name = parent_ref.rsplit("/", 1)[-1].split(":", 1)[0]
+              parent_pull_log = logs_dir / f"{group_name}-{parent_name}-{arch_name}-pull.log"
+              run_command(
+                  f"pull {parent_name} for {group_name} {arch_name}",
+                  ["docker", "pull", "--platform", arch["platform"], parent_ref],
+                  parent_pull_log,
+              )
+              parent_pull_logs.append(str(parent_pull_log))
+
+          build_log = logs_dir / f"{group_name}-{arch_name}-build.log"
+          run_command(
+              f"build {group_name} {arch_name}",
+              arch["commands"]["kolla_build_push"],
+              build_log,
+          )
+
+          for image_name, arch_ref in zip(group["images"], arch["image_refs"], strict=True):
+              image = next(entry for entry in plan["images"] if entry["image"] == image_name)
+              image_arch = next(
+                  entry for entry in image["architectures"] if entry["arch"] == arch_name
+              )
+              inspect_log = logs_dir / f"{image_name}-{arch_name}-inspect.log"
+              run_command(
+                  f"inspect {image_name} {arch_name}",
+                  ["docker", "buildx", "imagetools", "inspect", arch_ref],
+                  inspect_log,
+              )
+              (arch_dir / f"{image_name}-{arch_name}.json").write_text(
+                  json.dumps(
+                      {
+                          "image": image_name,
+                          "group": group_name,
+                          "arch": arch_name,
+                          "platform": arch["platform"],
+                          "arch_ref": arch_ref,
+                          "arch_tag": image_arch["arch_tag"],
+                          "build_log": str(build_log),
+                          "inspect_log": str(inspect_log),
+                          "parent_pull_logs": parent_pull_logs,
+                      },
+                      indent=2,
+                      sort_keys=True,
+                  )
+                  + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
+      - name: Upload service build artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: kolla-leaf-${{ matrix.group }}-${{ matrix.arch }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/
+          if-no-files-found: error
+
+  finalize-publish:
+    name: Finalize manifests and candidate lock
+    if: ${{ !inputs.dry_run }}
+    needs:
+      - publish-plan
+      - build-images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Download publish plan
+        uses: actions/download-artifact@v8
+        with:
+          name: kolla-publish-plan-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/plan
+
+      - name: Download architecture build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kolla-leaf-*-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts
+          merge-multiple: true
+
+      - name: Set up Docker Buildx builder
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GITHUB_TOKEN" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+
+      - name: Create manifest and publish summary
+        env:
+          PLAN_PATH: artifacts/plan/publish-plan.json
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shlex
+          import subprocess
+
+          plan_path = pathlib.Path(os.environ["PLAN_PATH"])
+          plan = json.loads(plan_path.read_text(encoding="utf-8"))
+          images = plan["images"]
+
+          logs_dir = pathlib.Path("artifacts/logs")
+          arch_dir = pathlib.Path("artifacts/arch")
+          manifests_dir = pathlib.Path("artifacts/manifests")
+          logs_dir.mkdir(parents=True, exist_ok=True)
+          manifests_dir.mkdir(parents=True, exist_ok=True)
+
+          publish_summary = {
+              "release": plan["release"],
+              "distro": plan["distro"],
+              "distro_version": plan["distro_version"],
+              "profile": plan["profile"],
+              "registry": plan["registry"],
+              "owner": plan["owner"],
+              "repository": plan["repository"],
+              "images": [],
+          }
+
+          def run_command(name, command, log_path):
+              print(f"Running {name}: {' '.join(shlex.quote(part) for part in command)}")
+              with log_path.open("w", encoding="utf-8") as log_file:
+                  log_file.write("$ " + " ".join(shlex.quote(part) for part in command) + "\n")
+                  log_file.flush()
+                  subprocess.run(command, check=True, stdout=log_file, stderr=subprocess.STDOUT)
+
+          for image in images:
+              image_name = image["image"]
+              summary = {
+                  "image": image_name,
+                  "kolla_ansible_variables": image["kolla_ansible_variables"],
+                  "deploy_ref": image["deploy_ref"],
+                  "deploy_tag": image["deploy_tag"],
+                  "manifest_metadata_file": image["manifest_metadata_file"],
+                  "architectures": [],
+              }
+              for arch in image["architectures"]:
+                  arch_name = arch["arch"]
+                  arch_summary_path = arch_dir / f"{image_name}-{arch_name}.json"
+                  if not arch_summary_path.exists():
+                      raise SystemExit(f"architecture summary not found: {arch_summary_path}")
+                  summary["architectures"].append(
+                      json.loads(arch_summary_path.read_text(encoding="utf-8"))
+                  )
+
+              run_command(
+                  f"create manifest {image_name}",
+                  image["commands"]["manifest_create"],
+                  logs_dir / f"{image_name}-manifest-create.log",
+              )
+              run_command(
+                  f"inspect manifest {image_name}",
+                  image["commands"]["manifest_inspect"],
+                  logs_dir / f"{image_name}-manifest-inspect.log",
+              )
+
+              metadata_path = pathlib.Path(image["manifest_metadata_file"])
+              if not metadata_path.exists():
+                  raise SystemExit(f"manifest metadata not found: {metadata_path}")
+
+              manifest_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+              manifest_digest = manifest_metadata.get("containerimage.digest")
+              if manifest_digest is None:
+                  descriptor = manifest_metadata.get("containerimage.descriptor")
+                  if isinstance(descriptor, dict):
+                      manifest_digest = descriptor.get("digest")
+              if not isinstance(manifest_digest, str) or not manifest_digest.startswith("sha256:"):
+                  raise SystemExit("manifest metadata is missing containerimage.digest")
+
+              summary["manifest_metadata"] = manifest_metadata
+              summary["manifest_digest"] = manifest_digest
+              publish_summary["images"].append(
+                  {
+                      "image": image_name,
+                      "kolla_ansible_variables": image["kolla_ansible_variables"],
+                      "deploy_ref": image["deploy_ref"],
+                      "deploy_tag": image["deploy_tag"],
+                      "manifest_digest": manifest_digest,
+                      "architectures": summary["architectures"],
+                  }
+              )
+
+              image_summary = json.dumps(summary, indent=2, sort_keys=True) + "\n"
+              (manifests_dir / f"{image_name}-publish-summary.json").write_text(
+                  image_summary,
+                  encoding="utf-8",
+              )
+              if len(images) == 1:
+                  (manifests_dir / "smoke-publish-summary.json").write_text(
+                      image_summary,
+                      encoding="utf-8",
+                  )
+
+          pathlib.Path(plan["publish_summary_file"]).write_text(
+              json.dumps(publish_summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Validate publish summary
+        run: |
+          validate_args=(
+            --publish-summary 'artifacts/publish-summary-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}.json'
+            --profile '${{ inputs.profile }}'
+            --release '${{ inputs.release }}'
+            --distro '${{ inputs.distro }}'
+            --distro-version '${{ inputs.distro_version }}'
+          )
+          if [ '${{ inputs.image }}' != 'all' ]; then
+            validate_args+=(--allow-partial --image '${{ inputs.image }}')
+          fi
+          python3 scripts/validate-publish-summary.py "${validate_args[@]}"
+
+      - name: Generate full-profile candidate lock
+        if: ${{ inputs.image == 'all' }}
+        run: |
+          lock_path='artifacts/kolla-ansible-image-lock-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}.yml'
+          python3 scripts/generate-lock.py \
+            --publish-summary 'artifacts/publish-summary-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}.json' \
+            --profile '${{ inputs.profile }}' \
+            --release '${{ inputs.release }}' \
+            --distro '${{ inputs.distro }}' \
+            --distro-version '${{ inputs.distro_version }}' \
+            --output "$lock_path"
+
+      - name: Upload publish artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: kolla-publish-${{ inputs.image }}-${{ inputs.release }}-${{ inputs.distro }}-${{ inputs.distro_version }}
+          path: artifacts/
+          if-no-files-found: error

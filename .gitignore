@@ -1,0 +1,22 @@
+# Local build outputs
+build/
+dist/
+out/
+artifacts/
+manifests/generated/
+
+# Logs
+*.log
+logs/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,548 @@
+{
+    "schema_version": 2,
+    "name": "deployment",
+    "description": "Digest-lockable Kolla image closure for a Kolla-Ansible deployment.",
+    "build_groups": [
+        {
+            "name": "common",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "cron",
+                "fluentd",
+                "kolla-toolbox"
+            ]
+        },
+        {
+            "name": "loadbalancer",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "haproxy",
+                "keepalived",
+                "proxysql"
+            ]
+        },
+        {
+            "name": "messaging-cache",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "rabbitmq",
+                "memcached"
+            ]
+        },
+        {
+            "name": "search-ui",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "opensearch",
+                "opensearch-dashboards",
+                "grafana"
+            ]
+        },
+        {
+            "name": "openvswitch",
+            "parent": "openvswitch-base",
+            "parents": [
+                "base",
+                "openvswitch-base"
+            ],
+            "images": [
+                "openvswitch-db-server",
+                "openvswitch-vswitchd"
+            ]
+        },
+        {
+            "name": "ovn",
+            "parent": "ovn-base",
+            "parents": [
+                "base",
+                "openvswitch-base",
+                "ovn-base"
+            ],
+            "images": [
+                "ovn-controller",
+                "ovn-nb-db-server",
+                "ovn-northd",
+                "ovn-sb-db-server",
+                "ovn-sb-db-relay"
+            ]
+        },
+        {
+            "name": "identity",
+            "parent": "keystone-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "keystone-base"
+            ],
+            "images": [
+                "keystone",
+                "keystone-fernet",
+                "keystone-ssh"
+            ]
+        },
+        {
+            "name": "glance",
+            "parent": "glance-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "glance-base"
+            ],
+            "images": [
+                "glance-api"
+            ]
+        },
+        {
+            "name": "placement",
+            "parent": "placement-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "placement-base"
+            ],
+            "images": [
+                "placement-api"
+            ]
+        },
+        {
+            "name": "compute",
+            "parent": "nova-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "nova-base"
+            ],
+            "images": [
+                "nova-api",
+                "nova-scheduler",
+                "nova-conductor",
+                "nova-compute",
+                "nova-ssh",
+                "nova-novncproxy"
+            ]
+        },
+        {
+            "name": "compute-runtime",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "nova-libvirt"
+            ]
+        },
+        {
+            "name": "network",
+            "parent": "neutron-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "neutron-base"
+            ],
+            "images": [
+                "neutron-server",
+                "neutron-metadata-agent"
+            ]
+        },
+        {
+            "name": "orchestration",
+            "parent": "heat-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "heat-base"
+            ],
+            "images": [
+                "heat-api",
+                "heat-api-cfn",
+                "heat-engine"
+            ]
+        },
+        {
+            "name": "dashboard",
+            "parent": "openstack-base",
+            "parents": [
+                "base",
+                "openstack-base"
+            ],
+            "images": [
+                "horizon"
+            ]
+        },
+        {
+            "name": "octavia",
+            "parent": "octavia-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "octavia-base"
+            ],
+            "images": [
+                "octavia-api",
+                "octavia-driver-agent",
+                "octavia-health-manager",
+                "octavia-housekeeping",
+                "octavia-worker"
+            ]
+        },
+        {
+            "name": "database",
+            "parent": "mariadb-base",
+            "parents": [
+                "base",
+                "mariadb-base"
+            ],
+            "images": [
+                "mariadb-server"
+            ]
+        },
+        {
+            "name": "monitoring",
+            "parent": "prometheus-base",
+            "parents": [
+                "base",
+                "prometheus-base"
+            ],
+            "images": [
+                "prometheus-alertmanager",
+                "prometheus-blackbox-exporter",
+                "prometheus-cadvisor",
+                "prometheus-elasticsearch-exporter",
+                "prometheus-libvirt-exporter",
+                "prometheus-memcached-exporter",
+                "prometheus-mysqld-exporter",
+                "prometheus-node-exporter",
+                "prometheus-openstack-exporter",
+                "prometheus-server"
+            ]
+        }
+    ],
+    "images": [
+        {
+            "name": "cron",
+            "kolla_ansible_variables": [
+                "cron_image_full"
+            ]
+        },
+        {
+            "name": "fluentd",
+            "kolla_ansible_variables": [
+                "fluentd_image_full"
+            ]
+        },
+        {
+            "name": "glance-api",
+            "kolla_ansible_variables": [
+                "glance_api_image_full"
+            ]
+        },
+        {
+            "name": "grafana",
+            "kolla_ansible_variables": [
+                "grafana_image_full"
+            ]
+        },
+        {
+            "name": "haproxy",
+            "kolla_ansible_variables": [
+                "haproxy_image_full"
+            ]
+        },
+        {
+            "name": "heat-api",
+            "kolla_ansible_variables": [
+                "heat_api_image_full"
+            ]
+        },
+        {
+            "name": "heat-api-cfn",
+            "kolla_ansible_variables": [
+                "heat_api_cfn_image_full"
+            ]
+        },
+        {
+            "name": "heat-engine",
+            "kolla_ansible_variables": [
+                "heat_engine_image_full"
+            ]
+        },
+        {
+            "name": "horizon",
+            "kolla_ansible_variables": [
+                "horizon_image_full"
+            ]
+        },
+        {
+            "name": "keepalived",
+            "kolla_ansible_variables": [
+                "keepalived_image_full"
+            ]
+        },
+        {
+            "name": "keystone",
+            "kolla_ansible_variables": [
+                "keystone_image_full"
+            ]
+        },
+        {
+            "name": "keystone-fernet",
+            "kolla_ansible_variables": [
+                "keystone_fernet_image_full"
+            ]
+        },
+        {
+            "name": "keystone-ssh",
+            "kolla_ansible_variables": [
+                "keystone_ssh_image_full"
+            ]
+        },
+        {
+            "name": "kolla-toolbox",
+            "kolla_ansible_variables": [
+                "kolla_toolbox_image_full"
+            ]
+        },
+        {
+            "name": "mariadb-server",
+            "kolla_ansible_variables": [
+                "mariadb_image_full"
+            ]
+        },
+        {
+            "name": "memcached",
+            "kolla_ansible_variables": [
+                "memcached_image_full"
+            ]
+        },
+        {
+            "name": "neutron-metadata-agent",
+            "kolla_ansible_variables": [
+                "neutron_metadata_agent_image_full",
+                "neutron_ovn_metadata_agent_image_full"
+            ]
+        },
+        {
+            "name": "neutron-server",
+            "kolla_ansible_variables": [
+                "neutron_server_image_full"
+            ]
+        },
+        {
+            "name": "nova-api",
+            "kolla_ansible_variables": [
+                "nova_api_image_full"
+            ]
+        },
+        {
+            "name": "nova-compute",
+            "kolla_ansible_variables": [
+                "nova_compute_image_full"
+            ]
+        },
+        {
+            "name": "nova-conductor",
+            "kolla_ansible_variables": [
+                "nova_conductor_image_full",
+                "nova_super_conductor_image_full"
+            ]
+        },
+        {
+            "name": "nova-libvirt",
+            "kolla_ansible_variables": [
+                "nova_libvirt_image_full"
+            ]
+        },
+        {
+            "name": "nova-novncproxy",
+            "kolla_ansible_variables": [
+                "nova_novncproxy_image_full"
+            ]
+        },
+        {
+            "name": "nova-scheduler",
+            "kolla_ansible_variables": [
+                "nova_scheduler_image_full"
+            ]
+        },
+        {
+            "name": "nova-ssh",
+            "kolla_ansible_variables": [
+                "nova_ssh_image_full"
+            ]
+        },
+        {
+            "name": "octavia-api",
+            "kolla_ansible_variables": [
+                "octavia_api_image_full"
+            ]
+        },
+        {
+            "name": "octavia-driver-agent",
+            "kolla_ansible_variables": [
+                "octavia_driver_agent_image_full"
+            ]
+        },
+        {
+            "name": "octavia-health-manager",
+            "kolla_ansible_variables": [
+                "octavia_health_manager_image_full"
+            ]
+        },
+        {
+            "name": "octavia-housekeeping",
+            "kolla_ansible_variables": [
+                "octavia_housekeeping_image_full"
+            ]
+        },
+        {
+            "name": "octavia-worker",
+            "kolla_ansible_variables": [
+                "octavia_worker_image_full"
+            ]
+        },
+        {
+            "name": "opensearch",
+            "kolla_ansible_variables": [
+                "opensearch_image_full"
+            ]
+        },
+        {
+            "name": "opensearch-dashboards",
+            "kolla_ansible_variables": [
+                "opensearch_dashboards_image_full"
+            ]
+        },
+        {
+            "name": "openvswitch-db-server",
+            "kolla_ansible_variables": [
+                "openvswitch_db_image_full"
+            ]
+        },
+        {
+            "name": "openvswitch-vswitchd",
+            "kolla_ansible_variables": [
+                "openvswitch_vswitchd_image_full"
+            ]
+        },
+        {
+            "name": "ovn-controller",
+            "kolla_ansible_variables": [
+                "ovn_controller_image_full"
+            ]
+        },
+        {
+            "name": "ovn-nb-db-server",
+            "kolla_ansible_variables": [
+                "ovn_nb_db_image_full"
+            ]
+        },
+        {
+            "name": "ovn-northd",
+            "kolla_ansible_variables": [
+                "ovn_northd_image_full"
+            ]
+        },
+        {
+            "name": "ovn-sb-db-relay",
+            "kolla_ansible_variables": [
+                "ovn_sb_db_relay_image_full"
+            ]
+        },
+        {
+            "name": "ovn-sb-db-server",
+            "kolla_ansible_variables": [
+                "ovn_sb_db_image_full"
+            ]
+        },
+        {
+            "name": "placement-api",
+            "kolla_ansible_variables": [
+                "placement_api_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-alertmanager",
+            "kolla_ansible_variables": [
+                "prometheus_alertmanager_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-blackbox-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_blackbox_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-cadvisor",
+            "kolla_ansible_variables": [
+                "prometheus_cadvisor_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-elasticsearch-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_elasticsearch_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-libvirt-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_libvirt_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-memcached-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_memcached_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-mysqld-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_mysqld_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-node-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_node_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-openstack-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_openstack_exporter_image_full"
+            ]
+        },
+        {
+            "name": "prometheus-server",
+            "kolla_ansible_variables": [
+                "prometheus_server_image_full"
+            ]
+        },
+        {
+            "name": "proxysql",
+            "kolla_ansible_variables": [
+                "proxysql_image_full"
+            ]
+        },
+        {
+            "name": "rabbitmq",
+            "kolla_ansible_variables": [
+                "rabbitmq_image_full"
+            ]
+        }
+    ]
+}
