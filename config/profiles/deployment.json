@@ -1,6 +1,15 @@
 {
-    "schema_version": 2,
+    "schema_version": 3,
     "name": "deployment",
+    "reviewed_streams": [
+        "2025.1-rocky-9",
+        "2025.1-rocky-10",
+        "2025.1-ubuntu-noble",
+        "2025.2-rocky-10",
+        "2025.2-ubuntu-noble",
+        "2026.1-rocky-10",
+        "2026.1-ubuntu-noble"
+    ],
     "description": "Digest-lockable Kolla image closure for a Kolla-Ansible deployment.",
     "build_groups": [
         {
@@ -198,7 +207,7 @@
             ]
         },
         {
-            "name": "database",
+            "name": "database-2025-1",
             "parent": "mariadb-base",
             "parents": [
                 "base",
@@ -206,7 +215,28 @@
             ],
             "images": [
                 "mariadb-server"
-            ]
+            ],
+            "applies_to": {
+                "releases": [
+                    "2025.1"
+                ]
+            }
+        },
+        {
+            "name": "database-modern",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "mariadb-server"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2025.2",
+                    "2026.1"
+                ]
+            }
         },
         {
             "name": "monitoring",
@@ -225,7 +255,62 @@
                 "prometheus-mysqld-exporter",
                 "prometheus-node-exporter",
                 "prometheus-openstack-exporter",
-                "prometheus-server"
+                "prometheus-server",
+                "prometheus-openstack-network-exporter",
+                "prometheus-valkey-exporter"
+            ]
+        },
+        {
+            "name": "coordination",
+            "parent": "valkey-base",
+            "parents": [
+                "base",
+                "valkey-base"
+            ],
+            "images": [
+                "valkey-server",
+                "valkey-sentinel"
+            ]
+        },
+        {
+            "name": "storage-runtime",
+            "parent": "base",
+            "parents": [
+                "base"
+            ],
+            "images": [
+                "iscsid",
+                "tgtd"
+            ]
+        },
+        {
+            "name": "cinder",
+            "parent": "cinder-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "cinder-base"
+            ],
+            "images": [
+                "cinder-api",
+                "cinder-backup",
+                "cinder-scheduler",
+                "cinder-volume"
+            ]
+        },
+        {
+            "name": "manila",
+            "parent": "manila-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "manila-base"
+            ],
+            "images": [
+                "manila-api",
+                "manila-data",
+                "manila-scheduler",
+                "manila-share"
             ]
         }
     ],
@@ -336,7 +421,34 @@
         {
             "name": "neutron-server",
             "kolla_ansible_variables": [
-                "neutron_server_image_full"
+                "neutron_server_image_full",
+                {
+                    "name": "neutron_rpc_server_image_full",
+                    "applies_to": {
+                        "releases": [
+                            "2025.2",
+                            "2026.1"
+                        ]
+                    }
+                },
+                {
+                    "name": "neutron_periodic_worker_image_full",
+                    "applies_to": {
+                        "releases": [
+                            "2025.2",
+                            "2026.1"
+                        ]
+                    }
+                },
+                {
+                    "name": "neutron_ovn_maintenance_worker_image_full",
+                    "applies_to": {
+                        "releases": [
+                            "2025.2",
+                            "2026.1"
+                        ]
+                    }
+                }
             ]
         },
         {
@@ -543,6 +655,105 @@
             "kolla_ansible_variables": [
                 "rabbitmq_image_full"
             ]
+        },
+        {
+            "name": "cinder-api",
+            "kolla_ansible_variables": [
+                "cinder_api_image_full"
+            ]
+        },
+        {
+            "name": "cinder-backup",
+            "kolla_ansible_variables": [
+                "cinder_backup_image_full"
+            ]
+        },
+        {
+            "name": "cinder-scheduler",
+            "kolla_ansible_variables": [
+                "cinder_scheduler_image_full"
+            ]
+        },
+        {
+            "name": "cinder-volume",
+            "kolla_ansible_variables": [
+                "cinder_volume_image_full"
+            ]
+        },
+        {
+            "name": "iscsid",
+            "kolla_ansible_variables": [
+                "iscsid_image_full"
+            ]
+        },
+        {
+            "name": "manila-api",
+            "kolla_ansible_variables": [
+                "manila_api_image_full"
+            ]
+        },
+        {
+            "name": "manila-data",
+            "kolla_ansible_variables": [
+                "manila_data_image_full"
+            ]
+        },
+        {
+            "name": "manila-scheduler",
+            "kolla_ansible_variables": [
+                "manila_scheduler_image_full"
+            ]
+        },
+        {
+            "name": "manila-share",
+            "kolla_ansible_variables": [
+                "manila_share_image_full"
+            ]
+        },
+        {
+            "name": "valkey-server",
+            "kolla_ansible_variables": [
+                "valkey_image_full"
+            ]
+        },
+        {
+            "name": "valkey-sentinel",
+            "kolla_ansible_variables": [
+                "valkey_sentinel_image_full"
+            ]
+        },
+        {
+            "name": "tgtd",
+            "kolla_ansible_variables": [
+                "tgtd_image_full"
+            ],
+            "applies_to": {
+                "distros": [
+                    "ubuntu"
+                ]
+            }
+        },
+        {
+            "name": "prometheus-openstack-network-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_openstack_network_exporter_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "prometheus-valkey-exporter",
+            "kolla_ansible_variables": [
+                "prometheus_valkey_exporter_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
         }
     ]
 }

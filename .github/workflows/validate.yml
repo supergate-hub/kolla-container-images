@@ -1,4 +1,4 @@
-name: Validate scaffold
+name: Validate Kolla image configuration
 
 on:
   push:
@@ -9,24 +9,35 @@ permissions:
 
 jobs:
   validate:
-    name: Validate repository configuration
-    runs-on: ubuntu-latest
+    name: Validate repository configuration and publish plans
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
-      - name: Validate build matrix JSON
-        run: python3 -m json.tool config/build-matrix.json >/dev/null
-
-      - name: Validate core profile JSON
-        run: python3 -m json.tool config/profiles/core.json >/dev/null
+      - name: Parse every JSON file
+        run: |
+          set -euo pipefail
+          find . -type f -name '*.json' -print0 |
+            while IFS= read -r -d '' json_file; do
+              python3 -m json.tool "$json_file" >/dev/null
+            done
 
       - name: Validate repository configuration
         run: python3 scripts/validate-config.py
 
-      - name: Validate publish planner dry run
-        run: python3 scripts/plan-publish.py --profile core --release 2025.1 --distro rocky --distro-version 9 --dry-run >/dev/null
+      - name: Validate core profile dry-run plan
+        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile core --dry-run >/dev/null
 
-      - name: Run tests
+      - name: Validate deployment profile dry-run plan
+        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile deployment --dry-run >/dev/null
+
+      - name: Validate Keystone dry-run plan
+        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile core --image keystone --dry-run >/dev/null
+
+      - name: Run complete unit suite
         run: python3 -m unittest discover -s tests -v

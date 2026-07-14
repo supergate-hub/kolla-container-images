@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "378a902ce3ec0ed34256a5c35e82327de6655ce5d6026b92db2deba4164a8f9c": "def parse_image(self):\n        full_image = self.params.get('image')\n\n        if '/' in full_image:\n            registry, image = full_image.split('/', 1)\n        else:\n            image = full_image\n\n        if ':' in image:\n            return full_image.rsplit(':', 1)\n        else:\n            return full_image, 'latest'"
+  },
+  "versions": {
+    "20.4.0": {
+      "distribution": "kolla-ansible==20.4.0",
+      "source_path": "ansible/module_utils/kolla_container_worker.py",
+      "module_sha256": "3a22d2f70e8e3f3eea47be1b755ec5c37ed11d282e96db3094cd63846b01549f",
+      "parse_image_sha256": "378a902ce3ec0ed34256a5c35e82327de6655ce5d6026b92db2deba4164a8f9c"
+    },
+    "21.1.0": {
+      "distribution": "kolla-ansible==21.1.0",
+      "source_path": "ansible/module_utils/kolla_container_worker.py",
+      "module_sha256": "1c4251075d6ee4987b8fc7bd0429064ef42c905a141f9c863c57d1a0b822d7a0",
+      "parse_image_sha256": "378a902ce3ec0ed34256a5c35e82327de6655ce5d6026b92db2deba4164a8f9c"
+    },
+    "22.0.0": {
+      "distribution": "kolla-ansible==22.0.0",
+      "source_path": "ansible/module_utils/kolla_container_worker.py",
+      "module_sha256": "0cc53ffa96081cf6744bbe705652df381b3c4b4547728d01a471fbc0956ddfac",
+      "parse_image_sha256": "378a902ce3ec0ed34256a5c35e82327de6655ce5d6026b92db2deba4164a8f9c"
+    }
+  }
+}

@@ -1,6 +1,15 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "name": "core",
+  "reviewed_streams": [
+    "2025.1-rocky-9",
+    "2025.1-rocky-10",
+    "2025.1-ubuntu-noble",
+    "2025.2-rocky-10",
+    "2025.2-ubuntu-noble",
+    "2026.1-rocky-10",
+    "2026.1-ubuntu-noble"
+  ],
   "description": "Digest-lockable Kolla image profile for core OpenStack smoke validation.",
   "build_groups": [
     {
@@ -144,7 +153,34 @@
     {
       "name": "neutron-server",
       "kolla_ansible_variables": [
-        "neutron_server_image_full"
+        "neutron_server_image_full",
+        {
+          "name": "neutron_rpc_server_image_full",
+          "applies_to": {
+            "releases": [
+              "2025.2",
+              "2026.1"
+            ]
+          }
+        },
+        {
+          "name": "neutron_periodic_worker_image_full",
+          "applies_to": {
+            "releases": [
+              "2025.2",
+              "2026.1"
+            ]
+          }
+        },
+        {
+          "name": "neutron_ovn_maintenance_worker_image_full",
+          "applies_to": {
+            "releases": [
+              "2025.2",
+              "2026.1"
+            ]
+          }
+        }
       ]
     },
     {
