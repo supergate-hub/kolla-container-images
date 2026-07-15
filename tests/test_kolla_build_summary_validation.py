@@ -62,24 +62,20 @@ def candidate_plan() -> dict:
     return json.loads(result.stdout)
 
 
-def expected_names(plan: dict, arch: str = "amd64") -> set[str]:
-    architecture = next(
-        entry for entry in plan["build"]["architectures"]
-        if entry["arch"] == arch
+def selected_unit(plan: dict, arch: str = "amd64") -> dict:
+    return next(
+        entry for entry in plan["build"]["all_units"]
+        if entry["id"] == f"{arch}-leaf-keystone"
     )
-    return {
-        entry["image"]
-        for key in ("parents", "images")
-        for entry in architecture[key]
-    }
 
 
 def valid_summary(plan: dict, arch: str = "amd64") -> dict:
+    unit = selected_unit(plan, arch)
     return {
-        "built": [{"name": name} for name in sorted(expected_names(plan, arch))],
+        "built": [{"name": unit["target"]}],
         "failed": [],
         "not_matched": [{"name": "glance-api"}],
-        "skipped": [],
+        "skipped": [{"name": name} for name in unit["ancestor_chain"]],
         "unbuildable": [],
     }
 
@@ -99,14 +95,13 @@ def run_validator(
         plan_path = temp_path / "publish-plan.json"
         summary_path = temp_path / "kolla-summary.json"
         command_arch = arch if arch in {"amd64", "arm64"} else "amd64"
-        architecture = next(
-            entry for entry in plan["build"]["architectures"]
-            if entry["arch"] == command_arch
-        )
+        unit_id = f"{arch}-leaf-keystone"
         if rewrite_summary_command:
-            command = architecture["commands"]["kolla_build_push"]
+            unit = selected_unit(plan, command_arch)
+            command = unit["command"]
             summary_index = command.index("--summary-json-file") + 1
             command[summary_index] = str(summary_path)
+            unit["summary_file"] = str(summary_path)
         plan_path.write_text(json.dumps(plan), encoding="utf-8")
         if write_summary:
             content = raw_summary if raw_summary is not None else json.dumps(summary)
@@ -117,7 +112,7 @@ def run_validator(
                 str(VALIDATOR),
                 "--kolla-summary", str(summary_path),
                 "--publish-plan", str(plan_path),
-                "--arch", arch,
+                "--unit-id", unit_id,
             ],
             cwd=ROOT,
             text=True,
@@ -196,7 +191,7 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Kolla build summary validation passed.", result.stdout)
 
-    def test_built_must_equal_exact_planned_union(self) -> None:
+    def test_built_must_equal_exact_unit_target(self) -> None:
         missing = valid_summary(self.plan)
         missing["built"].pop()
         extra = valid_summary(self.plan)
@@ -210,16 +205,24 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(message, result.stderr)
 
-    def test_failure_skip_and_unbuildable_buckets_must_be_empty(self) -> None:
+    def test_failures_unbuildable_and_unexpected_skips_are_rejected(self) -> None:
         cases = []
         for status in ("connection_error", "error", "parent_error", "push_error"):
             summary = valid_summary(self.plan)
             summary["failed"] = [{"name": "other-image", "status": status}]
             cases.append((f"failed-{status}", summary, "failed must be empty"))
-        for bucket in ("skipped", "unbuildable"):
-            summary = valid_summary(self.plan)
-            summary[bucket] = [{"name": "other-image"}]
-            cases.append((bucket, summary, f"{bucket} must be empty"))
+        unbuildable = valid_summary(self.plan)
+        unbuildable["unbuildable"] = [{"name": "other-image"}]
+        cases.append(("unbuildable", unbuildable, "unbuildable must be empty"))
+        unexpected_skip = valid_summary(self.plan)
+        unexpected_skip["skipped"].append({"name": "other-image"})
+        cases.append(
+            (
+                "unexpected-skip",
+                unexpected_skip,
+                "skipped contains unexpected image: other-image",
+            )
+        )
         for name, summary, message in cases:
             with self.subTest(case=name):
                 result = run_validator(self.plan, summary)
@@ -292,29 +295,25 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(message, result.stderr)
 
-    def test_wrong_architecture_is_rejected(self) -> None:
+    def test_unknown_unit_is_rejected(self) -> None:
         result = run_validator(
             self.plan,
             valid_summary(self.plan),
             arch="ppc64le",
         )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("invalid choice", result.stderr)
+        self.assertIn("exactly one build unit: ppc64le-leaf-keystone", result.stderr)
 
-    def test_malformed_architecture_commands_exit_two_without_traceback(self) -> None:
-        for commands, message in (
-            (None, "frozen plan amd64 commands must be an object"),
-            ([], "frozen plan amd64 commands must be an object"),
-            ("kolla-build", "frozen plan amd64 commands must be an object"),
-            ({}, "frozen Kolla command must be a string argv list"),
+    def test_malformed_unit_commands_exit_two_without_traceback(self) -> None:
+        for command, message in (
+            (None, "frozen build unit command must be a string argv list"),
+            ([], "frozen build unit command must be a string argv list"),
+            ("kolla-build", "frozen build unit command must be a string argv list"),
+            ({}, "frozen build unit command must be a string argv list"),
         ):
-            with self.subTest(commands=commands):
+            with self.subTest(command=command):
                 plan = copy.deepcopy(self.plan)
-                architecture = next(
-                    entry for entry in plan["build"]["architectures"]
-                    if entry["arch"] == "amd64"
-                )
-                architecture["commands"] = commands
+                selected_unit(plan)["command"] = command
                 result = run_validator(
                     plan,
                     valid_summary(plan),

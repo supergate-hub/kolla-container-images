@@ -5,40 +5,46 @@ This document defines the prerequisites and evidence for an approved
 manual GitHub/GHCR checklist in [publish.md](publish.md) before the first real
 run.
 
-## Native runner pool
+## Standard hosted runner contract
 
-`build-native` is one static two-entry matrix with `max-parallel: 2`:
+The source repository is Public, and native builds use only GitHub's standard
+hosted runners:
+
+| Architecture | Runner | Required machine and platform |
+| --- | --- | --- |
+| AMD64 | `ubuntu-24.04` | `x86_64`, `linux/amd64` |
+| ARM64 | `ubuntu-24.04-arm` | `aarch64`, `linux/arm64` |
+
+One Public repository is sufficient; splitting architectures into separate
+repositories adds no billing advantage. Under the current GitHub policy,
+standard hosted runner usage for a Public repository is free without billed
+minute limits, while larger runners are always billed. Public GHCR package
+storage and bandwidth are also currently free. These are current policy
+assumptions, not permanent guarantees, and must be reviewed if GitHub changes
+its billing terms.
+
+Larger runners and privately managed runner fleets are not part of this
+workflow. Every parent-tier and leaf-stage matrix uses `max-parallel: 4`. Each fresh VM
+must provide local Linux Docker, Buildx, Python 3, network access to the pinned
+Python packages and GHCR, and the advertised native architecture. The workflow
+selects Python 3.12 and installs the matrix-pinned Kolla package with
+`docker==7.1.0` using `--no-cache-dir`.
+
+The standard runner has 14 GB of SSD storage, so a complete profile is never
+built in one job. After `docker system prune -af --volumes`, each unit must
+have at least 8 GiB free in Docker's filesystem. The runner samples free space
+during the build and rejects evidence when the observed minimum during or
+immediately after build is below 2 GiB. Evidence records the initial,
+post-cleanup, post-ancestor, minimum-build, and post-build measurements.
+
+These checks make disk failure explicit; they do not prove in advance that
+every Kolla target fits. The hosted-only approach remains a feasibility gate
+until the Keystone canary completes all eight fresh jobs:
 
 ```text
-self-hosted, linux, x64, kolla-build
-self-hosted, linux, ARM64, kolla-build
+AMD64: base -> openstack-base -> keystone-base -> keystone
+ARM64: base -> openstack-base -> keystone-base -> keystone
 ```
-
-The first label set must report `runner_machine: x86_64`; the second must
-report `runner_machine: aarch64`. The workflow rejects a mislabeled machine
-before registry login. The total pool eligible for the `kolla-build` label is
-hard-capped at a maximum of four online native runners across AMD64 and ARM64.
-One workflow run still limits its two architecture legs with
-`max-parallel: 2`; when cross-stream demand exceeds the physical pool, excess
-jobs queue. GitHub Actions does not provide a repository counting semaphore in
-this workflow, so the physical eligible-pool cap is the concurrency ceiling.
-Each self-hosted runner must use Actions Runner 2.327.1 or newer because the
-selected Node 24 action releases require that runner minimum.
-
-Each runner needs:
-
-- native Linux for its advertised architecture;
-- Docker Engine and Buildx;
-- system Python 3 for pre-login checks; the workflow then selects Python 3.12;
-- network access to the pinned Python package source and GHCR;
-- a directly created virtual environment containing the matrix-pinned Kolla
-  package and exact Docker SDK pin `docker==7.1.0`, plus the workflow's pip
-  cache;
-- ephemeral Docker storage suitable for a complete Kolla profile and cache.
-
-The workflow resolves Docker's root with `DockerRootDir` and checks it with
-`df -Pk`. At least 150 GiB must be free or the build fails; 300 GB is the
-operational target for a full profile and reusable cache.
 
 QEMU can help local debugging, but QEMU output is not readiness evidence for
 ARM64 publication, image smoke, or deployment smoke.
@@ -59,17 +65,37 @@ python3 scripts/plan-publish.py \
 The workflow derives candidate ID from `github.run_id` and
 `github.run_attempt`; local read-only planning uses `local-dry-run`. The plan
 freezes the stream pin, resolved leaf set, parent chains, native
-references, structured command arrays, evidence paths, summary/lock paths, and
+references, exact build-unit matrices, evidence paths, summary/lock paths, and
 exact count-bearing approval phrase. The workflow installs the matrix-pinned
 Kolla version and `docker==7.1.0`, then imports the SDK, checks its version,
 and exercises `kolla-build --version` before registry login. It does not use a
 hard-coded Kolla version or moving branch.
 
-For a full profile, each native matrix leg executes one dependency-aware
-`kolla-build` invocation per architecture. Kolla builds the required parents
-and selected leaves in dependency order and uses bounded internal threads.
-Profile build groups remain catalog and reporting units; they are not workflow
-job fan-out.
+The plan places parents in dependency tiers 0, 1, and 2, then creates leaf
+stage 0 and optional leaf stage 1. Stage 1 is normally empty; the deployment
+profile uses it for the selected-leaf dependency
+`ovn-sb-db-server -> ovn-sb-db-relay`. Each unit has one anchored target and an
+exact ancestor chain. It pulls the preceding raw unit evidence by immutable
+digest, validates the platform, applies only the planned candidate tag locally,
+and runs `kolla-build` with `--skip-existing`, `--threads 1`, and
+`--push-threads 1`. The current Kolla summary must contain exactly the target
+in `built` and exactly the ancestor chain in `skipped`.
+
+```text
+parent tier 0 -> parent tier 1 -> parent tier 2
+              -> leaf stage 0 -> optional leaf stage 1
+              -> aggregate native evidence
+              -> manifests/summary/generic candidate lock
+              -> hand off to openstack-infra-ops
+```
+
+There is no parent-index artifact. Downstream units consume immutable digests
+from raw `unit-evidence` JSON, and native aggregation verifies the complete
+frozen-plan closure before finalization.
+
+For `2025.1-rocky-9 deployment/all`, the plan contains 16 parents and 63 leaves
+per architecture: 32 parent jobs, 124 leaf-stage-0 jobs, and 2
+leaf-stage-1 jobs, or 158 native build jobs.
 
 ## Native image evidence
 
@@ -80,39 +106,37 @@ ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candida
 ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-arm64
 ```
 
-The two matrix legs upload exact `native-<arch>-<candidate-id>` artifacts:
-`native-amd64-<candidate-id>` and `native-arm64-<candidate-id>`.
-For every selected deployable leaf, each evidence document records the stream,
-Kolla pin, `runner_machine`, native platform, architecture tag, child digest,
-immutable reference, and deterministic smoke result.
-Required parent refs and digests are recorded separately; the deterministic
-container-start smoke applies to deployable leaves.
+Every parent and leaf job uploads one
+`unit-evidence-<arch>-<kind>-<target>-<candidate-id>` JSON artifact. Parent
+and leaf jobs pass those raw JSON documents forward directly. After every
+planned unit succeeds, native aggregation checks the exact all-unit closure
+and creates the exact `native-amd64-<candidate-id>` and
+`native-arm64-<candidate-id>` JSON artifacts consumed by finalization. Their
+shared pattern is `native-<arch>-<candidate-id>`.
 
-Kolla summaries and logs are preserved separately as
-`native-diagnostics-amd64-<candidate-id>` and
-`native-diagnostics-arm64-<candidate-id>`. This keeps each
-`native-<arch>-<candidate-id>` artifact limited to its exact evidence JSON
-while retaining diagnostics even when a native build step fails.
+Unit evidence records the candidate and Kolla pin, frozen unit identity,
+runner machine and platform, target digest and immutable reference, every
+ancestor ref and digest, exact `built`/`skipped` summary, all disk
+measurements, and the leaf smoke result. Before accepting it, the unit job:
 
-Before evidence is accepted, the native job:
-
-1. normalizes Docker to a verified local Unix socket, requires a Linux server
-   architecture matching the runner, and checks the runner machine against
-   `x86_64` or `aarch64`;
-2. deletes the planned summary before Kolla runs and validates the current
-   Kolla summary against the frozen plan before any remote tag is accepted;
-3. inspects the remote architecture-tag descriptor and requires the planned
-   `linux/amd64` or `linux/arm64` platform;
-4. constructs the immutable `repository@sha256:<child-digest>` reference;
-5. performs an immutable pull for that digest and inspects the local OCI
+1. verifies the hosted native machine and local Unix Docker socket, prunes
+   Docker, and passes the 8 GiB preflight;
+2. pulls every planned ancestor by immutable digest, verifies its local native
+   platform and digest, and applies its candidate tag locally;
+3. executes the one-target frozen command while sampling disk space;
+4. validates exact `built` and `skipped` summary sets and the 2 GiB minimum;
+5. verifies the pushed target descriptor, immutable digest, and native
    platform;
-6. starts each leaf with its entrypoint overridden to `/bin/true` on the
-   matching native runner.
+6. for a leaf, starts that immutable image with its entrypoint overridden to
+   `/bin/true`.
 
-Both package-writing jobs use fresh job-scoped `DOCKER_CONFIG` directories
-below `RUNNER_TEMP`. An `always()` cleanup removes only `config.json` after the
-ordinary steps, without preempting Buildx post-job cleanup. Forced termination
-can bypass cleanup, so persistent runners still require cleanup or reimaging.
+The publish plan, successful unit evidence, aggregate native evidence, and
+terminal publish artifact contain JSON evidence only and are retained for
+seven days. A failed unit may upload a separate text diagnostic retained for
+one day. No job uploads a Docker layer, image tar file, Docker directory, pip
+cache, or Docker build cache as an artifact. Each package-writing unit uses a
+fresh job-scoped `DOCKER_CONFIG` below `RUNNER_TEMP` and removes its
+`config.json` in an `always()` cleanup step.
 
 This is image evidence keyed by `stream × architecture × leaf`. It proves that
 the immutable child can be pulled and executed natively, not that an OpenStack
@@ -170,11 +194,12 @@ nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-comp
 The stable stream alias
 `ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9`
 is convenience-only and never a lock input. All upload/download names contain
-candidate ID. A partial rerun without its upstream producer fails closed;
-operators use **Re-run all jobs** as the supported recovery procedure, which
-creates a new coherent attempt. A partial stream-alias failure fails the
-workflow but cannot invalidate the already uploaded candidate lock, and its
-retry receives a new candidate ID.
+candidate ID. **Re-run failed jobs is forbidden** because the incremented run
+attempt would not have a complete same-candidate upstream artifact set.
+Operators recover only with **Re-run all jobs**, which gives every unit a new
+candidate ID and rebuilds the entire dependency closure. A partial stream-alias
+failure cannot invalidate the already uploaded candidate lock; its recovery is
+also a full rerun under a new candidate ID.
 
 The lock contains tag-only architecture-neutral *_image_full variables for
 Kolla-Ansible plus a reserved _kolla_candidate_lock mapping. For every image,
@@ -201,17 +226,37 @@ evidence.
 ## First-publish readiness sequence
 
 1. Run `python3 scripts/validate-config.py` and inspect the required dry-run
-   plan.
-2. Complete all eight manual runner, protected-environment, variable,
-   token-permission, package, credential, and policy prerequisites in
-   [publish.md](publish.md).
+   plan. A feature branch may run `dry_run: true`; it cannot mutate GHCR.
+2. Complete the pre-canary public-repository, protected-main ruleset,
+   `ghcr-publish` required-reviewer/main-only restriction, repository-variable,
+   and read-default workflow permission steps in [publish.md](publish.md).
+   The code-level protected-main guard blocks a real publish until `main` is
+   actually protected.
 3. Use the narrow `core/keystone` scope for the first separately approved real
-   publish.
-4. Require both native evidence artifacts and the exact two-platform
-   multi-architecture manifest checks before accepting the Keystone result.
-5. Only after that evidence is accepted, separately authorize a full
-   `2025.1-rocky-9` `deployment/all` candidate and hand its generic lock to
-   operations for external deployment smoke.
+   publish from protected `main`, with the exact approval phrase and only
+   `ALLOW_GHCR_PUBLISH=true`. It must use the two standard hosted labels and
+   produce exactly eight parent/leaf build units. Before the first push, verify
+   that no same-name pre-existing GHCR package is unlinked from this repository.
+   Complete the environment approval within 48 hours of plan creation; otherwise
+   cancel it and start a fresh workflow run/candidate instead of approving a
+   nearly expired seven-day plan.
+4. Require every unit to pass the 8 GiB preflight and observed 2 GiB minimum,
+   then require both native evidence artifacts, the publish summary, and the
+   exact two-platform multi-architecture manifest.
+5. The GHCR package may not exist before that first push. After the canary,
+   verify each new package is linked to this repository, inspect it for
+   secrets/site-specific content, explicitly change visibility to **Public**
+   (treated as irreversible), and verify an anonymous manifest inspection and
+   pull after `docker logout ghcr.io` or with an empty Docker config. Only then
+   accept the Keystone canary. No actual canary is claimed by this document.
+6. Only after that evidence is accepted, separately authorize a full
+   `2025.1-rocky-9` `deployment/all` candidate. Repeat repository-link,
+   irreversible Public-visibility, and anonymous-pull verification for every
+   package first created by that run. The workflow uses GitHub's documented
+   `GITHUB_TOKEN` inheritance default, but acceptance depends on observed
+   package visibility rather than that assumption. Only after every deployable
+   leaf package is Public, hand the generic lock to operations for external
+   deployment smoke.
 
 Registry credentials, OpenStack credentials, Ceph keys, private CAs,
 kubeconfigs, and site-specific configuration stay outside images and generated

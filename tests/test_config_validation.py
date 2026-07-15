@@ -247,8 +247,28 @@ class ConfigValidationTest(unittest.TestCase):
                 stream = find_stream(self.matrix, stream_id)
                 resolved = resolve_profile(profile, stream)
                 image_names = {image["name"] for image in resolved["images"]}
+                relay_group = next(
+                    group
+                    for group in resolved["build_groups"]
+                    if group["images"] == ["ovn-sb-db-relay"]
+                )
 
                 self.assertEqual(len(image_names), expected_count)
+                self.assertEqual(
+                    relay_group["parents"],
+                    [
+                        "base",
+                        "openvswitch-base",
+                        "ovn-base",
+                        "ovn-sb-db-server",
+                    ],
+                )
+                self.assertNotIn(
+                    "ovn-sb-db-server",
+                    self.validator["resolved_parent_sequence"](
+                        resolved["build_groups"]
+                    ),
+                )
                 self.assertTrue(required_common <= image_names)
                 self.assertEqual("tgtd" in image_names, stream["distro"] == "ubuntu")
                 self.assertEqual(
@@ -418,6 +438,26 @@ class ConfigValidationTest(unittest.TestCase):
             any(
                 "resolved parent set must be exactly" in error
                 and "2025.2" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_runtime_validator_rejects_wrong_ovn_relay_parent_chain(self) -> None:
+        profile = copy.deepcopy(load_json(PROFILES_DIR / "deployment.json"))
+        relay = next(
+            group
+            for group in profile["build_groups"]
+            if group["name"] == "ovn-sb-db-relay"
+        )
+        relay["parent"] = "ovn-base"
+        relay["parents"] = ["base", "openvswitch-base", "ovn-base"]
+
+        errors = self.validate_profile("deployment", profile)
+
+        self.assertTrue(
+            any(
+                "ovn-sb-db-relay parent chain must be exactly" in error
                 for error in errors
             ),
             errors,

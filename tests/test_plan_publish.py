@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import subprocess
 import sys
 import unittest
@@ -21,24 +22,28 @@ STREAM_IDS = [
     "2026.1-ubuntu-noble",
 ]
 STREAM_EXPECTATIONS = {
-    "2025.1-rocky-9": ("2025.1", "rocky", "9", "20.4.0", 63),
-    "2025.1-rocky-10": ("2025.1", "rocky", "10", "20.4.0", 63),
-    "2025.1-ubuntu-noble": ("2025.1", "ubuntu", "24.04", "20.4.0", 64),
-    "2025.2-rocky-10": ("2025.2", "rocky", "10", "21.1.0", 63),
-    "2025.2-ubuntu-noble": ("2025.2", "ubuntu", "24.04", "21.1.0", 64),
-    "2026.1-rocky-10": ("2026.1", "rocky", "10", "22.0.0", 65),
-    "2026.1-ubuntu-noble": ("2026.1", "ubuntu", "24.04", "22.0.0", 66),
+    "2025.1-rocky-9": ("2025.1", "rocky", "9", "20.4.0", 63, 16),
+    "2025.1-rocky-10": ("2025.1", "rocky", "10", "20.4.0", 63, 16),
+    "2025.1-ubuntu-noble": ("2025.1", "ubuntu", "24.04", "20.4.0", 64, 16),
+    "2025.2-rocky-10": ("2025.2", "rocky", "10", "21.1.0", 63, 15),
+    "2025.2-ubuntu-noble": ("2025.2", "ubuntu", "24.04", "21.1.0", 64, 15),
+    "2026.1-rocky-10": ("2026.1", "rocky", "10", "22.0.0", 65, 15),
+    "2026.1-ubuntu-noble": ("2026.1", "ubuntu", "24.04", "22.0.0", 66, 15),
 }
 ARCHITECTURES = {
     "amd64": {
         "kolla_base_arch": "x86_64",
         "platform": "linux/amd64",
-        "runner_labels": ["self-hosted", "linux", "x64", "kolla-build"],
+        "runner": "ubuntu-24.04",
+        "runner_machine": "x86_64",
+        "runner_labels": ["ubuntu-24.04"],
     },
     "arm64": {
         "kolla_base_arch": "aarch64",
         "platform": "linux/arm64",
-        "runner_labels": ["self-hosted", "linux", "ARM64", "kolla-build"],
+        "runner": "ubuntu-24.04-arm",
+        "runner_machine": "aarch64",
+        "runner_labels": ["ubuntu-24.04-arm"],
     },
 }
 TEST_CANDIDATE_ID = "123456789-1"
@@ -107,6 +112,47 @@ def option_value(command: list[str], option: str) -> str:
     return command[command.index(option) + 1]
 
 
+def parent_units(plan: dict) -> list[dict]:
+    return [
+        unit
+        for tier in plan["build"]["parent_tiers"]
+        for unit in tier["matrix"]["include"]
+    ]
+
+
+def leaf_units(plan: dict) -> list[dict]:
+    return [
+        unit
+        for stage in plan["build"]["leaf_stages"]
+        for unit in stage["matrix"]["include"]
+    ]
+
+
+def build_matrices(plan: dict) -> list[tuple[str, dict]]:
+    return [
+        *[
+            (f"parent_tier_{entry['tier']}_matrix", entry["matrix"])
+            for entry in plan["build"]["parent_tiers"]
+        ],
+        *[
+            (f"leaf_stage_{entry['stage']}_matrix", entry["matrix"])
+            for entry in plan["build"]["leaf_stages"]
+        ],
+    ]
+
+
+def planner_symbols() -> dict:
+    scripts_dir = str(PLAN_PUBLISH.parent)
+    inserted = scripts_dir not in sys.path
+    if inserted:
+        sys.path.insert(0, scripts_dir)
+    try:
+        return runpy.run_path(str(PLAN_PUBLISH))
+    finally:
+        if inserted:
+            sys.path.remove(scripts_dir)
+
+
 class PlanPublishTest(unittest.TestCase):
     def test_local_default_and_explicit_workflow_candidate_refs(self) -> None:
         local = run_plan(image="keystone", candidate_id=None)
@@ -162,9 +208,7 @@ class PlanPublishTest(unittest.TestCase):
                 for architecture in plan["build"]["architectures"]:
                     arch = architecture["arch"]
                     arch_tag = f"{candidate_tag}-{arch}"
-                    command = architecture["commands"]["kolla_build_push"]
                     self.assertEqual(architecture["arch_tag"], arch_tag)
-                    self.assertEqual(option_value(command, "--tag"), arch_tag)
                     self.assertTrue(
                         all(
                             entry["arch_ref"].endswith(f":{arch_tag}")
@@ -177,6 +221,10 @@ class PlanPublishTest(unittest.TestCase):
                             for entry in architecture["images"]
                         )
                     )
+                for unit in plan["build"]["all_units"]:
+                    arch_tag = f"{candidate_tag}-{unit['arch']}"
+                    self.assertEqual(option_value(unit["command"], "--tag"), arch_tag)
+                    self.assertTrue(unit["arch_ref"].endswith(f":{arch_tag}"))
 
     def test_parent_sets_match_checked_in_kolla_dependency_fixture(self) -> None:
         fixture = json.loads(PARENT_FIXTURE.read_text(encoding="utf-8"))
@@ -279,7 +327,7 @@ class PlanPublishTest(unittest.TestCase):
 
     def test_all_streams_emit_exact_pins_native_units_and_deployment_counts(self) -> None:
         for stream_id, expected in STREAM_EXPECTATIONS.items():
-            release, distro, base_tag, kolla_version, image_count = expected
+            release, distro, base_tag, kolla_version, image_count, parent_count = expected
             with self.subTest(stream=stream_id):
                 plan = run_plan(stream=stream_id, profile="deployment")
 
@@ -306,13 +354,71 @@ class PlanPublishTest(unittest.TestCase):
                     plan["kolla_ansible_lock_file"],
                     f"artifacts/kolla-ansible-image-lock-{stream_id}.yml",
                 )
-                self.assertEqual(set(plan["build"]), {"architectures"})
+                self.assertEqual(
+                    set(plan["build"]),
+                    {"architectures", "parent_tiers", "leaf_stages", "all_units"},
+                )
                 self.assertEqual(
                     [entry["arch"] for entry in plan["build"]["architectures"]],
                     ["amd64", "arm64"],
                 )
 
                 leaf_names = [image["image"] for image in plan["images"]]
+                parents = parent_units(plan)
+                leaves = leaf_units(plan)
+                all_units = plan["build"]["all_units"]
+                self.assertEqual(
+                    [tier["tier"] for tier in plan["build"]["parent_tiers"]],
+                    [0, 1, 2],
+                )
+                self.assertEqual(
+                    [stage["stage"] for stage in plan["build"]["leaf_stages"]],
+                    [0, 1],
+                )
+                self.assertEqual(len(parents), parent_count * 2)
+                self.assertEqual(len(leaves), image_count * 2)
+                self.assertEqual(len(all_units), (parent_count + image_count) * 2)
+                self.assertEqual(all_units, parents + leaves)
+                self.assertEqual(
+                    [
+                        len(stage["matrix"]["include"])
+                        for stage in plan["build"]["leaf_stages"]
+                    ],
+                    [(image_count - 1) * 2, 2],
+                )
+                self.assertEqual(
+                    len({unit["id"] for unit in all_units}), len(all_units)
+                )
+                self.assertEqual(
+                    len({unit["summary_file"] for unit in all_units}), len(all_units)
+                )
+                self.assertEqual(
+                    len({unit["logs_dir"] for unit in all_units}), len(all_units)
+                )
+                self.assertNotIn(
+                    "ovn-sb-db-server",
+                    {unit["target"] for unit in parents},
+                )
+                stage_one_units = plan["build"]["leaf_stages"][1]["matrix"][
+                    "include"
+                ]
+                self.assertEqual(
+                    [unit["target"] for unit in stage_one_units],
+                    ["ovn-sb-db-relay", "ovn-sb-db-relay"],
+                )
+                self.assertTrue(all(unit["tier"] == 4 for unit in stage_one_units))
+                self.assertTrue(
+                    all(
+                        unit["ancestor_chain"]
+                        == [
+                            "base",
+                            "openvswitch-base",
+                            "ovn-base",
+                            "ovn-sb-db-server",
+                        ]
+                        for unit in stage_one_units
+                    )
+                )
                 for image in plan["images"]:
                     image_name = image["image"]
                     self.assertEqual(
@@ -360,7 +466,6 @@ class PlanPublishTest(unittest.TestCase):
                 for architecture in plan["build"]["architectures"]:
                     arch = architecture["arch"]
                     arch_expectation = ARCHITECTURES[arch]
-                    command = architecture["commands"]["kolla_build_push"]
 
                     self.assertEqual(
                         architecture["kolla_base_arch"],
@@ -373,7 +478,59 @@ class PlanPublishTest(unittest.TestCase):
                         architecture["runner_labels"],
                         arch_expectation["runner_labels"],
                     )
-                    self.assertEqual(set(architecture["commands"]), {"kolla_build_push"})
+                    self.assertNotIn("commands", architecture)
+                    self.assertTrue(
+                        {
+                            parent["image"]
+                            for parent in architecture["parents"]
+                        }.isdisjoint(leaf_names)
+                    )
+                    self.assertEqual(
+                        [image["image"] for image in architecture["images"]],
+                        leaf_names,
+                    )
+                    for image in architecture["images"]:
+                        self.assertEqual(
+                            image["smoke"],
+                            {
+                                "ref_source": "recorded_child_digest",
+                                "platform": arch_expectation["platform"],
+                                "inspect_platform": True,
+                                "entrypoint": "/bin/true",
+                            },
+                        )
+
+                for unit in all_units:
+                    arch_expectation = ARCHITECTURES[unit["arch"]]
+                    command = unit["command"]
+                    self.assertEqual(
+                        set(unit),
+                        {
+                            "id",
+                            "kind",
+                            "tier",
+                            "arch",
+                            "runner",
+                            "runner_machine",
+                            "kolla_base_arch",
+                            "platform",
+                            "target",
+                            "ancestor_chain",
+                            "ancestors",
+                            "arch_ref",
+                            "summary_file",
+                            "logs_dir",
+                            "command",
+                        },
+                    )
+                    self.assertEqual(unit["runner"], arch_expectation["runner"])
+                    self.assertEqual(
+                        unit["runner_machine"], arch_expectation["runner_machine"]
+                    )
+                    self.assertEqual(
+                        unit["kolla_base_arch"], arch_expectation["kolla_base_arch"]
+                    )
+                    self.assertEqual(unit["platform"], arch_expectation["platform"])
                     self.assertEqual(command[0], "kolla-build")
                     self.assertEqual(option_value(command, "--engine"), "docker")
                     self.assertEqual(option_value(command, "--base"), distro)
@@ -394,44 +551,100 @@ class PlanPublishTest(unittest.TestCase):
                     )
                     self.assertEqual(
                         option_value(command, "--tag"),
-                        expected_candidate_tag(stream_id, arch),
+                        expected_candidate_tag(stream_id, unit["arch"]),
                     )
-                    self.assertEqual(option_value(command, "--threads"), "4")
+                    self.assertEqual(option_value(command, "--threads"), "1")
                     self.assertEqual(option_value(command, "--push-threads"), "1")
                     self.assertEqual(
                         option_value(command, "--summary-json-file"),
-                        f"artifacts/kolla-summary/{stream_id}-{arch}.json",
+                        unit["summary_file"],
                     )
                     self.assertEqual(
                         option_value(command, "--logs-dir"),
-                        f"artifacts/kolla-logs/{stream_id}-{arch}",
+                        unit["logs_dir"],
                     )
                     self.assertIn("--push", command)
                     self.assertEqual(command.count("--push"), 1)
-                    self.assertNotIn("--skip-existing", command)
+                    self.assertIn("--skip-existing", command)
                     self.assertNotIn("--skip-parents", command)
                     self.assertEqual(
-                        command[-image_count:],
-                        [f"^{image}$" for image in leaf_names],
+                        command[-1], f"^{unit['target']}$"
                     )
                     self.assertEqual(
-                        [image["image"] for image in architecture["images"]],
-                        leaf_names,
+                        unit["id"], f"{unit['arch']}-{unit['kind']}-{unit['target']}"
                     )
-                    for image in architecture["images"]:
-                        self.assertEqual(
-                            image["smoke"],
-                            {
-                                "ref_source": "recorded_child_digest",
-                                "platform": arch_expectation["platform"],
-                                "inspect_platform": True,
-                                "entrypoint": "/bin/true",
-                            },
+                    self.assertEqual(
+                        [ancestor["image"] for ancestor in unit["ancestors"]],
+                        unit["ancestor_chain"],
+                    )
+                    self.assertTrue(
+                        all(
+                            ancestor["arch_ref"].endswith(
+                                f":{expected_candidate_tag(stream_id, unit['arch'])}"
+                            )
+                            for ancestor in unit["ancestors"]
                         )
+                    )
+
+    def test_all_stream_build_matrices_fit_github_limits(self) -> None:
+        for stream_id in STREAM_IDS:
+            with self.subTest(stream=stream_id):
+                plan = run_plan(stream=stream_id, profile="deployment")
+                matrices = build_matrices(plan)
+                self.assertEqual(
+                    [name for name, _ in matrices],
+                    [
+                        "parent_tier_0_matrix",
+                        "parent_tier_1_matrix",
+                        "parent_tier_2_matrix",
+                        "leaf_stage_0_matrix",
+                        "leaf_stage_1_matrix",
+                    ],
+                )
+                self.assertTrue(
+                    all(len(matrix["include"]) <= 256 for _, matrix in matrices)
+                )
+                github_output = "".join(
+                    f"{name}={json.dumps(matrix, separators=(',', ':'))}\n"
+                    for name, matrix in matrices
+                )
+                self.assertLessEqual(
+                    len(github_output.encode("utf-16-le")),
+                    1024 * 1024,
+                )
+
+                if stream_id == "2025.1-rocky-9":
+                    self.assertEqual(
+                        [len(matrix["include"]) for _, matrix in matrices],
+                        [2, 10, 20, 124, 2],
+                    )
+
+    def test_leaf_stage_planning_fails_closed_on_cycles_and_depth(self) -> None:
+        stage_map = planner_symbols()["selected_leaf_stage_map"]
+
+        self.assertEqual(
+            stage_map(
+                {
+                    "independent": ["base"],
+                    "dependency": ["base"],
+                    "dependent": ["base", "dependency"],
+                }
+            ),
+            {"independent": 0, "dependency": 0, "dependent": 1},
+        )
+        with self.assertRaisesRegex(ValueError, "dependency cycle"):
+            stage_map({"first": ["second"], "second": ["first"]})
+        with self.assertRaisesRegex(ValueError, "depth exceeds supported stages"):
+            stage_map(
+                {
+                    "first": ["base"],
+                    "second": ["first"],
+                    "third": ["second"],
+                }
+            )
 
     def test_native_architectures_record_parent_and_leaf_evidence(self) -> None:
         plan = run_plan(image="keystone")
-        self.assertEqual(set(plan["build"]), {"architectures"})
 
         for architecture in plan["build"]["architectures"]:
             arch = architecture["arch"]
@@ -465,9 +678,43 @@ class PlanPublishTest(unittest.TestCase):
                     }
                 ],
             )
+            self.assertNotIn("commands", architecture)
+
+        self.assertEqual(
+            [
+                (tier["tier"], [unit["id"] for unit in tier["matrix"]["include"]])
+                for tier in plan["build"]["parent_tiers"]
+            ],
+            [
+                (0, ["amd64-parent-base", "arm64-parent-base"]),
+                (
+                    1,
+                    ["amd64-parent-openstack-base", "arm64-parent-openstack-base"],
+                ),
+                (
+                    2,
+                    ["amd64-parent-keystone-base", "arm64-parent-keystone-base"],
+                ),
+            ],
+        )
+        self.assertEqual(
+            [unit["id"] for unit in leaf_units(plan)],
+            ["amd64-leaf-keystone", "arm64-leaf-keystone"],
+        )
+        self.assertEqual(
+            [
+                len(stage["matrix"]["include"])
+                for stage in plan["build"]["leaf_stages"]
+            ],
+            [2, 0],
+        )
+        for unit in leaf_units(plan):
             self.assertEqual(
-                architecture["commands"]["kolla_build_push"][-1], "^keystone$"
+                unit["ancestor_chain"],
+                ["base", "openstack-base", "keystone-base"],
             )
+            self.assertEqual(unit["tier"], 3)
+            self.assertEqual(unit["command"][-1], "^keystone$")
 
     def test_organization_arch_and_neutral_refs_are_exact(self) -> None:
         plan = run_plan(image="keystone")
@@ -535,7 +782,7 @@ class PlanPublishTest(unittest.TestCase):
 
     def test_ubuntu_base_tag_and_noble_publish_tags_stay_distinct(self) -> None:
         plan = run_plan(stream="2025.1-ubuntu-noble", image="keystone")
-        command = plan["build"]["architectures"][0]["commands"]["kolla_build_push"]
+        command = plan["build"]["all_units"][0]["command"]
         image = plan["images"][0]
 
         self.assertEqual(plan["distro_version"], "24.04")
@@ -563,9 +810,106 @@ class PlanPublishTest(unittest.TestCase):
             self.assertEqual(
                 [image["image"] for image in architecture["images"]], ["glance-api"]
             )
+        self.assertEqual(
+            [unit["target"] for unit in leaf_units(plan)],
+            ["glance-api", "glance-api"],
+        )
+        self.assertTrue(
+            all(unit["command"][-1] == "^glance-api$" for unit in leaf_units(plan))
+        )
+
+    def test_relay_filter_adds_only_its_build_leaf_dependency(self) -> None:
+        plan = run_plan(profile="deployment", image="ovn-sb-db-relay")
+
+        self.assertEqual(
+            plan["scope"],
+            {"profile": "deployment", "image": "ovn-sb-db-relay", "image_count": 1},
+        )
+        self.assertEqual([image["image"] for image in plan["images"]], ["ovn-sb-db-relay"])
+        for architecture in plan["build"]["architectures"]:
             self.assertEqual(
-                architecture["commands"]["kolla_build_push"][-1], "^glance-api$"
+                [image["image"] for image in architecture["images"]],
+                ["ovn-sb-db-relay"],
             )
+            self.assertEqual(
+                [parent["image"] for parent in architecture["parents"]],
+                ["base", "openvswitch-base", "ovn-base"],
+            )
+
+        self.assertEqual(
+            [
+                [unit["id"] for unit in tier["matrix"]["include"]]
+                for tier in plan["build"]["parent_tiers"]
+            ],
+            [
+                ["amd64-parent-base", "arm64-parent-base"],
+                [
+                    "amd64-parent-openvswitch-base",
+                    "arm64-parent-openvswitch-base",
+                ],
+                ["amd64-parent-ovn-base", "arm64-parent-ovn-base"],
+            ],
+        )
+        self.assertEqual(
+            [
+                [unit["id"] for unit in stage["matrix"]["include"]]
+                for stage in plan["build"]["leaf_stages"]
+            ],
+            [
+                [
+                    "amd64-leaf-ovn-sb-db-server",
+                    "arm64-leaf-ovn-sb-db-server",
+                ],
+                [
+                    "amd64-leaf-ovn-sb-db-relay",
+                    "arm64-leaf-ovn-sb-db-relay",
+                ],
+            ],
+        )
+        self.assertEqual(
+            [unit["id"] for unit in plan["build"]["all_units"]],
+            [
+                "amd64-parent-base",
+                "arm64-parent-base",
+                "amd64-parent-openvswitch-base",
+                "arm64-parent-openvswitch-base",
+                "amd64-parent-ovn-base",
+                "arm64-parent-ovn-base",
+                "amd64-leaf-ovn-sb-db-server",
+                "arm64-leaf-ovn-sb-db-server",
+                "amd64-leaf-ovn-sb-db-relay",
+                "arm64-leaf-ovn-sb-db-relay",
+            ],
+        )
+        self.assertEqual(len(plan["build"]["all_units"]), 10)
+        self.assertNotIn(
+            "ovn-sb-db-server",
+            {unit["target"] for unit in parent_units(plan)},
+        )
+        manifest_command = plan["images"][0]["commands"]["manifest_create"]
+        self.assertTrue(
+            all(
+                "/ovn-sb-db-relay:" in item
+                for item in manifest_command
+                if item.startswith("ghcr.io/")
+            )
+        )
+
+    def test_core_nova_libvirt_uses_only_the_base_parent_chain(self) -> None:
+        plan = run_plan(image="nova-libvirt")
+
+        self.assertEqual(
+            [len(tier["matrix"]["include"]) for tier in plan["build"]["parent_tiers"]],
+            [2, 0, 0],
+        )
+        self.assertEqual(
+            [unit["ancestor_chain"] for unit in leaf_units(plan)],
+            [["base"], ["base"]],
+        )
+        self.assertEqual(
+            [parent["image"] for parent in plan["build"]["architectures"][0]["parents"]],
+            ["base"],
+        )
 
     def test_approval_metadata_is_bound_to_the_frozen_scope(self) -> None:
         cases = (

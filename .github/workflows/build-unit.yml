@@ -1,0 +1,239 @@
+name: Build one native Kolla image unit
+
+on:
+  workflow_call:
+    inputs:
+      unit:
+        description: Frozen build-unit object from the publish plan
+        required: true
+        type: string
+      publish_plan_artifact:
+        description: Exact current-attempt publish-plan artifact name
+        required: true
+        type: string
+      input_evidence_artifact_pattern:
+        description: Exact name or pattern for prerequisite JSON evidence
+        required: false
+        default: ""
+        type: string
+      candidate_id:
+        description: Candidate identity derived from the caller run context
+        required: true
+        type: string
+      approval:
+        description: Exact approval phrase for the frozen plan
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-unit:
+    name: ${{ fromJSON(inputs.unit).arch }} ${{ fromJSON(inputs.unit).kind }} ${{ fromJSON(inputs.unit).target }}
+    runs-on: ${{ fromJSON(inputs.unit).runner }}
+    timeout-minutes: 120
+
+    steps:
+      - name: Require repository-owned invocation
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REPOSITORY" != "supergate-hub/kolla-container-images" ]; then
+            echo "This build-unit workflow only accepts repository-owned calls." >&2
+            exit 1
+          fi
+          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Build publication requires the protected main branch." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download frozen publish plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ inputs.publish_plan_artifact }}
+          path: artifacts/plan
+
+      - name: Download prerequisite evidence
+        if: ${{ inputs.input_evidence_artifact_pattern != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ${{ inputs.input_evidence_artifact_pattern }}
+          path: artifacts/input-evidence
+          merge-multiple: true
+
+      - name: Revalidate publish approval
+        env:
+          ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
+          ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
+          ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
+          APPROVAL: ${{ inputs.approval }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+        run: >-
+          python3 scripts/validate-publish-approval.py
+          --publish-plan artifacts/plan/publish-plan.json
+          --expected-candidate-id "$CANDIDATE_ID"
+
+      - name: Verify native hosted runner and Docker storage
+        env:
+          EXPECTED_RUNNER_MACHINE: ${{ fromJSON(inputs.unit).runner_machine }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import platform
+
+          expected = os.environ["EXPECTED_RUNNER_MACHINE"]
+          actual = platform.machine()
+          if actual != expected:
+              raise SystemExit(
+                  f"native runner architecture must be {expected}, got {actual}"
+              )
+          print(f"Native runner architecture verified: {actual}")
+          PY
+          if [ -n "${DOCKER_CONTEXT:-}" ]; then
+            endpoint="$(docker context inspect "$DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}')"
+          elif [ -n "${DOCKER_HOST:-}" ]; then
+            endpoint="$DOCKER_HOST"
+          else
+            endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
+          fi
+          if [[ "$endpoint" != unix:///* ]]; then
+            echo "Docker endpoint must be a local Unix socket, got $endpoint" >&2
+            exit 1
+          fi
+          server_os="$(docker info --format '{{.OSType}}')"
+          server_arch="$(docker info --format '{{.Architecture}}')"
+          if [ "$server_os" != linux ] || [ "$server_arch" != "$EXPECTED_RUNNER_MACHINE" ]; then
+            echo "Docker server must be linux/$EXPECTED_RUNNER_MACHINE, got $server_os/$server_arch" >&2
+            exit 1
+          fi
+          printf 'DOCKER_HOST=%s\n' "$endpoint" >> "$GITHUB_ENV"
+          printf 'DOCKER_CONTEXT=\n' >> "$GITHUB_ENV"
+          docker buildx version
+          docker system df
+          df -h "$(docker info --format '{{.DockerRootDir}}')"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the frozen Kolla and Docker SDK versions
+        run: |
+          set -euo pipefail
+          KOLLA_VERSION="$(
+            python3 - <<'PY'
+          import json
+          import pathlib
+
+          plan = json.loads(
+              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
+          )
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          streams = [entry for entry in matrix["streams"] if entry["id"] == plan["stream"]]
+          if len(streams) != 1 or plan["kolla_version"] != streams[0]["kolla_version"]:
+              raise SystemExit("frozen plan Kolla pin does not match the stream matrix pin")
+          print(plan["kolla_version"])
+          PY
+          )"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --no-cache-dir --upgrade pip
+          .venv/bin/python -m pip install --no-cache-dir \
+            "kolla==$KOLLA_VERSION" "docker==7.1.0"
+          .venv/bin/python - <<'PY'
+          import docker
+
+          if docker.__version__ != "7.1.0":
+              raise SystemExit(f"Docker SDK must be 7.1.0, got {docker.__version__}")
+          print(f"Docker SDK verified: {docker.__version__}")
+          PY
+          .venv/bin/kolla-build --version
+          printf '%s\n' "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare ephemeral Docker client state
+        env:
+          UNIT_ID: ${{ fromJSON(inputs.unit).id }}
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/kolla-docker-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$UNIT_ID"
+          case "$docker_config" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config path: $docker_config" >&2; exit 1 ;;
+          esac
+          rm -rf -- "$docker_config"
+          install -d -m 0700 "$docker_config"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build, push, inspect, and smoke one unit
+        env:
+          UNIT_ID: ${{ fromJSON(inputs.unit).id }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/input-evidence artifacts/unit-evidence artifacts/unit-diagnostics
+          python3 scripts/run-build-unit.py \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --unit-id "$UNIT_ID" \
+            --input-evidence-dir artifacts/input-evidence \
+            --output "artifacts/unit-evidence/$UNIT_ID.json" \
+            2>&1 | tee "artifacts/unit-diagnostics/$UNIT_ID.txt"
+
+      - name: Upload unit evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
+          path: artifacts/unit-evidence/${{ fromJSON(inputs.unit).id }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Collect failure diagnostics
+        if: ${{ failure() }}
+        env:
+          UNIT_ID: ${{ fromJSON(inputs.unit).id }}
+        run: |
+          mkdir -p artifacts/unit-diagnostics
+          {
+            echo "unit=$UNIT_ID"
+            date -u
+            uname -a
+            df -h
+            docker system df
+          } >> "artifacts/unit-diagnostics/$UNIT_ID.txt" 2>&1 || true
+
+      - name: Upload failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unit-diagnostics-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
+          path: artifacts/unit-diagnostics/${{ fromJSON(inputs.unit).id }}.txt
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Remove ephemeral Docker client state
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKER_CONFIG:-}" ]; then
+            exit 0
+          fi
+          case "$DOCKER_CONFIG" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config cleanup: $DOCKER_CONFIG" >&2; exit 1 ;;
+          esac
+          rm -f -- "$DOCKER_CONFIG/config.json"

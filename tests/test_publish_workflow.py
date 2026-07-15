@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
+BUILD_UNIT_WORKFLOW = ROOT / ".github" / "workflows" / "build-unit.yml"
 VALIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
 README = ROOT / "README.md"
 BUILD_READINESS = ROOT / "docs" / "build-readiness.md"
@@ -163,6 +164,7 @@ class PublishWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.publish = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        cls.build_unit = BUILD_UNIT_WORKFLOW.read_text(encoding="utf-8")
         cls.validate = VALIDATE_WORKFLOW.read_text(encoding="utf-8")
         cls.readme = README.read_text(encoding="utf-8")
         cls.build_readiness = BUILD_READINESS.read_text(encoding="utf-8")
@@ -172,6 +174,10 @@ class PublishWorkflowTest(unittest.TestCase):
         cls.alias_script = python_heredoc(
             cls.publish,
             "      - name: Update convenience stream aliases",
+        )
+        cls.matrix_script = python_heredoc(
+            cls.publish,
+            "      - name: Publish dynamic build matrices",
         )
 
     def publish_job(self, name: str) -> str:
@@ -230,32 +236,76 @@ class PublishWorkflowTest(unittest.TestCase):
             )
             return result, commands
 
+    def run_matrix_script(
+        self,
+        plan: dict,
+    ) -> tuple[subprocess.CompletedProcess[str], dict[str, str], bytes]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            plan_path = temp_path / "artifacts" / "plan" / "publish-plan.json"
+            plan_path.parent.mkdir(parents=True)
+            plan_path.write_text(json.dumps(plan), encoding="utf-8")
+            output_path = temp_path / "github-output.txt"
+            environment = os.environ.copy()
+            environment["GITHUB_OUTPUT"] = str(output_path)
+            result = subprocess.run(
+                [sys.executable, "-c", self.matrix_script],
+                cwd=temp_path,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+            output_bytes = output_path.read_bytes() if output_path.exists() else b""
+            outputs = dict(
+                line.split("=", 1)
+                for line in output_bytes.decode("utf-8").splitlines()
+            )
+            return result, outputs, output_bytes
+
     def test_workflows_use_only_reviewed_action_commits(self) -> None:
-        combined = self.publish + "\n" + self.validate
+        combined = self.publish + "\n" + self.build_unit + "\n" + self.validate
         raw_uses = re.findall(r"(?m)^\s*uses:\s+.+$", combined)
+        local_calls = [
+            line for line in raw_uses
+            if "./.github/workflows/build-unit.yml" in line
+        ]
+        external_uses = [
+            line for line in raw_uses
+            if "./.github/workflows/build-unit.yml" not in line
+        ]
         matches = ACTION_RE.findall(combined)
-        self.assertEqual(len(raw_uses), 17)
-        self.assertEqual(len(matches), len(raw_uses))
+        self.assertEqual(len(local_calls), 5)
+        self.assertEqual(len(matches), len(external_uses))
         for repository, sha, release in matches:
             with self.subTest(repository=repository):
                 self.assertIn(repository, EXPECTED_ACTIONS)
                 self.assertEqual((sha, release), EXPECTED_ACTIONS[repository])
+        self.assertEqual(
+            self.publish.count("uses: ./.github/workflows/build-unit.yml"),
+            5,
+        )
+        self.assertNotIn("./.github/workflows/build-unit.yml", self.validate)
+        self.assertNotIn("./.github/workflows/build-unit.yml", self.build_unit)
 
     def test_every_checkout_disables_persisted_credentials(self) -> None:
         checkout_header = (
             "uses: actions/checkout@"
             "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7"
         )
-        self.assertEqual(self.publish.count(checkout_header), 4)
-        self.assertEqual(self.validate.count(checkout_header), 1)
-        for document, count in ((self.publish, 4), (self.validate, 1)):
-            blocks = re.findall(
-                rf"(?ms)^\s*- name: Check out repository\n"
-                rf"\s+{re.escape(checkout_header)}\n"
-                rf"\s+with:\n\s+persist-credentials: false(?:\n|$)",
-                document,
-            )
-            self.assertEqual(len(blocks), count)
+        for document, count in (
+            (self.publish, 4),
+            (self.build_unit, 1),
+            (self.validate, 1),
+        ):
+            with self.subTest(count=count):
+                self.assertEqual(document.count(checkout_header), count)
+                blocks = re.findall(
+                    rf"(?ms)^\s*- name: Check out repository\n"
+                    rf"\s+{re.escape(checkout_header)}\n"
+                    rf"\s+with:\n\s+persist-credentials: false(?:\n|$)",
+                    document,
+                )
+                self.assertEqual(len(blocks), count)
 
     def test_dispatch_is_the_only_trigger_and_has_exact_frozen_inputs(self) -> None:
         trigger_block = yaml_block(self.publish, "on:")
@@ -289,7 +339,27 @@ class PublishWorkflowTest(unittest.TestCase):
         )
         self.assertNotIn("environment_", self.publish)
 
-    def test_plan_job_is_read_only_and_uploads_one_exact_plan(self) -> None:
+    def test_publish_jobs_are_the_minimal_staged_dag_in_order(self) -> None:
+        jobs = re.findall(
+            r"(?m)^  ([a-z][a-z0-9-]+):$",
+            yaml_block(self.publish, "jobs:"),
+        )
+        self.assertEqual(
+            jobs,
+            [
+                "publish-plan",
+                "authorize-publish",
+                "build-parent-tier-0",
+                "build-parent-tier-1",
+                "build-parent-tier-2",
+                "build-leaf-stage-0",
+                "build-leaf-stage-1",
+                "collect-native-evidence",
+                "finalize-publish",
+            ],
+        )
+
+    def test_plan_job_is_read_only_and_publishes_dynamic_matrices(self) -> None:
         job = self.publish_job("publish-plan")
         self.assertNotIn("packages: write", job)
         self.assertNotIn("docker login", job)
@@ -298,33 +368,49 @@ class PublishWorkflowTest(unittest.TestCase):
             job.index("python3 scripts/validate-config.py"),
             job.index("python3 scripts/plan-publish.py"),
         )
-        self.assertIn("mkdir -p artifacts/plan", job)
-        self.assertIn(
-            'python3 scripts/plan-publish.py "${plan_args[@]}" '
-            "> artifacts/plan/publish-plan.json",
-            job,
-        )
-        self.assertIn("STREAM: ${{ inputs.stream }}", job)
-        self.assertIn("PROFILE: ${{ inputs.profile }}", job)
-        self.assertIn("IMAGE: ${{ inputs.image }}", job)
-        self.assertIn("plan_args=(", job)
-        for argument in (
-            '--stream "$STREAM"',
-            '--profile "$PROFILE"',
-            '--candidate-id "$CANDIDATE_ID"',
-            "--dry-run",
+        for output in (
+            "parent_tier_0_matrix",
+            "parent_tier_1_matrix",
+            "parent_tier_2_matrix",
+            "leaf_stage_0_matrix",
+            "leaf_stage_1_matrix",
+            "leaf_stage_1_count",
         ):
-            self.assertIn(argument, job)
-        self.assertIn('if [ "$IMAGE" != "all" ]; then', job)
-        self.assertIn('plan_args+=(--image "$IMAGE")', job)
-        self.assertIn("name: publish-plan", job)
+            self.assertIn(
+                f"{output}: ${{{{ steps.publish-matrices.outputs.{output} }}}}",
+                job,
+            )
+        self.assertIn('plan["build"]["parent_tiers"]', job)
+        self.assertIn('plan["build"]["leaf_stages"]', job)
+        self.assertIn("[entry[\"stage\"] for entry in leaf_stages] != [0, 1]", job)
+        self.assertIn("leaf_stage_1_count=", job)
+        self.assertIn("separators=(',', ':')", job)
         self.assertIn("path: artifacts/plan/publish-plan.json", job)
-        self.assertNotIn("artifacts/logs", job)
-        self.assertNotIn("artifacts/manifests", job)
         upload = yaml_block(job, "      - name: Upload publish plan")
         self.assertIn(expected_action_use("actions/upload-artifact"), upload)
-        self.assertNotIn("if:", upload)
-        self.assertEqual(job.count(expected_action_use("actions/upload-artifact")), 1)
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertIn("retention-days: 7", upload)
+
+    def test_matrix_output_keeps_an_empty_second_leaf_stage_safe(self) -> None:
+        plan = {
+            "build": {
+                "parent_tiers": [
+                    {"tier": tier, "matrix": {"include": [{"id": f"p{tier}"}]}}
+                    for tier in range(3)
+                ],
+                "leaf_stages": [
+                    {"stage": 0, "matrix": {"include": [{"id": "leaf-0"}]}},
+                    {"stage": 1, "matrix": {"include": []}},
+                ],
+            }
+        }
+
+        result, outputs, output_bytes = self.run_matrix_script(plan)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outputs["leaf_stage_1_count"], "0")
+        self.assertEqual(json.loads(outputs["leaf_stage_1_matrix"]), {"include": []})
+        self.assertLess(len(output_bytes.decode("utf-8").encode("utf-16-le")), 1024**2)
 
     def test_plan_job_rejects_cross_repository_dispatch_before_checkout(self) -> None:
         job = self.publish_job("publish-plan")
@@ -341,321 +427,297 @@ class PublishWorkflowTest(unittest.TestCase):
         )
 
     def test_workflow_candidate_id_comes_only_from_run_context(self) -> None:
-        expected = "CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}"
-        self.assertEqual(self.publish.count(expected), 4)
-        self.assertEqual(self.publish.count('--candidate-id "$CANDIDATE_ID"'), 1)
-        self.assertEqual(
-            self.publish.count('--expected-candidate-id "$CANDIDATE_ID"'),
-            3,
-        )
+        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
+        self.assertIn(f"CANDIDATE_ID: {candidate}", self.publish)
+        self.assertEqual(self.publish.count(f"candidate_id: {candidate}"), 5)
         dispatch = yaml_block(self.publish, "  workflow_dispatch:")
         self.assertNotIn("candidate_id:", dispatch)
         self.assertNotIn("workflow_call:", self.publish)
 
-    def test_every_artifact_name_is_candidate_qualified(self) -> None:
+    def test_artifacts_are_unique_short_lived_and_build_artifacts_are_small(self) -> None:
         candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
-        self.assertEqual(self.publish.count(f"name: publish-plan-{candidate}"), 4)
-        self.assertEqual(
-            self.publish.count(f"name: native-${{{{ matrix.arch }}}}-{candidate}"),
-            1,
-        )
-        self.assertEqual(
-            self.publish.count(
-                f"name: native-diagnostics-${{{{ matrix.arch }}}}-{candidate}"
-            ),
-            1,
-        )
-        self.assertEqual(self.publish.count(f"name: native-amd64-{candidate}"), 1)
-        self.assertEqual(self.publish.count(f"name: native-arm64-{candidate}"), 1)
-        self.assertEqual(
-            self.publish.count(
-                f"name: publish-${{{{ inputs.stream }}}}-{candidate}"
-            ),
-            1,
-        )
-        for line in re.findall(
-            r"(?m)^\s+name: (?:publish-plan|native-|publish-).+$",
-            self.publish,
+        for name in (
+            f"publish-plan-{candidate}",
+            f"native-amd64-{candidate}",
+            f"native-arm64-{candidate}",
+            f"publish-${{{{ inputs.stream }}}}-{candidate}",
         ):
-            self.assertIn(candidate, line)
-        self.assertNotIn("overwrite:", self.publish)
+            self.assertIn(f"name: {name}", self.publish)
+        self.assertIn(
+            "name: unit-evidence-${{ fromJSON(inputs.unit).id }}-"
+            "${{ inputs.candidate_id }}",
+            self.build_unit,
+        )
+        self.assertIn(
+            "name: unit-diagnostics-${{ fromJSON(inputs.unit).id }}-"
+            "${{ inputs.candidate_id }}",
+            self.build_unit,
+        )
+        self.assertEqual(self.publish.count("retention-days: 7"), 4)
+        self.assertEqual(self.build_unit.count("retention-days: 7"), 1)
+        self.assertEqual(self.publish.count("retention-days: 1"), 0)
+        self.assertEqual(self.build_unit.count("retention-days: 1"), 1)
+        for forbidden in ("docker save", "image.tar", "cache-to:", "cache-from:"):
+            self.assertNotIn(forbidden, self.publish + self.build_unit)
+        self.assertNotIn("overwrite:", self.publish + self.build_unit)
 
-    def test_mutating_jobs_use_exact_non_dry_run_gate(self) -> None:
-        for name in ("authorize-publish", "build-native", "finalize-publish"):
+    def test_all_live_publish_stages_use_the_non_dry_run_gate(self) -> None:
+        live_jobs = (
+            "authorize-publish",
+            "build-parent-tier-0",
+            "build-parent-tier-1",
+            "build-parent-tier-2",
+            "build-leaf-stage-0",
+            "build-leaf-stage-1",
+            "collect-native-evidence",
+            "finalize-publish",
+        )
+        for name in live_jobs:
+            with self.subTest(job=name):
+                self.assertIn("!inputs.dry_run", self.publish_job(name))
+
+    def test_authorization_is_bound_before_all_package_writes(self) -> None:
+        authorize = self.publish_job("authorize-publish")
+        self.assertIn("needs: publish-plan", authorize)
+        self.assertIn("environment: ghcr-publish", authorize)
+        self.assertNotIn("packages: write", authorize)
+        approval_validator = "python3 scripts/validate-publish-approval.py"
+        candidate_binding = '--expected-candidate-id "$CANDIDATE_ID"'
+        self.assertIn(approval_validator, authorize)
+        self.assertIn(candidate_binding, authorize)
+
+        for name in (
+            "build-parent-tier-0",
+            "build-parent-tier-1",
+            "build-parent-tier-2",
+            "build-leaf-stage-0",
+            "build-leaf-stage-1",
+        ):
             with self.subTest(job=name):
                 job = self.publish_job(name)
-                self.assertIn("if: ${{ !inputs.dry_run }}", job)
+                self.assertIn("authorize-publish", job)
+                self.assertIn("packages: write", job)
+                self.assertIn("uses: ./.github/workflows/build-unit.yml", job)
 
-        self.assertEqual(self.publish.count("if: ${{ !inputs.dry_run }}"), 3)
-
-    def test_authorization_is_bound_to_the_exact_plan(self) -> None:
-        job = self.publish_job("authorize-publish")
-        self.assertIn("needs: publish-plan", job)
-        self.assertIn("environment: ghcr-publish", job)
-        self.assertNotIn("packages: write", job)
-        self.assertIn(expected_action_use("actions/checkout"), job)
-        self.assertIn("name: publish-plan", job)
-        self.assertIn("path: artifacts/plan", job)
-        approval_validator = "python3 scripts/validate-publish-approval.py"
-        candidate_binding = '--expected-candidate-id "$CANDIDATE_ID"'
-        self.assertIn(approval_validator, job)
-        self.assertIn(candidate_binding, job)
-        self.assertIn("ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}", job)
-        self.assertIn(
-            "ALLOW_GHCR_FULL_CORE_PUBLISH: "
-            "${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}",
-            job,
+        self.assertIn(approval_validator, self.build_unit)
+        self.assertIn(candidate_binding, self.build_unit)
+        self.assertLess(
+            self.build_unit.index(approval_validator),
+            self.build_unit.index("docker login ghcr.io"),
         )
-        self.assertIn(
-            "ALLOW_GHCR_DEPLOYMENT_PUBLISH: "
-            "${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}",
-            job,
+        finalize = self.publish_job("finalize-publish")
+        self.assertIn(approval_validator, finalize)
+        self.assertLess(
+            finalize.index(approval_validator),
+            finalize.index("docker login ghcr.io"),
         )
-        self.assertIn("APPROVAL: ${{ inputs.approval }}", job)
-        self.assertEqual(job.count("vars."), 3)
-        self.assertNotIn("secrets.", job)
-        self.assertEqual(self.publish.count(approval_validator), 3)
-        self.assertEqual(self.publish.count(candidate_binding), 3)
 
-        for name in ("authorize-publish", "build-native", "finalize-publish"):
+    def test_every_mutating_layer_fails_closed_to_protected_main(self) -> None:
+        for name in ("authorize-publish", "finalize-publish"):
             with self.subTest(job=name):
-                live_job = self.publish_job(name)
-                self.assertIn(
-                    "ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}",
-                    live_job,
-                )
-                self.assertIn(
-                    "ALLOW_GHCR_FULL_CORE_PUBLISH: "
-                    "${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}",
-                    live_job,
-                )
-                self.assertIn(
-                    "ALLOW_GHCR_DEPLOYMENT_PUBLISH: "
-                    "${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}",
-                    live_job,
-                )
-                self.assertIn("APPROVAL: ${{ inputs.approval }}", live_job)
-                self.assertIn(approval_validator, live_job)
-                self.assertIn(candidate_binding, live_job)
+                job = self.publish_job(name)
+                guard = job.index("Require protected main ref")
+                checkout = job.index("Check out repository")
+                self.assertLess(guard, checkout)
+                self.assertIn("PUBLISH_REF: ${{ github.ref }}", job)
+                self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", job)
+                self.assertIn('"$PUBLISH_REF" != "refs/heads/main"', job)
+                self.assertIn('"$REF_PROTECTED" != "true"', job)
 
-    def test_one_two_entry_native_matrix_uses_required_runner_labels(self) -> None:
-        job = self.publish_job("build-native")
-        self.assertIn("needs: authorize-publish", job)
-        self.assertIn("max-parallel: 2", job)
+        guard = self.build_unit.index("Require repository-owned invocation")
+        checkout = self.build_unit.index("Check out repository")
+        self.assertLess(guard, checkout)
+        self.assertIn("CALLER_REF: ${{ github.ref }}", self.build_unit)
         self.assertIn(
-            'runs-on: [self-hosted, linux, "${{ matrix.runner_arch }}", '
-            '"kolla-${{ \'build\' }}"]',
-            job,
+            "CALLER_REF_PROTECTED: ${{ github.ref_protected }}",
+            self.build_unit,
         )
-        self.assertIn("- arch: amd64\n            runner_arch: x64\n            runner_machine: x86_64", job)
-        self.assertIn("- arch: arm64\n            runner_arch: ARM64\n            runner_machine: aarch64", job)
-        self.assertEqual(job.count("- arch:"), 2)
-        self.assertNotIn("build-parents:", self.publish)
-        self.assertNotIn("build-images:", self.publish)
-        self.assertNotIn("setup-qemu", self.publish)
-        self.assertNotIn("qemu", self.publish.lower())
+        self.assertIn('"$CALLER_REF" != "refs/heads/main"', self.build_unit)
+        self.assertIn('"$CALLER_REF_PROTECTED" != "true"', self.build_unit)
 
-    def test_native_build_revalidates_capacity_and_plan_pin_before_login(self) -> None:
-        job = self.publish_job("build-native")
-        self.assertIn("permissions:\n      contents: read\n      packages: write", job)
-        self.assertIn(expected_action_use("actions/checkout"), job)
-        self.assertIn("name: publish-plan", job)
-        self.assertIn("path: artifacts/plan", job)
-        approval_validator = "python3 scripts/validate-publish-approval.py"
-        candidate_binding = '--expected-candidate-id "$CANDIDATE_ID"'
-        self.assertIn(approval_validator, job)
-        self.assertIn(candidate_binding, job)
-        self.assertIn("platform.machine()", job)
-        self.assertIn('docker info --format \'{{.DockerRootDir}}\'', job)
-        self.assertIn("df -Pk", job)
-        self.assertIn("150 * 1024 * 1024", job)
-        self.assertIn("300 GB", job)
-        self.assertIn(expected_action_use("actions/setup-python"), job)
-        self.assertIn("cache: pip", job)
-        self.assertIn("cache-dependency-path: config/build-matrix.json", job)
-        self.assertIn("python3 -m venv .venv", job)
-        self.assertIn('KOLLA_VERSION="$(', job)
-        self.assertIn('"kolla==$KOLLA_VERSION"', job)
-        self.assertIn('stream["kolla_version"]', job)
-        self.assertNotIn('KOLLA_VERSION: "20.4.0"', self.publish)
-        self.assertNotRegex(self.publish, r"kolla==(?:20|21|22)\.")
-        self.assertLess(job.index(approval_validator), job.index("docker login ghcr.io"))
-        login = job.index("docker login ghcr.io")
-        self.assertLess(job.index("platform.machine()"), login)
-        self.assertLess(job.index("df -Pk"), login)
-        self.assertLess(job.index('stream["kolla_version"]'), login)
+    def test_dynamic_stages_follow_parent_then_leaf_dependency_order(self) -> None:
+        expected = {
+            "build-parent-tier-0": (
+                "parent_tier_0_matrix",
+                "needs: [publish-plan, authorize-publish]",
+            ),
+            "build-parent-tier-1": (
+                "parent_tier_1_matrix",
+                "needs: [publish-plan, authorize-publish, build-parent-tier-0]",
+            ),
+            "build-parent-tier-2": (
+                "parent_tier_2_matrix",
+                "needs: [publish-plan, authorize-publish, build-parent-tier-1]",
+            ),
+            "build-leaf-stage-0": (
+                "leaf_stage_0_matrix",
+                "needs: [publish-plan, authorize-publish, build-parent-tier-2]",
+            ),
+            "build-leaf-stage-1": (
+                "leaf_stage_1_matrix",
+                "needs: [publish-plan, authorize-publish, build-leaf-stage-0]",
+            ),
+        }
+        for name, (matrix_output, dependency) in expected.items():
+            with self.subTest(job=name):
+                job = self.publish_job(name)
+                self.assertIn("fail-fast: false", job)
+                self.assertIn("max-parallel: 4", job)
+                self.assertIn(
+                    f"matrix: ${{{{ fromJSON(needs.publish-plan.outputs.{matrix_output}) }}}}",
+                    job,
+                )
+                self.assertIn(dependency, job)
 
-    def test_native_build_preflights_pinned_docker_sdk_and_kolla_before_login(self) -> None:
-        job = self.publish_job("build-native")
-        install = yaml_block(
-            job,
-            "      - name: Install the frozen Kolla and Docker SDK versions in a virtual environment",
+        stage_1 = self.publish_job("build-leaf-stage-1")
+        self.assertIn("leaf_stage_1_count != '0'", stage_1)
+        native = self.publish_job("collect-native-evidence")
+        self.assertIn("needs: [publish-plan, build-leaf-stage-0, build-leaf-stage-1]", native)
+        self.assertIn("needs.build-leaf-stage-0.result == 'success'", native)
+        self.assertIn("needs.build-leaf-stage-1.result == 'success'", native)
+        self.assertIn("needs.build-leaf-stage-1.result == 'skipped'", native)
+        self.assertIn("needs.publish-plan.outputs.leaf_stage_1_count == '0'", native)
+        self.assertIn("!cancelled()", native)
+        self.assertIn(
+            "needs: collect-native-evidence",
+            self.publish_job("finalize-publish"),
         )
-        preflight = yaml_block(job, "      - name: Preflight isolated build environment")
+        self.assertNotIn("self-hosted", self.publish + self.build_unit)
+        self.assertNotIn("qemu", (self.publish + self.build_unit).lower())
+        self.assertIn(
+            "runs-on: ${{ fromJSON(inputs.unit).runner }}",
+            self.build_unit,
+        )
 
-        self.assertIn('"kolla==$KOLLA_VERSION" "docker==7.1.0"', install)
-        self.assertIn("import docker", preflight)
-        self.assertIn('docker.__version__ != "7.1.0"', preflight)
-        self.assertIn(".venv/bin/kolla-build --version", preflight)
-        self.assertLess(job.index(install), job.index(preflight))
-        self.assertLess(job.index(preflight), job.index("docker login ghcr.io"))
+    def test_build_stages_download_only_the_evidence_available_to_them(self) -> None:
+        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
+        parent_pattern = f"unit-evidence-*-parent-*-{candidate}"
+        all_units_pattern = f"unit-evidence-*-{candidate}"
 
-    def test_native_docker_is_local_linux_and_native_before_login(self) -> None:
-        job = self.publish_job("build-native")
-        buildx = job.index("Set up Docker Buildx")
-        daemon = job.index("Validate native local Docker daemon")
-        storage = job.index("Check Docker storage capacity")
-        login = job.index("docker login ghcr.io")
-        self.assertLess(buildx, daemon)
-        self.assertLess(daemon, storage)
-        self.assertLess(storage, login)
+        self.assertNotIn(
+            "input_evidence_artifact_pattern:",
+            self.publish_job("build-parent-tier-0"),
+        )
+        for name in (
+            "build-parent-tier-1",
+            "build-parent-tier-2",
+            "build-leaf-stage-0",
+        ):
+            with self.subTest(job=name):
+                self.assertIn(
+                    f"input_evidence_artifact_pattern: {parent_pattern}",
+                    self.publish_job(name),
+                )
+        stage_1 = self.publish_job("build-leaf-stage-1")
+        self.assertIn(
+            f"input_evidence_artifact_pattern: {all_units_pattern}",
+            stage_1,
+        )
+        self.assertNotIn("collect-parent-evidence", self.publish)
+        self.assertNotIn("parent-index", self.publish)
+
+    def test_build_unit_is_repository_owned_native_and_uses_local_docker(self) -> None:
+        guard = self.build_unit.index("Require repository-owned invocation")
+        checkout = self.build_unit.index("Check out repository")
+        login = self.build_unit.index("docker login ghcr.io")
+        self.assertLess(guard, checkout)
+        self.assertIn(
+            'if [ "$CALLER_REPOSITORY" != "supergate-hub/kolla-container-images" ]; then',
+            self.build_unit,
+        )
         for token in (
-            "{{.OSType}}",
-            "{{.Architecture}}",
-            "EXPECTED_DOCKER_ARCH",
+            "platform.machine()",
+            "EXPECTED_RUNNER_MACHINE",
+            "docker context inspect",
             "DOCKER_CONTEXT",
             "DOCKER_HOST",
-            "docker context inspect",
             "unix:///",
-            'printf \'DOCKER_HOST=%s\\n\' "$endpoint" >> "$GITHUB_ENV"',
-            'printf \'DOCKER_CONTEXT=\\n\' >> "$GITHUB_ENV"',
+            "{{.OSType}}",
+            "{{.Architecture}}",
         ):
-            self.assertIn(token, job)
-
-    def test_current_kolla_summary_is_required_before_remote_inspection(self) -> None:
-        job = self.publish_job("build-native")
-        unlink = job.index("summary_path.unlink(missing_ok=True)")
-        build = job.index("subprocess.run(command, check=True)")
-        validate = job.index("scripts/validate-kolla-build-summary.py")
-        remote = job.index("def inspect_remote_descriptor")
-        self.assertLess(unlink, build)
-        self.assertLess(build, validate)
-        self.assertLess(validate, remote)
-        self.assertIn('"--publish-plan", str(PLAN_PATH)', job)
-        self.assertIn('"--arch", arch_name', job)
-
-    def test_kolla_version_command_substitution_is_not_duplicated(self) -> None:
-        job = self.publish_job("build-native")
-        self.assertEqual(job.count('KOLLA_VERSION="$('), 1)
-
-    def test_native_build_executes_structured_argv_and_records_digest_evidence(self) -> None:
-        job = self.publish_job("build-native")
-        self.assertIn('command = architecture["commands"]["kolla_build_push"]', job)
-        self.assertIn("subprocess.run(command, check=True", job)
-        self.assertNotIn("shell=True", job)
-        self.assertRegex(
-            job,
-            r'"imagetools",\s+"inspect",\s+arch_ref,\s+"--format",\s+'
-            r'"\{\{json \.Manifest\}\}"',
+            self.assertIn(token, self.build_unit)
+        self.assertLess(self.build_unit.index("platform.machine()"), login)
+        self.assertLess(
+            self.build_unit.index("Docker endpoint must be a local Unix socket"),
+            login,
         )
-        self.assertIn("if not isinstance(descriptor, dict)", job)
-        self.assertIn('if "manifests" in descriptor:', job)
-        self.assertIn('len(descriptor["manifests"]) != 1', job)
-        self.assertIn('child_descriptor = descriptor["manifests"][0]', job)
-        self.assertIn('DIGEST_RE.fullmatch(descriptor_digest)', job)
-        self.assertIn("expected_repository", job)
-        self.assertIn("expected_arch_ref", job)
-        self.assertIn("descriptor_platform", job)
-        self.assertIn('immutable_ref = f"{repository}@{descriptor_digest}"', job)
-        self.assertIn('["docker", "pull", "--platform", platform, immutable_ref]', job)
-        self.assertIn('"{{.Os}}/{{.Architecture}}"', job)
-        self.assertRegex(
-            job,
-            r'"--entrypoint",\s+"/bin/true",\s+immutable_ref',
-        )
-        self.assertIn("expected_parent_names", job)
-        self.assertIn("expected_image_names", job)
-        self.assertIn('"schema_version": 1', job)
-        self.assertIn('"runner_machine": runner_machine', job)
-        self.assertIn('"parents": parent_evidence', job)
-        self.assertIn('"images": image_evidence', job)
-        self.assertIn("set(parent_evidence_by_name) != set(expected_parent_names)", job)
-        self.assertIn("set(image_evidence_by_name) != set(expected_image_names)", job)
-        self.assertIn("artifacts/arch/native-${{ matrix.arch }}.json", job)
-        self.assertIn("name: native-${{ matrix.arch }}", job)
 
-    def test_native_diagnostics_are_uploaded_without_changing_evidence_layout(self) -> None:
-        job = self.publish_job("build-native")
-        evidence = yaml_block(job, "      - name: Upload native evidence")
-        diagnostics = yaml_block(job, "      - name: Upload native diagnostics")
+    def test_build_unit_uses_preinstalled_buildx_without_install_cache(self) -> None:
+        buildx = self.build_unit.index("docker buildx version")
+        disk = self.build_unit.index("docker system df")
+        login = self.build_unit.index("docker login ghcr.io")
+        self.assertLess(buildx, disk)
+        self.assertLess(disk, login)
+        self.assertNotIn("docker system prune", self.build_unit)
+        self.assertNotIn("docker/setup-buildx-action", self.build_unit)
+        self.assertNotIn("cache: pip", self.build_unit)
+        self.assertIn("pip install --no-cache-dir", self.build_unit)
+        self.assertIn('"kolla==$KOLLA_VERSION" "docker==7.1.0"', self.build_unit)
+        self.assertIn(".venv/bin/kolla-build --version", self.build_unit)
 
-        self.assertIn("name: native-${{ matrix.arch }}", evidence)
-        self.assertIn("path: artifacts/arch/native-${{ matrix.arch }}.json", evidence)
-        self.assertNotIn("artifacts/kolla-summary", evidence)
-        self.assertNotIn("artifacts/kolla-logs", evidence)
-        self.assertIn("if: ${{ always() }}", diagnostics)
-        self.assertIn("name: native-diagnostics-${{ matrix.arch }}", diagnostics)
-        self.assertIn("artifacts/kolla-summary/", diagnostics)
-        self.assertIn("artifacts/kolla-logs/", diagnostics)
-        self.assertIn("if-no-files-found: warn", diagnostics)
-
-    def test_only_native_build_and_finalize_can_write_packages(self) -> None:
-        self.assertEqual(self.publish.count("packages: write"), 2)
-        self.assertIn("packages: write", self.publish_job("build-native"))
-        self.assertIn("packages: write", self.publish_job("finalize-publish"))
-
-    def test_package_jobs_use_fresh_ephemeral_docker_config_and_always_cleanup(self) -> None:
-        for name, suffix in (
-            ("build-native", "native"),
-            ("finalize-publish", "finalize"),
+    def test_build_unit_and_collectors_exchange_only_evidence(self) -> None:
+        for token in (
+            "scripts/run-build-unit.py",
+            "--unit-id",
+            "--input-evidence-dir artifacts/input-evidence",
+            '--output "artifacts/unit-evidence/$UNIT_ID.json"',
         ):
-            with self.subTest(job=name):
-                job = self.publish_job(name)
-                prepare = job.index("Prepare ephemeral Docker client state")
-                buildx = job.index("Set up Docker Buildx")
-                login = job.index("docker login ghcr.io")
-                cleanup = job.index("Remove ephemeral Docker client state")
-                self.assertLess(prepare, buildx)
-                self.assertLess(buildx, login)
+            self.assertIn(token, self.build_unit)
+        success = yaml_block(self.build_unit, "      - name: Upload unit evidence")
+        self.assertIn(".json", success)
+        self.assertNotIn("kolla-summary", success)
+        self.assertNotIn("kolla-logs", success)
+        failure = yaml_block(self.build_unit, "      - name: Upload failure diagnostics")
+        self.assertIn("if: ${{ failure() }}", failure)
+        self.assertIn(".txt", failure)
+        self.assertIn("retention-days: 1", failure)
+
+        native = self.publish_job("collect-native-evidence")
+        self.assertIn("pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}", native)
+        self.assertIn("merge-multiple: true", native)
+        self.assertNotIn("--mode", native)
+        self.assertNotIn("--parent-evidence", native)
+        self.assertIn("artifacts/arch/native-amd64.json", native)
+        self.assertIn("artifacts/arch/native-arm64.json", native)
+        self.assertNotIn("parent-index", self.publish + self.build_unit)
+        self.assertNotIn("parent-evidence", self.publish + self.build_unit)
+
+    def test_package_write_is_limited_to_unit_callers_and_finalizer(self) -> None:
+        package_callers = (
+            "build-parent-tier-0",
+            "build-parent-tier-1",
+            "build-parent-tier-2",
+            "build-leaf-stage-0",
+            "build-leaf-stage-1",
+        )
+        self.assertEqual(self.publish.count("packages: write"), 6)
+        for name in package_callers + ("finalize-publish",):
+            self.assertIn("packages: write", self.publish_job(name))
+        for name in (
+            "publish-plan",
+            "authorize-publish",
+            "collect-native-evidence",
+        ):
+            self.assertNotIn("packages: write", self.publish_job(name))
+        self.assertEqual(self.build_unit.count("packages: write"), 1)
+
+    def test_package_jobs_use_fresh_ephemeral_docker_config_and_cleanup(self) -> None:
+        for document in (self.build_unit, self.publish_job("finalize-publish")):
+            with self.subTest(document=document[:50]):
+                prepare = document.index("Prepare ephemeral Docker client state")
+                login = document.index("docker login ghcr.io")
+                cleanup = document.index("Remove ephemeral Docker client state")
+                self.assertLess(prepare, login)
                 self.assertLess(login, cleanup)
-                step_items = [
-                    line.strip()
-                    for line in job.splitlines()
-                    if len(line) - len(line.lstrip()) == 6
-                    and (line.strip() == "-" or line.strip().startswith("- "))
-                ]
-                self.assertEqual(
-                    step_items[-1],
-                    "- name: Remove ephemeral Docker client state",
-                )
-                cleanup_block = yaml_block(
-                    job,
-                    "      - name: Remove ephemeral Docker client state",
-                )
-                self.assertIn(
-                    'rm -f -- "$DOCKER_CONFIG/config.json"',
-                    cleanup_block,
-                )
-                self.assertNotIn("rm -rf", cleanup_block)
-                preceding_step = (
-                    "Upload native diagnostics"
-                    if name == "build-native"
-                    else "Update convenience stream aliases"
-                )
-                self.assertLess(job.index(preceding_step), cleanup)
-                for token in (
-                    "RUNNER_TEMP",
-                    "GITHUB_RUN_ID",
-                    "GITHUB_RUN_ATTEMPT",
-                    "DOCKER_CONFIG",
-                    "install -d -m 0700",
-                    "if: ${{ always() }}",
-                    'rm -f -- "$DOCKER_CONFIG/config.json"',
-                ):
-                    self.assertIn(token, job)
-                self.assertIn(suffix, job)
-        self.assertEqual(
-            self.publish.count("Prepare ephemeral Docker client state"),
-            2,
-        )
-        self.assertEqual(
-            self.publish.count("Remove ephemeral Docker client state"),
-            2,
-        )
+                self.assertIn("RUNNER_TEMP", document)
+                self.assertIn("GITHUB_RUN_ID", document)
+                self.assertIn("GITHUB_RUN_ATTEMPT", document)
+                self.assertIn("if: ${{ always() }}", document)
+                self.assertIn('rm -f -- "$DOCKER_CONFIG/config.json"', document)
 
     def test_finalize_downloads_exact_evidence_and_revalidates_before_login(self) -> None:
         job = self.publish_job("finalize-publish")
-        self.assertIn("needs: build-native", job)
+        self.assertIn("needs: collect-native-evidence", job)
         self.assertIn(expected_action_use("actions/checkout"), job)
         candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
         for artifact in ("publish-plan", "native-amd64", "native-arm64"):
@@ -1005,12 +1067,16 @@ class PublishWorkflowTest(unittest.TestCase):
                 for media_type in media_types:
                     self.assertIn(media_type, document)
 
-    def test_docs_record_diagnostics_artifacts_runner_minimum_and_arm_policy(self) -> None:
+    def test_docs_record_hosted_shards_diagnostics_and_arm_policy(self) -> None:
         for document in (self.publish_doc, self.build_readiness):
             with self.subTest(document=document[:40]):
-                self.assertIn("native-diagnostics-amd64", document)
-                self.assertIn("native-diagnostics-arm64", document)
-                self.assertIn("2.327.1", document)
+                self.assertIn("ubuntu-24.04", document)
+                self.assertIn("ubuntu-24.04-arm", document)
+                self.assertIn("max-parallel: 4", document)
+                self.assertIn("Re-run all jobs", document)
+                self.assertNotIn("self-hosted", document)
+        self.assertIn("unit-diagnostics", self.publish_doc)
+        self.assertIn("failed unit", self.build_readiness.lower())
 
         normalized_readme = " ".join(self.readme.split())
         self.assertIn(
