@@ -205,15 +205,12 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(message, result.stderr)
 
-    def test_failures_unbuildable_and_unexpected_skips_are_rejected(self) -> None:
+    def test_failures_and_unexpected_skips_are_rejected(self) -> None:
         cases = []
         for status in ("connection_error", "error", "parent_error", "push_error"):
             summary = valid_summary(self.plan)
             summary["failed"] = [{"name": "other-image", "status": status}]
             cases.append((f"failed-{status}", summary, "failed must be empty"))
-        unbuildable = valid_summary(self.plan)
-        unbuildable["unbuildable"] = [{"name": "other-image"}]
-        cases.append(("unbuildable", unbuildable, "unbuildable must be empty"))
         unexpected_skip = valid_summary(self.plan)
         unexpected_skip["skipped"].append({"name": "other-image"})
         cases.append(
@@ -229,12 +226,29 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(message, result.stderr)
 
-    def test_planned_name_must_not_be_unmatched(self) -> None:
+    def test_unrelated_unbuildable_catalog_entries_are_allowed(self) -> None:
         summary = valid_summary(self.plan)
-        summary["not_matched"].append({"name": "keystone"})
+        summary["unbuildable"] = [
+            {"name": "collectd"},
+            {"name": "ovsdpdk"},
+        ]
         result = run_validator(self.plan, summary)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("planned image appears in not_matched: keystone", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_planned_name_must_not_be_unmatched_or_unbuildable(self) -> None:
+        unmatched = valid_summary(self.plan)
+        unmatched["not_matched"].append({"name": "keystone"})
+        unbuildable = valid_summary(self.plan)
+        unbuildable["built"] = []
+        unbuildable["unbuildable"].append({"name": "keystone"})
+        for summary, message in (
+            (unmatched, "planned image appears in not_matched: keystone"),
+            (unbuildable, "planned image appears in unbuildable: keystone"),
+        ):
+            with self.subTest(message=message):
+                result = run_validator(self.plan, summary)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stderr)
 
     def test_duplicate_and_cross_bucket_names_are_rejected(self) -> None:
         duplicate = valid_summary(self.plan)

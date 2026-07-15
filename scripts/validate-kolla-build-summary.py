@@ -172,12 +172,12 @@ def validate_summary(
         errors.append(f"skipped is missing planned ancestor: {name}")
     for name in sorted(skipped - expected_skipped):
         errors.append(f"skipped contains unexpected image: {name}")
-    for bucket in ("failed", "unbuildable"):
-        if names_by_bucket.get(bucket):
-            errors.append(f"{bucket} must be empty")
+    if names_by_bucket.get("failed"):
+        errors.append("failed must be empty")
     planned_names = expected_built | expected_skipped
-    for name in sorted(planned_names & names_by_bucket.get("not_matched", set())):
-        errors.append(f"planned image appears in not_matched: {name}")
+    for bucket in ("not_matched", "unbuildable"):
+        for name in sorted(planned_names & names_by_bucket.get(bucket, set())):
+            errors.append(f"planned image appears in {bucket}: {name}")
     return errors
 
 
