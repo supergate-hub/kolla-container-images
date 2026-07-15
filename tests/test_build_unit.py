@@ -105,9 +105,16 @@ def unit_record(plan: dict, unit: dict) -> dict:
 
 
 class FakeRunner:
-    def __init__(self, unit: dict, *, bad_summary: bool = False) -> None:
+    def __init__(
+        self,
+        unit: dict,
+        *,
+        bad_summary: bool = False,
+        unbuildable: tuple[str, ...] = (),
+    ) -> None:
         self.unit = unit
         self.bad_summary = bad_summary
+        self.unbuildable = unbuildable
         self.commands: list[list[str]] = []
         self.target_digest = "sha256:" + "f" * 64
 
@@ -145,7 +152,7 @@ class FakeRunner:
             "failed": [],
             "not_matched": [],
             "skipped": [{"name": name} for name in self.unit["ancestor_chain"]],
-            "unbuildable": [],
+            "unbuildable": [{"name": name} for name in self.unbuildable],
         }
         path = Path(self.unit["summary_file"])
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -260,6 +267,41 @@ class BuildUnitTest(unittest.TestCase):
                     machine="x86_64",
                 )
             self.assertFalse(output.exists())
+
+    def test_unrelated_unbuildable_catalog_entries_are_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            _, unit, plan_path, evidence_dir = self.prepare_leaf(temp_path)
+            output = temp_path / "unit.json"
+
+            evidence = BUILD_UNIT.execute_build_unit(
+                plan_path,
+                unit["id"],
+                evidence_dir,
+                output,
+                runner=FakeRunner(unit, unbuildable=("collectd", "ovsdpdk")),
+                disk_sampler=lambda: TEN_GIB,
+                machine="x86_64",
+            )
+
+            self.assertEqual(evidence["summary"]["built"], ["keystone"])
+            self.assertTrue(output.exists())
+
+    def test_planned_unbuildable_image_is_rejected(self) -> None:
+        unit = planned_unit(self.plan, "amd64-leaf-keystone")
+        summary = {
+            "built": [],
+            "failed": [],
+            "not_matched": [],
+            "skipped": [{"name": name} for name in unit["ancestor_chain"]],
+            "unbuildable": [{"name": unit["target"]}],
+        }
+
+        with self.assertRaisesRegex(
+            BUILD_UNIT.BuildUnitError,
+            "planned images must not appear in Kolla summary unbuildable",
+        ):
+            BUILD_UNIT.validate_summary(summary, unit)
 
     def test_stale_or_tampered_ancestor_digest_is_rejected_before_build(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

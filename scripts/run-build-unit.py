@@ -239,6 +239,13 @@ def validate_summary(summary: Any, unit: dict[str, Any]) -> dict[str, list[str]]
             names.append(name)
             seen[name] = bucket
         names_by_bucket[bucket] = names
+    planned_names = set(unit["ancestor_chain"]) | {unit["target"]}
+    if names_by_bucket["failed"]:
+        raise BuildUnitError("Kolla summary failed bucket must be empty")
+    if planned_names & set(names_by_bucket["unbuildable"]):
+        raise BuildUnitError("planned images must not appear in Kolla summary unbuildable")
+    if planned_names & set(names_by_bucket["not_matched"]):
+        raise BuildUnitError("planned images must not appear in Kolla summary not_matched")
     if set(names_by_bucket["built"]) != {unit["target"]} or len(names_by_bucket["built"]) != 1:
         raise BuildUnitError("Kolla summary built set must be exactly the unit target")
     if (
@@ -246,10 +253,6 @@ def validate_summary(summary: Any, unit: dict[str, Any]) -> dict[str, list[str]]
         or len(names_by_bucket["skipped"]) != len(unit["ancestor_chain"])
     ):
         raise BuildUnitError("Kolla summary skipped set must be exactly the ancestor chain")
-    if names_by_bucket["failed"] or names_by_bucket["unbuildable"]:
-        raise BuildUnitError("Kolla summary failed and unbuildable buckets must be empty")
-    if (set(unit["ancestor_chain"]) | {unit["target"]}) & set(names_by_bucket["not_matched"]):
-        raise BuildUnitError("planned images must not appear in Kolla summary not_matched")
     return {
         "built": names_by_bucket["built"],
         "skipped": names_by_bucket["skipped"],
