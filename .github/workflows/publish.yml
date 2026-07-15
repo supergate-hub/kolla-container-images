@@ -331,7 +331,9 @@ jobs:
 
   finalize-publish:
     name: Finalize manifests, summary, and candidate lock
-    if: ${{ !inputs.dry_run }}
+    if: >-
+      ${{ !inputs.dry_run && !cancelled() &&
+          needs.collect-native-evidence.result == 'success' }}
     needs: collect-native-evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 60
