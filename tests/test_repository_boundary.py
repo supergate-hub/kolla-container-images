@@ -296,7 +296,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "architecture-compatible",
             "scheduling",
             "not Kolla container artifacts",
-            "stream × architecture × leaf",
+            "stream × architecture × build unit",
             "stream × architecture",
             "matching-OS",
             "deployment-smoke",
@@ -350,7 +350,12 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "required reviewers",
             "publish-plan",
             "authorize-publish",
-            "build-native",
+            "build-parent-tier-0",
+            "build-parent-tier-1",
+            "build-parent-tier-2",
+            "build-leaf-stage-0",
+            "build-leaf-stage-1",
+            "collect-native-evidence",
             "finalize-publish",
             "packages: write",
         )
@@ -470,26 +475,29 @@ class RepositoryBoundaryTest(unittest.TestCase):
                 self.assert_tokens(
                     document,
                     "candidate ID",
-                    "current Kolla summary",
-                    "local Unix socket",
+                    "ancestor chain",
+                    "local Linux Docker",
                     "candidate artifact",
                     "stream alias",
                     "openstack-infra-ops",
                     "publish-plan-<candidate-id>",
-                    "native-<arch>-<candidate-id>",
+                    "native-amd64-<candidate-id>",
+                    "native-arm64-<candidate-id>",
                     "publish-<stream>-<candidate-id>",
                     "Re-run all jobs",
-                    "partial rerun",
-                    "fails closed",
+                    "new candidate ID",
                 )
 
         readiness = read_text(READINESS_DOC)
         self.assert_tokens(
             readiness,
-            "maximum of four online",
+            "ubuntu-24.04",
+            "ubuntu-24.04-arm",
             "kolla-build",
-            "excess jobs queue",
-            "max-parallel: 2",
+            "max-parallel: 4",
+            "14 GB",
+            "8 GiB",
+            "2 GiB",
         )
 
     def test_publish_doc_lists_eight_manual_prerequisites_and_external_material(
@@ -505,38 +513,36 @@ class RepositoryBoundaryTest(unittest.TestCase):
         )
         self.assert_tokens(
             manual,
-            "AMD64",
-            "ARM64",
-            "self-hosted runner groups",
-            "x64",
-            "kolla-build",
-            "Docker",
-            "Buildx",
-            "network access",
+            "Public",
+            "ubuntu-24.04",
+            "ubuntu-24.04-arm",
+            "standard",
+            "larger",
             "ghcr-publish",
-            "required reviewers",
+            "required reviewer",
             "branches",
             "tags",
             "ALLOW_GHCR_PUBLISH",
             "ALLOW_GHCR_FULL_CORE_PUBLISH",
             "ALLOW_GHCR_DEPLOYMENT_PUBLISH",
-            "GITHUB_TOKEN",
             "packages: write",
             "Actions: write",
-            "workflow_dispatch",
+            "dispatch",
             "GitHub App",
             "no package-write permission",
             "--ref main",
-            "protected ref",
-            "package visibility",
-            "repository linkage",
-            "read:packages",
-            "read-only",
+            "github.ref_protected",
+            "visibility",
+            "link",
+            "unauthenticated",
+            "빈 Docker config",
             "retention",
             "vulnerability scanning",
             "cleanup",
             "approval phrase",
-            "dry_run: true",
+            "core/keystone",
+            "8 GiB",
+            "2 GiB",
         )
         normalized_manual = " ".join(manual.split())
         self.assertRegex(
@@ -565,27 +571,27 @@ class RepositoryBoundaryTest(unittest.TestCase):
         document = read_text(READINESS_DOC)
         self.assert_tokens(
             document,
-            "self-hosted, linux, x64, kolla-build",
-            "self-hosted, linux, ARM64, kolla-build",
-            "max-parallel: 2",
-            "maximum of four online",
-            "excess jobs queue",
-            "150 GiB",
-            "300 GB",
-            "DockerRootDir",
-            "df -Pk",
+            "ubuntu-24.04",
+            "ubuntu-24.04-arm",
+            "max-parallel: 4",
+            "14 GB",
+            "8 GiB",
+            "2 GiB",
             "Docker",
             "Buildx",
             "network access",
-            "virtual environment",
             "matrix-pinned Kolla",
-            "pip cache",
-            "one dependency-aware",
+            "--no-cache-dir",
+            "dependency tiers 0, 1, and 2",
+            "one anchored target",
             "per architecture",
+            "--skip-existing",
+            "--threads 1",
+            "--push-threads 1",
         )
-        self.assertNotIn("ubuntu-24.04-arm", document)
-        self.assertNotIn("at most eight concurrent", document)
-        self.assertNotIn("--skip-existing", document)
+        self.assertNotIn("self-hosted", document)
+        self.assertNotIn("150 GiB", document)
+        self.assertNotIn("300 GB", document)
 
     def test_build_readiness_documents_native_and_multiarch_evidence_contract(self) -> None:
         document = read_text(READINESS_DOC)
@@ -593,9 +599,9 @@ class RepositoryBoundaryTest(unittest.TestCase):
             document,
             "native-amd64",
             "native-arm64",
-            "runner_machine",
-            "repository@sha256",
-            "immutable pull",
+            "runner machine",
+            "immutable reference",
+            "immutable digest",
             "linux/amd64",
             "linux/arm64",
             "/bin/true",
@@ -609,6 +615,10 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "stream × architecture",
             "environment-specific deployment-smoke evidence remains external",
             "deployment/all",
+            "unit-evidence",
+            "leaf stage 0",
+            "leaf stage 1",
+            "JSON evidence only",
         )
 
     def test_publish_plan_has_only_generic_stream_lock_path(self) -> None:

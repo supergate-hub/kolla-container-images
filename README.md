@@ -1,10 +1,30 @@
 # kolla-container-images
 
-This repository builds and publishes native AMD64 and ARM64 Kolla container
-images to `ghcr.io/supergate-hub/kolla-container-images`, combines each leaf
+This public repository builds and publishes native AMD64 and ARM64 Kolla
+container images as public packages under
+`ghcr.io/supergate-hub/kolla-container-images`, combines each leaf
 into an architecture-neutral multi-architecture manifest, validates its
 evidence, and produces a generic digest-bound candidate lock for
 Kolla-Ansible.
+
+## 무료 운영 결론
+
+이 이미지 파이프라인을 위해 repository를 여러 개로 나눌 필요가 없다. **Public
+repository 하나**에 소스, workflow, 검증 증거를 함께 두고 GHCR package도
+Public으로 공개하는 구성이 가장 간단하다. repository를 나누어도 무료 혜택이
+늘지 않고, 오히려 설정·권한·증거 추적만 복잡해진다.
+
+Workflow는 repository `GITHUB_TOKEN`으로 package를 생성해 GitHub의 repository
+visibility 상속 기본값을 사용한다. 그래도 각 package가 처음 생성된 뒤 실제
+visibility가 Public인지 확인하고, 필요하면 명시 전환한 다음 익명 pull을 검증해야
+한다. 이 확인 전에는 Public 서빙 완료로 보지 않는다.
+
+현재 GitHub 정책에서 Public repository의 **standard GitHub-hosted runner**
+사용은 과금 대상 런너 분(minute) 제한 없이 무료이며, Public GHCR package의
+storage와 bandwidth도 무료이다. 다만 larger runner는 Public repository에서도
+항상 과금되므로 사용하지 않는다. 이는 영구적 보장이 아니라 현재 GitHub
+정책에 따른 설계이므로 주기적으로 billing 정책을 다시 확인한다. Actions의
+일반적인 job, concurrency, API 제한은 여전히 적용된다.
 
 ## Responsibility boundary
 
@@ -68,6 +88,37 @@ OpenStack cluster when it uses the same release and base-OS stream; it does not
 create another logical environment. QEMU-only output is not native ARM64
 readiness evidence.
 
+Builds use only GitHub's standard native hosted runners: `ubuntu-24.04` for
+AMD64 and `ubuntu-24.04-arm` for ARM64. Larger runners and privately managed
+runner fleets are outside this design. To fit the standard runner's 14 GB
+disk, the frozen plan builds exactly one Kolla target per job with
+`--threads 1` and `--push-threads 1`; every build matrix uses
+`max-parallel: 4`.
+
+The exact dependency DAG is:
+
+```text
+parent tier 0 -> parent tier 1 -> parent tier 2
+              -> leaf stage 0 -> optional leaf stage 1
+              -> aggregate native evidence
+              -> multi-arch manifests -> publish summary -> generic candidate lock
+              -> hand off to openstack-infra-ops
+```
+
+Leaf stage 1 is normally empty. The deployment profile uses it for the real
+selected-leaf dependency `ovn-sb-db-server -> ovn-sb-db-relay`. Jobs consume
+the immutable digest in the preceding unit's JSON evidence directly; there is
+no parent-index artifact.
+
+Each fresh job must have at least 8 GiB free Docker storage after cleanup and
+must stay at or above 2 GiB while building. The hosted-only design remains a
+feasibility gate until the eight-unit Keystone canary succeeds on both native
+architectures. Successful plan, unit, native, and terminal JSON evidence is
+retained for seven days; failure diagnostics are retained for one day. Jobs do
+not upload Docker layers, image tar files, or Docker caches. The canary is the
+practical confirmation that each sharded target fits the advertised runner,
+not merely a configuration check.
+
 The OpenStack node OS and Kolla container base must match. A Rocky 9 lab VM on
 an Ubuntu physical host satisfies this rule because the OpenStack node is the
 Rocky 9 VM; the hypervisor host OS does not select the container stream.
@@ -97,9 +148,10 @@ and are owned by `openstack-infra-ops`.
 ## Evidence ownership
 
 This repository owns native build and image-smoke evidence keyed by
-`stream × architecture × leaf`: runner identity, immutable child digest,
-recorded image platform, `/bin/true` execution, exact multi-architecture
-manifest membership, publish-summary coverage, and generic-lock consistency.
+`stream × architecture × build unit`: runner identity, parent ancestry,
+immutable child digest, disk measurements, and recorded image platform. Leaf
+evidence also records `/bin/true` execution, exact multi-architecture manifest
+membership, publish-summary coverage, and generic-lock consistency.
 
 Matching-OS Kolla-Ansible deployment-smoke evidence is keyed by
 `stream × architecture` and remains external. `openstack-infra-ops` or a
@@ -166,11 +218,15 @@ config/build-matrix.json         Seven streams, native architectures, registry, 
 config/profiles/                 Stream-aware image catalogs and Kolla-Ansible mappings
 scripts/validate-config.py       Configuration validator
 scripts/plan-publish.py          Read-only frozen-plan renderer
+scripts/run-build-unit.py        One-target native build, push, disk check, and smoke
+scripts/aggregate-native-evidence.py  Exact all-unit evidence aggregator
+scripts/validate-kolla-build-summary.py  One-target Kolla summary validator
 scripts/validate-publish-approval.py  Non-dry-run approval gate
 scripts/validate-publish-summary.py   Publish-summary validator
 scripts/generate-lock.py         Generic candidate-lock renderer
 .github/workflows/validate.yml   Push and pull-request validation
 .github/workflows/publish.yml    Dispatch-only manual and CI publish path
+.github/workflows/build-unit.yml Reusable standard hosted one-target build job
 docs/build-readiness.md          Native runner and evidence readiness
 docs/publish.md                  Publish, consumption, manual setup, and handoff contract
 ```

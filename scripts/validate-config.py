@@ -211,6 +211,12 @@ EXPECTED_CORE_PARENTS = [
     "heat-base",
 ]
 EXPECTED_KEYSTONE_PARENTS = ["base", "openstack-base", "keystone-base"]
+EXPECTED_OVN_RELAY_PARENTS = [
+    "base",
+    "openvswitch-base",
+    "ovn-base",
+    "ovn-sb-db-server",
+]
 EXPECTED_DEPLOYMENT_PARENTS = [
     "base",
     "openvswitch-base",
@@ -480,12 +486,21 @@ def resolved_parent_sequence(
     build_groups: list[dict[str, Any]],
     selected_images: set[str] | None = None,
 ) -> list[str]:
+    if selected_images is None:
+        selected_images = {
+            image
+            for group in build_groups
+            if isinstance(group.get("images"), list)
+            for image in group["images"]
+            if isinstance(image, str)
+        }
+
     parents: list[str] = []
     for group in build_groups:
         group_images = group.get("images")
         if not isinstance(group_images, list):
             continue
-        if selected_images is not None and selected_images.isdisjoint(group_images):
+        if selected_images.isdisjoint(group_images):
             continue
         group_parents = group.get("parents")
         if group_parents is None:
@@ -496,7 +511,11 @@ def resolved_parent_sequence(
         if not isinstance(group_parents, list):
             continue
         for parent in group_parents:
-            if isinstance(parent, str) and parent not in parents:
+            if (
+                isinstance(parent, str)
+                and parent not in selected_images
+                and parent not in parents
+            ):
                 parents.append(parent)
     return parents
 
@@ -554,7 +573,7 @@ def validate_resolved_policy(
             "mariadb-base",
             *EXPECTED_DEPLOYMENT_PARENTS[11:],
         ]
-    actual_parents = resolved_parent_sequence(build_groups)
+    actual_parents = resolved_parent_sequence(build_groups, actual_names)
     if actual_parents != expected_parents:
         errors.append(
             f"{context} resolved parent set must be exactly "
@@ -569,6 +588,20 @@ def validate_resolved_policy(
             errors.append(
                 f"{context} core/keystone resolved parent set must be exactly "
                 f"{EXPECTED_KEYSTONE_PARENTS!r}; got {keystone_parents!r}"
+            )
+    elif profile_name == "deployment":
+        relay_groups = [
+            group
+            for group in build_groups
+            if "ovn-sb-db-relay" in group.get("images", [])
+        ]
+        relay_parents = (
+            relay_groups[0].get("parents") if len(relay_groups) == 1 else None
+        )
+        if relay_parents != EXPECTED_OVN_RELAY_PARENTS:
+            errors.append(
+                f"{context} ovn-sb-db-relay parent chain must be exactly "
+                f"{EXPECTED_OVN_RELAY_PARENTS!r}; got {relay_parents!r}"
             )
 
 

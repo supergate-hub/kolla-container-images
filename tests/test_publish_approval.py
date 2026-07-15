@@ -457,9 +457,7 @@ class PublishApprovalTest(unittest.TestCase):
             ("--base-tag", "24.04"),
         ):
             plan = self.plan("2025.1-rocky-9", "core", "keystone")
-            command = plan["build"]["architectures"][0]["commands"][
-                "kolla_build_push"
-            ]
+            command = plan["build"]["all_units"][0]["command"]
             command[command.index(option) + 1] = replacement
             path = write_plan(
                 self.plan_directory,
@@ -480,9 +478,7 @@ class PublishApprovalTest(unittest.TestCase):
 
     def test_review_rejects_image_regex_inserted_before_push(self) -> None:
         plan = self.plan("2025.1-rocky-9", "core", "keystone")
-        command = plan["build"]["architectures"][0]["commands"][
-            "kolla_build_push"
-        ]
+        command = plan["build"]["all_units"][0]["command"]
         command.insert(command.index("--push"), "^glance-api$")
         path = write_plan(self.plan_directory, "review-extra-image-regex", plan)
 

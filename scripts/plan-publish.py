@@ -29,11 +29,18 @@ ARCH_TO_PLATFORM = {
     "amd64": "linux/amd64",
     "arm64": "linux/arm64",
 }
-ARCH_TO_RUNNER_LABELS = {
-    "amd64": ["self-hosted", "linux", "x64", "kolla-build"],
-    "arm64": ["self-hosted", "linux", "ARM64", "kolla-build"],
+ARCH_TO_RUNNER = {
+    "amd64": "ubuntu-24.04",
+    "arm64": "ubuntu-24.04-arm",
 }
-KOLLA_BUILD_THREADS = 4
+ARCH_TO_RUNNER_MACHINE = {
+    "amd64": "x86_64",
+    "arm64": "aarch64",
+}
+PARENT_TIERS = (0, 1, 2)
+LEAF_STAGES = (0, 1)
+LEAF_TIER = 3
+KOLLA_BUILD_THREADS = 1
 KOLLA_PUSH_THREADS = 1
 
 
@@ -106,9 +113,11 @@ def selected_build_groups(
 def kolla_build_command(
     matrix: dict[str, Any],
     stream: dict[str, Any],
-    images: list[str],
+    target: str,
     arch: str,
     arch_tag: str,
+    summary_file: str,
+    logs_dir: str,
 ) -> list[str]:
     return [
         "kolla-build",
@@ -135,12 +144,182 @@ def kolla_build_command(
         "--push-threads",
         str(KOLLA_PUSH_THREADS),
         "--summary-json-file",
-        f"artifacts/kolla-summary/{stream['id']}-{arch}.json",
+        summary_file,
         "--logs-dir",
-        f"artifacts/kolla-logs/{stream['id']}-{arch}",
+        logs_dir,
+        "--skip-existing",
         "--push",
-        *[f"^{image}$" for image in images],
+        f"^{target}$",
     ]
+
+
+def selected_parent_chains(
+    groups: list[dict[str, Any]],
+    leaf_chains: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Return non-leaf parents and the ancestors that must already exist."""
+    chains: dict[str, list[str]] = {}
+    for group in groups:
+        parents = group["parents"]
+        for index, parent in enumerate(parents):
+            ancestor_chain = parents[:index]
+            existing = chains.get(parent)
+            if existing is not None and existing != ancestor_chain:
+                raise ValueError(
+                    f"inconsistent ancestor chain for parent {parent}: "
+                    f"{existing!r} != {ancestor_chain!r}"
+                )
+            chains.setdefault(parent, ancestor_chain)
+
+    for leaf, leaf_chain in leaf_chains.items():
+        parent_chain = chains.get(leaf)
+        if parent_chain is not None and parent_chain != leaf_chain:
+            raise ValueError(
+                f"selected leaf {leaf} has inconsistent dependency chains: "
+                f"{leaf_chain!r} != {parent_chain!r}"
+            )
+
+    return {
+        parent: ancestor_chain
+        for parent, ancestor_chain in chains.items()
+        if parent not in leaf_chains
+    }
+
+
+def selected_leaf_chains(
+    groups: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Return the exact root-to-leaf parent chain for each selected leaf."""
+    chains: dict[str, list[str]] = {}
+    for group in groups:
+        for image in group["images"]:
+            existing = chains.get(image)
+            if existing is not None:
+                raise ValueError(f"image belongs to multiple build groups: {image}")
+            chains[image] = group["parents"]
+    return chains
+
+
+def selected_leaf_dependency_closure(
+    selected_names: list[str],
+    catalog_names: list[str],
+    catalog_leaf_chains: dict[str, list[str]],
+) -> list[str]:
+    """Include catalog leaves needed to build the requested publish leaves."""
+    missing = sorted(set(selected_names) - set(catalog_leaf_chains))
+    if missing:
+        raise ValueError(f"selected images are missing build groups: {missing}")
+
+    required = set(selected_names)
+    while True:
+        dependencies = {
+            ancestor
+            for image in required
+            for ancestor in catalog_leaf_chains[image]
+            if ancestor in catalog_leaf_chains
+        }
+        expanded = required | dependencies
+        if expanded == required:
+            break
+        required = expanded
+
+    return [name for name in catalog_names if name in required]
+
+
+def selected_leaf_stage_map(
+    leaf_chains: dict[str, list[str]],
+) -> dict[str, int]:
+    """Topologically assign selected leaves to the two supported build stages."""
+    stages: dict[str, int] = {}
+    visiting: list[str] = []
+
+    def stage_for(image: str) -> int:
+        if image in stages:
+            return stages[image]
+        if image in visiting:
+            cycle_start = visiting.index(image)
+            cycle = [*visiting[cycle_start:], image]
+            raise ValueError(
+                "selected leaf dependency cycle: " + " -> ".join(cycle)
+            )
+
+        visiting.append(image)
+        selected_dependencies = [
+            ancestor
+            for ancestor in leaf_chains[image]
+            if ancestor in leaf_chains
+        ]
+        stage = max(
+            (stage_for(dependency) + 1 for dependency in selected_dependencies),
+            default=0,
+        )
+        visiting.pop()
+        if stage not in LEAF_STAGES:
+            raise ValueError(
+                f"selected leaf dependency depth exceeds supported stages for "
+                f"{image}: stage {stage}; supported stages: {list(LEAF_STAGES)}"
+            )
+        stages[image] = stage
+        return stage
+
+    for image in leaf_chains:
+        stage_for(image)
+    return stages
+
+
+def build_unit(
+    matrix: dict[str, Any],
+    stream: dict[str, Any],
+    candidate_id: str,
+    *,
+    kind: str,
+    tier: int,
+    arch: str,
+    target: str,
+    ancestor_chain: list[str],
+) -> dict[str, Any]:
+    arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+    unit_id = f"{arch}-{kind}-{target}"
+    summary_file = (
+        f"artifacts/kolla-summary/{stream['id']}/{candidate_id}/{unit_id}.json"
+    )
+    logs_dir = f"artifacts/kolla-logs/{stream['id']}/{candidate_id}/{unit_id}"
+    registry = matrix["registry"]
+    owner = matrix["owner"]
+    repository = matrix["repository"]
+    return {
+        "id": unit_id,
+        "kind": kind,
+        "tier": tier,
+        "arch": arch,
+        "runner": ARCH_TO_RUNNER[arch],
+        "runner_machine": ARCH_TO_RUNNER_MACHINE[arch],
+        "kolla_base_arch": ARCH_TO_KOLLA_BASE_ARCH[arch],
+        "platform": ARCH_TO_PLATFORM[arch],
+        "target": target,
+        "ancestor_chain": ancestor_chain,
+        "ancestors": [
+            {
+                "image": ancestor,
+                "arch_ref": image_ref(
+                    registry, owner, repository, ancestor, arch_tag
+                ),
+            }
+            for ancestor in ancestor_chain
+        ],
+        "arch_ref": image_ref(registry, owner, repository, target, arch_tag),
+        "summary_file": summary_file,
+        "logs_dir": logs_dir,
+        "command": kolla_build_command(
+            matrix,
+            stream,
+            target,
+            arch,
+            arch_tag,
+            summary_file,
+            logs_dir,
+        ),
+    }
 
 
 def build_plan(
@@ -157,8 +336,20 @@ def build_plan(
     owner = matrix["owner"]
     repository = matrix["repository"]
     selected_images = profile_images(profile, image_filter)
-    selected_groups = selected_build_groups(profile, selected_images)
     selected_names = [entry["name"] for entry in selected_images]
+    catalog_names = [entry["name"] for entry in profile["images"]]
+    catalog_groups = selected_build_groups(profile, profile["images"])
+    catalog_leaf_chains = selected_leaf_chains(catalog_groups)
+    build_leaf_names = selected_leaf_dependency_closure(
+        selected_names,
+        catalog_names,
+        catalog_leaf_chains,
+    )
+    build_leaf_name_set = set(build_leaf_names)
+    build_leaf_entries = [
+        entry for entry in profile["images"] if entry["name"] in build_leaf_name_set
+    ]
+    selected_groups = selected_build_groups(profile, build_leaf_entries)
     scope_image = image_filter or "all"
     requirement = approval_requirement(
         f"{registry}/{owner}/{repository}",
@@ -226,11 +417,85 @@ def build_plan(
             }
         )
 
-    parent_images = list(
-        dict.fromkeys(
-            parent for group in selected_groups for parent in group["parents"]
-        )
-    )
+    leaf_chains = selected_leaf_chains(selected_groups)
+    if set(leaf_chains) != set(build_leaf_names):
+        missing = sorted(set(build_leaf_names) - set(leaf_chains))
+        raise ValueError(f"build images are missing build groups: {missing}")
+    parent_chains = selected_parent_chains(selected_groups, leaf_chains)
+    leaf_stage_by_image = selected_leaf_stage_map(leaf_chains)
+
+    parent_units_by_tier: dict[int, list[dict[str, Any]]] = {
+        tier: [] for tier in PARENT_TIERS
+    }
+    leaf_units_by_stage: dict[int, list[dict[str, Any]]] = {
+        stage: [] for stage in LEAF_STAGES
+    }
+    for arch in matrix["architectures"]:
+        for parent, ancestor_chain in parent_chains.items():
+            tier = len(ancestor_chain)
+            if tier not in parent_units_by_tier:
+                raise ValueError(
+                    f"unsupported parent tier {tier} for {parent}; "
+                    f"supported tiers: {list(PARENT_TIERS)}"
+                )
+            parent_units_by_tier[tier].append(
+                build_unit(
+                    matrix,
+                    stream,
+                    candidate_id,
+                    kind="parent",
+                    tier=tier,
+                    arch=arch,
+                    target=parent,
+                    ancestor_chain=ancestor_chain,
+                )
+            )
+    for stage in LEAF_STAGES:
+        for arch in matrix["architectures"]:
+            for image in build_leaf_names:
+                if leaf_stage_by_image[image] != stage:
+                    continue
+                leaf_units_by_stage[stage].append(
+                    build_unit(
+                        matrix,
+                        stream,
+                        candidate_id,
+                        kind="leaf",
+                        tier=LEAF_TIER + stage,
+                        arch=arch,
+                        target=image,
+                        ancestor_chain=leaf_chains[image],
+                    )
+                )
+
+    parent_tiers = [
+        {
+            "tier": tier,
+            "matrix": {"include": parent_units_by_tier[tier]},
+        }
+        for tier in PARENT_TIERS
+    ]
+    leaf_stages = [
+        {
+            "stage": stage,
+            "matrix": {"include": leaf_units_by_stage[stage]},
+        }
+        for stage in LEAF_STAGES
+    ]
+    all_units = [
+        unit
+        for tier in PARENT_TIERS
+        for unit in parent_units_by_tier[tier]
+    ] + [
+        unit
+        for stage in LEAF_STAGES
+        for unit in leaf_units_by_stage[stage]
+    ]
+    unit_ids = [unit["id"] for unit in all_units]
+    if len(unit_ids) != len(set(unit_ids)):
+        raise ValueError("build unit IDs must be unique")
+
+    parent_images = list(parent_chains)
     images_by_name = {image["image"]: image for image in images}
     build_architectures = []
     for arch in matrix["architectures"]:
@@ -242,7 +507,7 @@ def build_plan(
                 "arch_tag": arch_tag,
                 "kolla_base_arch": ARCH_TO_KOLLA_BASE_ARCH[arch],
                 "platform": platform,
-                "runner_labels": ARCH_TO_RUNNER_LABELS[arch],
+                "runner_labels": [ARCH_TO_RUNNER[arch]],
                 "parents": [
                     {
                         "image": parent,
@@ -269,11 +534,6 @@ def build_plan(
                     }
                     for image in selected_names
                 ],
-                "commands": {
-                    "kolla_build_push": kolla_build_command(
-                        matrix, stream, selected_names, arch, arch_tag
-                    )
-                },
             }
         )
 
@@ -307,7 +567,12 @@ def build_plan(
             if profile["name"] == "deployment" and image_filter is None
             else None
         ),
-        "build": {"architectures": build_architectures},
+        "build": {
+            "architectures": build_architectures,
+            "parent_tiers": parent_tiers,
+            "leaf_stages": leaf_stages,
+            "all_units": all_units,
+        },
         "images": images,
     }
 

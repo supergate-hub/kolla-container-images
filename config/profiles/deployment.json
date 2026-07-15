@@ -83,7 +83,19 @@
                 "ovn-controller",
                 "ovn-nb-db-server",
                 "ovn-northd",
-                "ovn-sb-db-server",
+                "ovn-sb-db-server"
+            ]
+        },
+        {
+            "name": "ovn-sb-db-relay",
+            "parent": "ovn-sb-db-server",
+            "parents": [
+                "base",
+                "openvswitch-base",
+                "ovn-base",
+                "ovn-sb-db-server"
+            ],
+            "images": [
                 "ovn-sb-db-relay"
             ]
         },

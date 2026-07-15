@@ -43,9 +43,18 @@
         "nova-scheduler",
         "nova-conductor",
         "nova-compute",
-        "nova-libvirt",
         "nova-ssh",
         "nova-novncproxy"
+      ]
+    },
+    {
+      "name": "compute-runtime",
+      "parent": "base",
+      "parents": [
+        "base"
+      ],
+      "images": [
+        "nova-libvirt"
       ]
     },
     {

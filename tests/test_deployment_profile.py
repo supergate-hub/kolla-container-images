@@ -121,6 +121,13 @@ NEUTRON_ALIASES = [
 ]
 EXCLUDED_LEAVES = {"etcd", "multipathd", "redis", "redis-sentinel"}
 EXCLUDED_FAMILY_PREFIXES = ("ceph-", "designate-", "swift-", "ironic-")
+EXPECTED_OVN_IMAGE_ORDER = [
+    "ovn-controller",
+    "ovn-nb-db-server",
+    "ovn-northd",
+    "ovn-sb-db-relay",
+    "ovn-sb-db-server",
+]
 
 EXPECTED_NEW_GROUPS = {
     "coordination": {
@@ -260,6 +267,14 @@ class DeploymentProfileTest(unittest.TestCase):
                 self.assertEqual(len(image_names), expected_count)
                 self.assertEqual(image_names, expected_names)
                 self.assertEqual(len(images), len(image_names))
+                self.assertEqual(
+                    [
+                        image["name"]
+                        for image in images
+                        if image["name"] in EXPECTED_OVN_IMAGE_ORDER
+                    ],
+                    EXPECTED_OVN_IMAGE_ORDER,
+                )
                 self.assertTrue(required_common <= image_names)
 
                 self.assertEqual("tgtd" in image_names, stream["distro"] == "ubuntu")
@@ -341,6 +356,43 @@ class DeploymentProfileTest(unittest.TestCase):
         }
 
         self.assertEqual(actual_new_mappings, EXPECTED_NEW_IMAGE_MAPPINGS)
+
+    def test_ovn_relay_has_its_exact_selected_leaf_dependency(self) -> None:
+        expected_ovn = {
+            "name": "ovn",
+            "parent": "ovn-base",
+            "parents": ["base", "openvswitch-base", "ovn-base"],
+            "images": [
+                "ovn-controller",
+                "ovn-nb-db-server",
+                "ovn-northd",
+                "ovn-sb-db-server",
+            ],
+        }
+        expected_relay = {
+            "name": "ovn-sb-db-relay",
+            "parent": "ovn-sb-db-server",
+            "parents": [
+                "base",
+                "openvswitch-base",
+                "ovn-base",
+                "ovn-sb-db-server",
+            ],
+            "images": ["ovn-sb-db-relay"],
+        }
+        groups = {group["name"]: group for group in self.profile["build_groups"]}
+
+        self.assertEqual(groups["ovn"], expected_ovn)
+        self.assertEqual(groups["ovn-sb-db-relay"], expected_relay)
+        for stream_id in EXPECTED_COUNTS:
+            with self.subTest(stream=stream_id):
+                stream = find_stream(self.matrix, stream_id)
+                resolved = resolve_profile(self.profile, stream)
+                resolved_groups = {
+                    group["name"]: group for group in resolved["build_groups"]
+                }
+                self.assertEqual(resolved_groups["ovn"], expected_ovn)
+                self.assertEqual(resolved_groups["ovn-sb-db-relay"], expected_relay)
 
     def test_database_parent_chain_is_pinned_to_each_kolla_release(self) -> None:
         groups = {group["name"]: group for group in self.profile["build_groups"]}
