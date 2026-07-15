@@ -544,18 +544,11 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "8 GiB",
             "2 GiB",
         )
-        normalized_manual = " ".join(manual.split())
-        self.assertRegex(
-            normalized_manual,
-            re.compile(
-                r"(?:"
-                r"\bimplementation\b.{0,120}\b(?:did\s+not|not|never)\b"
-                r".{0,120}\b(?:perform|performed|change|changed|modify|modified)\b|"
-                r"\b(?:none|not|never)\b.{0,120}"
-                r"\b(?:performed|changed|modified)\b.{0,120}\bimplementation\b"
-                r")",
-                re.IGNORECASE,
-            ),
+        self.assert_tokens(
+            manual,
+            "현재 GitHub 설정의 존재를 증명하지 않는다",
+            "다시 조회",
+            "실제 관측 결과",
         )
         self.assert_tokens(
             document,
