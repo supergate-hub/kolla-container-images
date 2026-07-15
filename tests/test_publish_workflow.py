@@ -578,10 +578,10 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("needs.build-leaf-stage-1.result == 'skipped'", native)
         self.assertIn("needs.publish-plan.outputs.leaf_stage_1_count == '0'", native)
         self.assertIn("!cancelled()", native)
-        self.assertIn(
-            "needs: collect-native-evidence",
-            self.publish_job("finalize-publish"),
-        )
+        finalize = self.publish_job("finalize-publish")
+        self.assertIn("needs: collect-native-evidence", finalize)
+        self.assertIn("needs.collect-native-evidence.result == 'success'", finalize)
+        self.assertIn("!cancelled()", finalize)
         self.assertNotIn("self-hosted", self.publish + self.build_unit)
         self.assertNotIn("qemu", (self.publish + self.build_unit).lower())
         self.assertIn(
