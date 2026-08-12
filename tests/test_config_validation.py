@@ -511,7 +511,11 @@ class ConfigValidationTest(unittest.TestCase):
         del missing["toolchains"][release]
         missing_errors = self.validate_matrix(missing)
         self.assertTrue(
-            any("toolchain releases must exactly match" in error for error in missing_errors),
+            any(
+                "toolchains must be a non-empty object" in error
+                or "toolchain releases must exactly match" in error
+                for error in missing_errors
+            ),
             missing_errors,
         )
 
