@@ -201,6 +201,10 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
         plan, units = AGGREGATOR.validate_plan(
             candidate_plan(profile="deployment", image=None)
         )
+        expected_parent_count = len(
+            {unit["target"] for unit in units if unit["kind"] == "parent"}
+        )
+        expected_image_count = len(plan["images"])
         records = records_for(plan)
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -216,8 +220,12 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
             self.assertEqual(len(outputs), 2)
             for output in outputs:
                 evidence = json.loads(output.read_text(encoding="utf-8"))
-                self.assertEqual(len(evidence["parents"]), 16)
-                self.assertEqual(len(evidence["images"]), 63)
+                self.assertEqual(
+                    len(evidence["parents"]), expected_parent_count
+                )
+                self.assertEqual(
+                    len(evidence["images"]), expected_image_count
+                )
 
             relay = records["amd64-leaf-ovn-sb-db-relay"]
             server = records["amd64-leaf-ovn-sb-db-server"]
