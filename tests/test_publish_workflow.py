@@ -818,6 +818,7 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("EVENT_NAME: ${{ github.event_name }}", context_step)
         self.assertIn("BASE_REF: ${{ github.base_ref }}", context_step)
         self.assertIn("REF_NAME: ${{ github.ref_name }}", context_step)
+        self.assertIn("REF_TYPE: ${{ github.ref_type }}", context_step)
         self.assertIn('if [ "$EVENT_NAME" = "pull_request" ]', context_step)
         self.assertIn('validation_branch="$BASE_REF"', context_step)
         self.assertIn(
@@ -825,7 +826,7 @@ class PublishWorkflowTest(unittest.TestCase):
             context_step,
         )
         self.assertIn(
-            'elif [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]',
+            'elif [ "$REF_TYPE" = "branch" ] && { [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]; }',
             context_step,
         )
         self.assertIn("branch=%s", context_step)

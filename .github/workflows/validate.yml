@@ -32,6 +32,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
           set -euo pipefail
           validation_branch=""
@@ -41,7 +42,7 @@ jobs:
               echo "Pull requests must target main or an exact YYYY-N release branch." >&2
               exit 1
             fi
-          elif [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]; then
+          elif [ "$REF_TYPE" = "branch" ] && { [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]; }; then
             validation_branch="$REF_NAME"
           fi
           printf 'branch=%s\n' "$validation_branch" >> "$GITHUB_OUTPUT"
