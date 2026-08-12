@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import string
@@ -455,6 +456,7 @@ def validate_matrix(
         elif publish_enabled is not True:
             errors.append(f"stream {stream_id!r} publish_enabled must be true")
 
+    ids: list[str] = []
     if valid_stream_objects:
         ids = stream_ids(matrix)
         active_releases = {
@@ -480,7 +482,19 @@ def validate_matrix(
     }
     validate_release_metadata(matrix, errors)
     validate_toolchains(matrix, stream_releases, errors)
-    if branch_name is not None:
+    if branch_name == "main":
+        if not valid_stream_objects or ids != list(EXPECTED_STREAMS):
+            errors.append(
+                "main matrix must contain the complete reviewed stream catalog"
+            )
+        toolchains = matrix.get("toolchains")
+        if not isinstance(toolchains, dict) or set(toolchains) != set(
+            EXPECTED_TOOLCHAINS
+        ):
+            errors.append(
+                "main matrix must contain every reviewed release toolchain"
+            )
+    elif branch_name is not None:
         errors.extend(validate_matrix_branch(matrix, branch_name))
 
     if matrix.get("architectures") != EXPECTED_ARCHITECTURES:
@@ -1088,13 +1102,26 @@ def validate_profiles(matrix: dict[str, Any], errors: list[str]) -> None:
         validate_profile(matrix, profile_name, profile, errors)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Validate Kolla image repository configuration.",
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--branch",
+        help="Optional target branch context: main or an exact YYYY-N release branch",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     errors: list[str] = []
     matrix = load_json(MATRIX_PATH)
     if not isinstance(matrix, dict):
         errors.append(f"{MATRIX_PATH.relative_to(ROOT)} must contain an object")
     else:
-        validate_matrix(matrix, errors)
+        validate_matrix(matrix, errors, branch_name=args.branch)
         validate_profiles(matrix, errors)
 
     if errors:

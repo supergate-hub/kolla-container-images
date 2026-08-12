@@ -12,9 +12,6 @@ jobs:
     name: Validate repository configuration and publish plans
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      VALIDATION_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
-
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -29,15 +26,47 @@ jobs:
               python3 -m json.tool "$json_file" >/dev/null
             done
 
+      - name: Resolve validation branch context
+        id: validation-context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          validation_branch=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            validation_branch="$BASE_REF"
+            if [ "$validation_branch" != "main" ] && [[ ! "$validation_branch" =~ ^[0-9]{4}-[0-9]+$ ]]; then
+              echo "Pull requests must target main or an exact YYYY-N release branch." >&2
+              exit 1
+            fi
+          elif [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]; then
+            validation_branch="$REF_NAME"
+          fi
+          printf 'branch=%s\n' "$validation_branch" >> "$GITHUB_OUTPUT"
+
       - name: Validate release branch ownership
-        if: ${{ env.VALIDATION_BRANCH != 'main' }}
+        if: >-
+          ${{ steps.validation-context.outputs.branch != '' &&
+              steps.validation-context.outputs.branch != 'main' }}
+        env:
+          VALIDATION_BRANCH: ${{ steps.validation-context.outputs.branch }}
         run: >-
           python3 scripts/validate-release-context.py matrix
           --matrix config/build-matrix.json
           --branch "$VALIDATION_BRANCH"
 
       - name: Validate repository configuration
-        run: python3 scripts/validate-config.py
+        env:
+          VALIDATION_BRANCH: ${{ steps.validation-context.outputs.branch }}
+        run: |
+          set -euo pipefail
+          validation_args=()
+          if [ -n "$VALIDATION_BRANCH" ]; then
+            validation_args+=(--branch "$VALIDATION_BRANCH")
+          fi
+          python3 scripts/validate-config.py "${validation_args[@]}"
 
       - name: Validate every active stream dry-run plan
         run: |

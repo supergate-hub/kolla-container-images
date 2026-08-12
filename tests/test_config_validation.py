@@ -458,6 +458,26 @@ class ConfigValidationTest(unittest.TestCase):
                 self.validator["validate_profiles"](matrix, errors)
                 self.assertEqual(errors, [])
 
+    def test_main_context_requires_complete_aggregate_catalog(self) -> None:
+        aggregate = self.branch_matrix("2025.1")
+
+        errors = self.validate_matrix(aggregate, branch_name="main")
+
+        self.assertTrue(
+            any("complete reviewed stream catalog" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any("every reviewed release toolchain" in error for error in errors),
+            errors,
+        )
+
+        if set(self.matrix["toolchains"]) == set(EXPECTED_TOOLCHAINS):
+            self.assertEqual(
+                self.validate_matrix(self.matrix, branch_name="main"),
+                [],
+            )
+
     def test_matrix_rejects_incomplete_or_mixed_release_branch_subsets(self) -> None:
         release = self.active_releases[0]
         branch_name = release.replace(".", "-")

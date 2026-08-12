@@ -811,18 +811,43 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("find . -type f -name '*.json' -print0", self.validate)
         self.assertIn("python3 -m json.tool", self.validate)
         self.assertIn("set -euo pipefail", self.validate)
-        self.assertIn(
-            "VALIDATION_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}",
+        context_step = yaml_block(
             self.validate,
+            "      - name: Resolve validation branch context",
         )
+        self.assertIn("EVENT_NAME: ${{ github.event_name }}", context_step)
+        self.assertIn("BASE_REF: ${{ github.base_ref }}", context_step)
+        self.assertIn("REF_NAME: ${{ github.ref_name }}", context_step)
+        self.assertIn('if [ "$EVENT_NAME" = "pull_request" ]', context_step)
+        self.assertIn('validation_branch="$BASE_REF"', context_step)
+        self.assertIn(
+            '[[ ! "$validation_branch" =~ ^[0-9]{4}-[0-9]+$ ]]',
+            context_step,
+        )
+        self.assertIn(
+            'elif [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]',
+            context_step,
+        )
+        self.assertIn("branch=%s", context_step)
         branch_gate = yaml_block(
             self.validate,
             "      - name: Validate release branch ownership",
         )
-        self.assertIn("if: ${{ env.VALIDATION_BRANCH != 'main' }}", branch_gate)
+        self.assertIn(
+            "steps.validation-context.outputs.branch != ''",
+            branch_gate,
+        )
+        self.assertIn(
+            "steps.validation-context.outputs.branch != 'main'",
+            branch_gate,
+        )
         self.assertIn("scripts/validate-release-context.py matrix", branch_gate)
         self.assertIn('--branch "$VALIDATION_BRANCH"', branch_gate)
-        self.assertIn("python3 scripts/validate-config.py", self.validate)
+        self.assertIn('validation_args+=(--branch "$VALIDATION_BRANCH")', self.validate)
+        self.assertIn(
+            'python3 scripts/validate-config.py "${validation_args[@]}"',
+            self.validate,
+        )
         self.assertIn("Validate every active stream dry-run plan", self.validate)
         self.assertIn('for stream in matrix["streams"]', self.validate)
         self.assertIn('if stream["publish_enabled"] is True', self.validate)
