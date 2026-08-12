@@ -179,16 +179,40 @@ def load_json(path: Path) -> dict[str, object]:
 class ConfigValidationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.matrix = load_json(MATRIX_PATH)
+        matrix_releases = {
+            stream["release"] for stream in self.matrix["streams"]
+        }
+        self.active_releases = [
+            release
+            for release in EXPECTED_TOOLCHAINS
+            if release in matrix_releases
+        ]
+        self.active_expected_streams = {
+            stream_id: expected
+            for stream_id, expected in EXPECTED_STREAMS.items()
+            if expected[0] in matrix_releases
+        }
+        self.active_expected_toolchains = {
+            release: copy.deepcopy(EXPECTED_TOOLCHAINS[release])
+            for release in self.active_releases
+        }
         self.validator = runpy.run_path(
             str(ROOT / "scripts" / "validate-config.py")
         )
 
     def validate_profile(
-        self, profile_name: str, profile: dict[str, object]
+        self,
+        profile_name: str,
+        profile: dict[str, object],
+        *,
+        matrix: dict[str, object] | None = None,
     ) -> list[str]:
         errors: list[str] = []
         self.validator["validate_profile"](
-            self.matrix, profile_name, profile, errors
+            self.matrix if matrix is None else matrix,
+            profile_name,
+            profile,
+            errors,
         )
         return errors
 
@@ -209,12 +233,19 @@ class ConfigValidationTest(unittest.TestCase):
     def branch_matrix(self, release: str) -> dict[str, object]:
         matrix = copy.deepcopy(self.matrix)
         matrix["streams"] = [
-            stream
-            for stream in matrix["streams"]
-            if stream["release"] == release
+            {
+                "id": stream_id,
+                "release": expected[0],
+                "distro": expected[3],
+                "base_tag": expected[4],
+                "tag_token": expected[5],
+                "publish_enabled": True,
+            }
+            for stream_id, expected in EXPECTED_STREAMS.items()
+            if expected[0] == release
         ]
         matrix["toolchains"] = {
-            release: copy.deepcopy(matrix["toolchains"][release])
+            release: copy.deepcopy(EXPECTED_TOOLCHAINS[release])
         }
         return matrix
 
@@ -228,14 +259,16 @@ class ConfigValidationTest(unittest.TestCase):
                 image for image in group["images"] if image != image_name
             ]
 
-    def test_matrix_declares_exact_release_toolchains_and_seven_streams(self) -> None:
+    def test_matrix_declares_exact_active_release_toolchains_and_streams(self) -> None:
         self.assertEqual(self.matrix["schema_version"], 3)
         self.assertEqual(self.matrix["owner"], "supergate-hub")
         self.assertEqual(self.matrix["repository"], "kolla-container-images")
         self.assertEqual(self.matrix["registry"], "ghcr.io")
         self.assertEqual(self.matrix["profiles"], ["core", "deployment"])
         self.assertEqual(self.matrix["release_metadata"], EXPECTED_RELEASE_METADATA)
-        self.assertEqual(self.matrix["toolchains"], EXPECTED_TOOLCHAINS)
+        self.assertEqual(
+            self.matrix["toolchains"], self.active_expected_toolchains
+        )
         self.assertEqual(self.matrix["architectures"], ["amd64", "arm64"])
         self.assertEqual(
             self.matrix["tag_policy"],
@@ -245,9 +278,11 @@ class ConfigValidationTest(unittest.TestCase):
                 ),
             },
         )
-        self.assertEqual(stream_ids(self.matrix), list(EXPECTED_STREAMS))
+        self.assertEqual(
+            stream_ids(self.matrix), list(self.active_expected_streams)
+        )
 
-        for stream_id, expected in EXPECTED_STREAMS.items():
+        for stream_id, expected in self.active_expected_streams.items():
             with self.subTest(stream=stream_id):
                 raw_stream = next(
                     stream
@@ -313,7 +348,7 @@ class ConfigValidationTest(unittest.TestCase):
                 )
                 self.assertEqual(neutron["kolla_ansible_variables"], NEUTRON_VARIABLES)
 
-                for stream_id in EXPECTED_STREAMS:
+                for stream_id in self.active_expected_streams:
                     stream = find_stream(self.matrix, stream_id)
                     resolved = resolve_profile(profile, stream)
                     resolved_neutron = next(
@@ -343,7 +378,11 @@ class ConfigValidationTest(unittest.TestCase):
             | {"grafana", "iscsid"}
         )
 
-        for stream_id, expected_count in DEPLOYMENT_EXPECTED_COUNTS.items():
+        active_counts = {
+            stream_id: DEPLOYMENT_EXPECTED_COUNTS[stream_id]
+            for stream_id in self.active_expected_streams
+        }
+        for stream_id, expected_count in active_counts.items():
             with self.subTest(stream=stream_id):
                 stream = find_stream(self.matrix, stream_id)
                 resolved = resolve_profile(profile, stream)
@@ -420,11 +459,13 @@ class ConfigValidationTest(unittest.TestCase):
                 self.assertEqual(errors, [])
 
     def test_matrix_rejects_incomplete_or_mixed_release_branch_subsets(self) -> None:
-        incomplete = self.branch_matrix("2025.1")
+        release = self.active_releases[0]
+        branch_name = release.replace(".", "-")
+        incomplete = self.branch_matrix(release)
         incomplete["streams"].pop()
         incomplete_errors = self.validate_matrix(
             incomplete,
-            branch_name="2025-1",
+            branch_name=branch_name,
         )
         self.assertTrue(
             any(
@@ -434,15 +475,19 @@ class ConfigValidationTest(unittest.TestCase):
             incomplete_errors,
         )
 
-        mixed = self.branch_matrix("2025.1")
-        mixed["streams"].append(copy.deepcopy(self.matrix["streams"][3]))
-        mixed["toolchains"]["2025.2"] = copy.deepcopy(
-            self.matrix["toolchains"]["2025.2"]
+        other_release = next(
+            candidate
+            for candidate in EXPECTED_TOOLCHAINS
+            if candidate != release
         )
-        mixed_errors = self.validate_matrix(mixed, branch_name="2025-1")
+        other_matrix = self.branch_matrix(other_release)
+        mixed = self.branch_matrix(release)
+        mixed["streams"].extend(copy.deepcopy(other_matrix["streams"]))
+        mixed["toolchains"].update(copy.deepcopy(other_matrix["toolchains"]))
+        mixed_errors = self.validate_matrix(mixed, branch_name=branch_name)
         self.assertTrue(
             any(
-                "branch '2025-1' owns release '2025.1'" in error
+                f"branch '{branch_name}' owns release '{release}'" in error
                 for error in mixed_errors
             ),
             mixed_errors,
@@ -461,8 +506,9 @@ class ConfigValidationTest(unittest.TestCase):
         )
 
     def test_matrix_rejects_missing_unused_and_malformed_toolchains(self) -> None:
+        release = self.active_releases[0]
         missing = copy.deepcopy(self.matrix)
-        del missing["toolchains"]["2026.1"]
+        del missing["toolchains"][release]
         missing_errors = self.validate_matrix(missing)
         self.assertTrue(
             any("toolchain releases must exactly match" in error for error in missing_errors),
@@ -471,7 +517,7 @@ class ConfigValidationTest(unittest.TestCase):
 
         unused = copy.deepcopy(self.matrix)
         unused["toolchains"]["2027.1"] = copy.deepcopy(
-            unused["toolchains"]["2026.1"]
+            unused["toolchains"][release]
         )
         unused_errors = self.validate_matrix(unused)
         self.assertTrue(
@@ -480,15 +526,18 @@ class ConfigValidationTest(unittest.TestCase):
         )
 
         malformed = copy.deepcopy(self.matrix)
-        malformed["toolchains"]["2025.1"]["kolla"]["commit"] = "99b84ab"
-        malformed["toolchains"]["2025.1"]["release_branch"] = "main"
+        malformed["toolchains"][release]["kolla"]["commit"] = "99b84ab"
+        malformed["toolchains"][release]["release_branch"] = "main"
         malformed_errors = self.validate_matrix(malformed)
         self.assertTrue(
             any("lowercase 40-character SHA" in error for error in malformed_errors),
             malformed_errors,
         )
         self.assertTrue(
-            any("release_branch must be '2025-1'" in error for error in malformed_errors),
+            any(
+                f"release_branch must be '{release.replace('.', '-')}'" in error
+                for error in malformed_errors
+            ),
             malformed_errors,
         )
 
@@ -522,7 +571,11 @@ class ConfigValidationTest(unittest.TestCase):
         ):
             self.remove_image(profile, image_name)
 
-        errors = self.validate_profile("deployment", profile)
+        errors = self.validate_profile(
+            "deployment",
+            profile,
+            matrix=self.branch_matrix("2026.1"),
+        )
 
         self.assertTrue(
             any(
@@ -578,7 +631,11 @@ class ConfigValidationTest(unittest.TestCase):
             if isinstance(variable, dict):
                 variable["applies_to"] = {"releases": ["2026.1"]}
 
-        errors = self.validate_profile("deployment", profile)
+        errors = self.validate_profile(
+            "deployment",
+            profile,
+            matrix=self.branch_matrix("2025.2"),
+        )
 
         self.assertTrue(
             any(
@@ -618,7 +675,11 @@ class ConfigValidationTest(unittest.TestCase):
         group["parent"] = "mariadb-base"
         group["parents"] = ["base", "mariadb-base"]
 
-        errors = self.validate_profile("deployment", profile)
+        errors = self.validate_profile(
+            "deployment",
+            profile,
+            matrix=self.branch_matrix("2025.2"),
+        )
 
         self.assertTrue(
             any(

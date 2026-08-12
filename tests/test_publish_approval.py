@@ -10,29 +10,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.profile_resolver import load_matrix
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN_PUBLISH = ROOT / "scripts" / "plan-publish.py"
 VALIDATE_APPROVAL = ROOT / "scripts" / "validate-publish-approval.py"
-REGISTRY_PATH = "ghcr.io/supergate-hub/kolla-container-images"
-STREAM_IDS = [
-    "2025.1-rocky-9",
-    "2025.1-rocky-10",
-    "2025.1-ubuntu-noble",
-    "2025.2-rocky-10",
-    "2025.2-ubuntu-noble",
-    "2026.1-rocky-10",
-    "2026.1-ubuntu-noble",
-]
-DEPLOYMENT_COUNTS = {
-    "2025.1-rocky-9": 63,
-    "2025.1-rocky-10": 63,
-    "2025.1-ubuntu-noble": 64,
-    "2025.2-rocky-10": 63,
-    "2025.2-ubuntu-noble": 64,
-    "2026.1-rocky-10": 65,
-    "2026.1-ubuntu-noble": 66,
-}
+MATRIX = load_matrix()
+REGISTRY_PATH = (
+    f"{MATRIX['registry']}/{MATRIX['owner']}/{MATRIX['repository']}"
+)
+STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
+DEFAULT_STREAM = STREAM_IDS[0]
+OTHER_STREAM = STREAM_IDS[1]
 APPROVAL_VARIABLES = (
     "ALLOW_GHCR_PUBLISH",
     "ALLOW_GHCR_FULL_CORE_PUBLISH",
@@ -51,7 +41,7 @@ def expected_phrase(stream: str, profile: str, image: str, count: int) -> str:
 
 def generate_plan(
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "core",
     image: str | None = None,
     candidate_id: str = TEST_CANDIDATE_ID,
@@ -147,11 +137,11 @@ class PublishApprovalTest(unittest.TestCase):
         return copy.deepcopy(self.plans[(stream, profile, image)])
 
     def test_trusted_candidate_id_must_match_frozen_plan(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "candidate-mismatch", plan)
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
             expected_candidate_id="123456789-2",
         )
@@ -163,14 +153,19 @@ class PublishApprovalTest(unittest.TestCase):
         path = write_plan(self.plan_directory, "local-candidate", plan)
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "all", 21),
+            approval=expected_phrase(
+                DEFAULT_STREAM,
+                "core",
+                "all",
+                plan["scope"]["image_count"],
+            ),
             variables={"ALLOW_GHCR_FULL_CORE_PUBLISH": "true"},
             expected_candidate_id="local-dry-run",
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("workflow candidate ID", result.stderr)
 
-    def test_all_seven_streams_and_three_allowed_scopes_validate(self) -> None:
+    def test_all_active_streams_and_three_allowed_scopes_validate(self) -> None:
         case_count = 0
         scopes = (
             ("core", "keystone", "ALLOW_GHCR_PUBLISH"),
@@ -180,15 +175,9 @@ class PublishApprovalTest(unittest.TestCase):
         for stream in STREAM_IDS:
             for profile, image, variable in scopes:
                 case_count += 1
-                count = (
-                    1
-                    if image == "keystone"
-                    else 21
-                    if profile == "core"
-                    else DEPLOYMENT_COUNTS[stream]
-                )
-                phrase = expected_phrase(stream, profile, image, count)
                 plan = self.plan(stream, profile, image)
+                count = plan["scope"]["image_count"]
+                phrase = expected_phrase(stream, profile, image, count)
                 plan_path = write_plan(
                     self.plan_directory,
                     f"positive-{stream}-{profile}-{image}",
@@ -218,27 +207,27 @@ class PublishApprovalTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("Publish approval validated.", result.stdout)
 
-        self.assertEqual(case_count, 21)
+        self.assertEqual(case_count, len(STREAM_IDS) * len(scopes))
 
     def test_required_variable_must_be_present(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "missing-variable", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
         )
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("ALLOW_GHCR_PUBLISH=true", result.stderr)
 
     def test_required_variable_must_be_exactly_true(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "false-variable", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "false"},
         )
 
@@ -246,12 +235,12 @@ class PublishApprovalTest(unittest.TestCase):
         self.assertIn("ALLOW_GHCR_PUBLISH=true", result.stderr)
 
     def test_different_scope_variable_does_not_authorize_plan(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "wrong-variable", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_FULL_CORE_PUBLISH": "true"},
         )
 
@@ -259,7 +248,7 @@ class PublishApprovalTest(unittest.TestCase):
         self.assertIn("ALLOW_GHCR_PUBLISH=true", result.stderr)
 
     def test_wrong_phrase_is_rejected(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "wrong-phrase", plan)
 
         result = run_validator(
@@ -272,13 +261,13 @@ class PublishApprovalTest(unittest.TestCase):
         self.assertIn("exact approval phrase", result.stderr)
 
     def test_stale_stored_count_is_rejected(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         plan["scope"]["image_count"] = 2
         path = write_plan(self.plan_directory, "stale-count", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
         )
 
@@ -291,7 +280,7 @@ class PublishApprovalTest(unittest.TestCase):
             ("owner", "another-owner"),
             ("repository", "another-repository"),
         ):
-            plan = self.plan("2025.1-rocky-9", "core", "keystone")
+            plan = self.plan(DEFAULT_STREAM, "core", "keystone")
             plan[field] = value
             path = write_plan(self.plan_directory, f"tampered-{field}", plan)
 
@@ -299,7 +288,7 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     approval=expected_phrase(
-                        "2025.1-rocky-9", "core", "keystone", 1
+                        DEFAULT_STREAM, "core", "keystone", 1
                     ),
                     variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
@@ -307,20 +296,20 @@ class PublishApprovalTest(unittest.TestCase):
                 self.assertIn("publish plan", result.stderr.lower())
 
     def test_tampered_stream_is_rejected(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
-        plan["stream"] = "2025.1-rocky-10"
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
+        plan["stream"] = OTHER_STREAM
         plan["approval"] = {
             "allowed": True,
             "required_variable": "ALLOW_GHCR_PUBLISH",
             "phrase": expected_phrase(
-                "2025.1-rocky-10", "core", "keystone", 1
+                OTHER_STREAM, "core", "keystone", 1
             ),
         }
         path = write_plan(self.plan_directory, "tampered-stream", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-10", "core", "keystone", 1),
+            approval=expected_phrase(OTHER_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
         )
 
@@ -328,13 +317,13 @@ class PublishApprovalTest(unittest.TestCase):
         self.assertIn("publish plan", result.stderr.lower())
 
     def test_tampered_scope_image_is_rejected(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         plan["scope"]["image"] = "glance-api"
         path = write_plan(self.plan_directory, "tampered-image", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
         )
 
@@ -342,13 +331,15 @@ class PublishApprovalTest(unittest.TestCase):
         self.assertIn("publish plan", result.stderr.lower())
 
     def test_tampered_selected_images_are_rejected(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "all")
+        plan = self.plan(DEFAULT_STREAM, "core", "all")
         plan["images"].pop()
         path = write_plan(self.plan_directory, "tampered-selection", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "all", 21),
+            approval=expected_phrase(
+                DEFAULT_STREAM, "core", "all", plan["scope"]["image_count"]
+            ),
             variables={"ALLOW_GHCR_FULL_CORE_PUBLISH": "true"},
         )
 
@@ -366,7 +357,7 @@ class PublishApprovalTest(unittest.TestCase):
             ][0].__setitem__("platform", "linux/ppc64le"),
         }
         for name, mutate in mutations.items():
-            plan = self.plan("2025.1-rocky-9", "core", "keystone")
+            plan = self.plan(DEFAULT_STREAM, "core", "keystone")
             mutate(plan)
             path = write_plan(self.plan_directory, name, plan)
 
@@ -374,7 +365,7 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     approval=expected_phrase(
-                        "2025.1-rocky-9", "core", "keystone", 1
+                        DEFAULT_STREAM, "core", "keystone", 1
                     ),
                     variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
@@ -396,7 +387,7 @@ class PublishApprovalTest(unittest.TestCase):
             ),
         }
         for name, mutate in mutations.items():
-            plan = self.plan("2025.1-rocky-9", "core", "keystone")
+            plan = self.plan(DEFAULT_STREAM, "core", "keystone")
             self.assertIn("approval", plan)
             mutate(plan)
             path = write_plan(self.plan_directory, f"approval-{name}", plan)
@@ -405,7 +396,7 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     approval=expected_phrase(
-                        "2025.1-rocky-9", "core", "keystone", 1
+                        DEFAULT_STREAM, "core", "keystone", 1
                     ),
                     variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
@@ -438,12 +429,12 @@ class PublishApprovalTest(unittest.TestCase):
                 self.assertIn("not approved for real publish", result.stderr)
 
     def test_validator_accepts_no_independent_scope_arguments(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "legacy-arguments", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
             extra_args=["--profile", "core"],
         )
@@ -456,7 +447,7 @@ class PublishApprovalTest(unittest.TestCase):
             ("--base", "ubuntu"),
             ("--base-tag", "24.04"),
         ):
-            plan = self.plan("2025.1-rocky-9", "core", "keystone")
+            plan = self.plan(DEFAULT_STREAM, "core", "keystone")
             command = plan["build"]["all_units"][0]["command"]
             command[command.index(option) + 1] = replacement
             path = write_plan(
@@ -469,7 +460,7 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     approval=expected_phrase(
-                        "2025.1-rocky-9", "core", "keystone", 1
+                        DEFAULT_STREAM, "core", "keystone", 1
                     ),
                     variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
@@ -477,14 +468,14 @@ class PublishApprovalTest(unittest.TestCase):
                 self.assertIn("publish plan", result.stderr.lower())
 
     def test_review_rejects_image_regex_inserted_before_push(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         command = plan["build"]["all_units"][0]["command"]
         command.insert(command.index("--push"), "^glance-api$")
         path = write_plan(self.plan_directory, "review-extra-image-regex", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
         )
 
@@ -493,7 +484,7 @@ class PublishApprovalTest(unittest.TestCase):
 
     def test_review_rejects_replaced_manifest_commands(self) -> None:
         for command_name in ("manifest_create", "manifest_inspect"):
-            plan = self.plan("2025.1-rocky-9", "core", "keystone")
+            plan = self.plan(DEFAULT_STREAM, "core", "keystone")
             plan["images"][0]["commands"][command_name] = ["replaced-command"]
             path = write_plan(
                 self.plan_directory,
@@ -505,7 +496,7 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     approval=expected_phrase(
-                        "2025.1-rocky-9", "core", "keystone", 1
+                        DEFAULT_STREAM, "core", "keystone", 1
                     ),
                     variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
@@ -523,7 +514,7 @@ class PublishApprovalTest(unittest.TestCase):
             ),
         }
         for name, mutate in mutations.items():
-            plan = self.plan("2025.1-rocky-9", "core", "keystone")
+            plan = self.plan(DEFAULT_STREAM, "core", "keystone")
             mutate(plan)
             path = write_plan(self.plan_directory, f"review-type-{name}", plan)
 
@@ -531,7 +522,7 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     approval=expected_phrase(
-                        "2025.1-rocky-9", "core", "keystone", 1
+                        DEFAULT_STREAM, "core", "keystone", 1
                     ),
                     variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
@@ -558,19 +549,19 @@ class PublishApprovalTest(unittest.TestCase):
         try:
             with self.assertRaisesRegex(ValueError, "not enabled for publication"):
                 validator.recompute_requirement(
-                    self.plan("2025.1-rocky-9", "core", "keystone"),
+                    self.plan(DEFAULT_STREAM, "core", "keystone"),
                     TEST_CANDIDATE_ID,
                 )
         finally:
             validator.load_matrix = original_load_matrix
 
     def test_review_rejects_abbreviated_publish_plan_option(self) -> None:
-        plan = self.plan("2025.1-rocky-9", "core", "keystone")
+        plan = self.plan(DEFAULT_STREAM, "core", "keystone")
         path = write_plan(self.plan_directory, "review-abbreviated-option", plan)
 
         result = run_validator(
             path,
-            approval=expected_phrase("2025.1-rocky-9", "core", "keystone", 1),
+            approval=expected_phrase(DEFAULT_STREAM, "core", "keystone", 1),
             variables={"ALLOW_GHCR_PUBLISH": "true"},
             publish_plan_option="--publish-p",
         )

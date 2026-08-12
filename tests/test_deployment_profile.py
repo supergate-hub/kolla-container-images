@@ -239,6 +239,9 @@ class DeploymentProfileTest(unittest.TestCase):
     def setUp(self) -> None:
         self.matrix = load_json(MATRIX_PATH)
         self.profile = load_json(PROFILE_PATH)
+        self.active_stream_ids = [
+            stream["id"] for stream in self.matrix["streams"]
+        ]
 
     def test_resolved_closure_is_exact_for_every_stream(self) -> None:
         required_common = (
@@ -251,8 +254,9 @@ class DeploymentProfileTest(unittest.TestCase):
             | {"grafana", "iscsid"}
         )
 
-        for stream_id, expected_count in EXPECTED_COUNTS.items():
+        for stream_id in self.active_stream_ids:
             with self.subTest(stream=stream_id):
+                expected_count = EXPECTED_COUNTS[stream_id]
                 stream = find_stream(self.matrix, stream_id)
                 resolved = resolve_profile(self.profile, stream)
                 images = resolved["images"]
@@ -384,7 +388,7 @@ class DeploymentProfileTest(unittest.TestCase):
 
         self.assertEqual(groups["ovn"], expected_ovn)
         self.assertEqual(groups["ovn-sb-db-relay"], expected_relay)
-        for stream_id in EXPECTED_COUNTS:
+        for stream_id in self.active_stream_ids:
             with self.subTest(stream=stream_id):
                 stream = find_stream(self.matrix, stream_id)
                 resolved = resolve_profile(self.profile, stream)
@@ -418,7 +422,7 @@ class DeploymentProfileTest(unittest.TestCase):
         )
         self.assertNotIn("database", groups)
 
-        for stream_id in EXPECTED_COUNTS:
+        for stream_id in self.active_stream_ids:
             with self.subTest(stream=stream_id):
                 stream = find_stream(self.matrix, stream_id)
                 resolved = resolve_profile(self.profile, stream)

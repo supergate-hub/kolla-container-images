@@ -19,6 +19,13 @@ TEN_GIB = 10 * 1024**3
 THREE_GIB = 3 * 1024**3
 
 
+def active_stream_id() -> str:
+    matrix = json.loads((ROOT / "config" / "build-matrix.json").read_text(
+        encoding="utf-8"
+    ))
+    return matrix["streams"][0]["id"]
+
+
 def load_module():
     spec = importlib.util.spec_from_file_location(
         "aggregate_native_evidence", AGGREGATOR_PATH
@@ -38,7 +45,7 @@ def candidate_plan(*, profile: str = "core", image: str | None = "keystone") -> 
         sys.executable,
         str(PLANNER),
         "--stream",
-        "2025.1-rocky-9",
+        active_stream_id(),
         "--profile",
         profile,
         "--candidate-id",

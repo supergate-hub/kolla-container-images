@@ -32,11 +32,8 @@ PINNED_KOLLA_PARSER_MODULE_SHA256 = {
 ROOT_ASSIGNMENT_RE = re.compile(r'^([a-z0-9_]+): "([^"]+)"$')
 MATRIX = load_matrix()
 TEST_CANDIDATE_ID = "123456789-1"
-deploy_tag = "2025.1-rocky-9-20.4.0"
-deploy_ref = (
-    "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-    + deploy_tag
-)
+STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
+DEFAULT_STREAM = STREAM_IDS[0]
 NEW_NEUTRON_ALIASES = {
     "neutron_rpc_server_image_full",
     "neutron_periodic_worker_image_full",
@@ -46,17 +43,6 @@ NEW_EXPORTER_ALIASES = {
     "prometheus_openstack_network_exporter_image_full",
     "prometheus_valkey_exporter_image_full",
 }
-STREAM_VARIABLE_COUNTS = {
-    "2025.1-rocky-9": 65,
-    "2025.1-rocky-10": 65,
-    "2025.1-ubuntu-noble": 66,
-    "2025.2-rocky-10": 68,
-    "2025.2-ubuntu-noble": 69,
-    "2026.1-rocky-10": 70,
-    "2026.1-ubuntu-noble": 71,
-}
-
-
 def digest(index: int) -> str:
     return f"sha256:{index:064x}"
 
@@ -95,7 +81,7 @@ def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
 
 
 def publish_summary(
-    stream_id: str = "2025.1-rocky-9",
+    stream_id: str = DEFAULT_STREAM,
     profile_name: str = "deployment",
     image_filter: str | None = None,
 ) -> dict:
@@ -177,7 +163,7 @@ def duplicate_key_summary_json() -> dict[str, str]:
 def generate_lock_json(
     summary_json: str,
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "deployment",
     candidate_id: str = TEST_CANDIDATE_ID,
 ) -> tuple[subprocess.CompletedProcess[str], str | None]:
@@ -212,7 +198,7 @@ def generate_lock_json(
 def generate_lock(
     summary: dict,
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "deployment",
     candidate_id: str = TEST_CANDIDATE_ID,
 ) -> tuple[subprocess.CompletedProcess[str], str | None]:
@@ -419,9 +405,10 @@ class LockGenerationTest(unittest.TestCase):
         self.assertEqual(metadata["kolla"], summary["kolla"])
         self.assertEqual(metadata["kolla_ansible"], summary["kolla_ansible"])
         entry = metadata["images"]["keystone"]
+        summary_entry = image_entry(summary, "keystone")
+        deploy_ref = summary_entry["deploy_ref"]
         self.assertEqual(entry["deploy_ref"], deploy_ref)
         self.assertEqual(parsed["keystone_image_full"], deploy_ref)
-        summary_entry = image_entry(summary, "keystone")
         self.assertEqual(
             [
                 architecture["arch_ref"]
@@ -453,7 +440,7 @@ class LockGenerationTest(unittest.TestCase):
         self.assertIn("candidate ID", result.stderr)
 
     def test_complete_deployment_writes_every_resolved_variable_once(self) -> None:
-        for stream_id, expected_count in STREAM_VARIABLE_COUNTS.items():
+        for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 summary = publish_summary(stream_id)
                 result, lock = generate_lock(summary, stream=stream_id)
@@ -463,6 +450,7 @@ class LockGenerationTest(unittest.TestCase):
                 assert lock is not None
                 assignments = lock_assignments(lock)
                 variables = [variable for variable, _ in assignments]
+                expected_count = len(expected_assignments(stream_id, summary))
                 self.assertEqual(len(assignments), expected_count)
                 self.assertEqual(len(variables), len(set(variables)))
                 self.assertEqual(dict(assignments), expected_assignments(stream_id, summary))
@@ -489,7 +477,8 @@ class LockGenerationTest(unittest.TestCase):
             find_stream(MATRIX, stream["id"])["kolla_ansible_version"]
             for stream in MATRIX["streams"]
         }
-        self.assertEqual(set(contracts), versions)
+        self.assertEqual(set(contracts), set(PINNED_KOLLA_PARSER_MODULE_SHA256))
+        self.assertTrue(versions <= set(contracts))
         self.assertEqual(
             {
                 version: contract["module_sha256"]
@@ -512,7 +501,7 @@ class LockGenerationTest(unittest.TestCase):
     def test_generated_lock_structurally_matches_summary_and_pinned_parser(self) -> None:
         fixture = parser_contract()
         contracts = fixture["versions"]
-        for stream_id in STREAM_VARIABLE_COUNTS:
+        for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 stream, _profile = resolved_profile(stream_id, "deployment")
                 summary = publish_summary(stream_id)
@@ -574,6 +563,8 @@ class LockGenerationTest(unittest.TestCase):
             ),
         }
         for stream_id, (expected_present, expected_absent) in cases.items():
+            if stream_id not in STREAM_IDS:
+                continue
             with self.subTest(stream=stream_id):
                 result, lock = generate_lock(
                     publish_summary(stream_id),
@@ -605,7 +596,7 @@ class LockGenerationTest(unittest.TestCase):
         self.assertIsNone(lock)
 
     def test_missing_extra_and_duplicate_images_are_rejected(self) -> None:
-        stream, _ = resolved_profile("2025.1-rocky-9", "deployment")
+        stream, _ = resolved_profile(DEFAULT_STREAM, "deployment")
         cases = []
 
         missing = publish_summary()

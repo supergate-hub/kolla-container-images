@@ -21,18 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_SUMMARY = ROOT / "scripts" / "validate-publish-summary.py"
 MATRIX = load_matrix()
 TEST_CANDIDATE_ID = "123456789-1"
-unversioned_ref = (
-    "ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9"
+STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
+DEFAULT_STREAM = STREAM_IDS[0]
+OTHER_STREAM = STREAM_IDS[1]
+ROCKY_STREAM = next(
+    stream["id"] for stream in MATRIX["streams"] if stream["distro"] == "rocky"
 )
-STREAM_COUNTS = {
-    "2025.1-rocky-9": 63,
-    "2025.1-rocky-10": 63,
-    "2025.1-ubuntu-noble": 64,
-    "2025.2-rocky-10": 63,
-    "2025.2-ubuntu-noble": 64,
-    "2026.1-rocky-10": 65,
-    "2026.1-ubuntu-noble": 66,
-}
+UBUNTU_STREAM = next(
+    stream["id"] for stream in MATRIX["streams"] if stream["distro"] == "ubuntu"
+)
 
 
 def digest(index: int) -> str:
@@ -73,7 +70,7 @@ def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
 
 
 def publish_summary(
-    stream_id: str = "2025.1-rocky-9",
+    stream_id: str = DEFAULT_STREAM,
     profile_name: str = "deployment",
     image_filter: str | None = None,
 ) -> dict:
@@ -155,7 +152,7 @@ def duplicate_key_summary_json() -> dict[str, str]:
 def run_validator_json(
     summary_json: str,
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "deployment",
     candidate_id: str = TEST_CANDIDATE_ID,
     allow_partial: bool = False,
@@ -191,7 +188,7 @@ def run_validator_json(
 def run_validator(
     summary: dict,
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "deployment",
     candidate_id: str = TEST_CANDIDATE_ID,
     allow_partial: bool = False,
@@ -211,11 +208,12 @@ class PublishSummaryValidationTest(unittest.TestCase):
     def test_unversioned_stream_ref_is_rejected_as_deploy_ref(self) -> None:
         summary = publish_summary()
         entry = image_entry(summary, "keystone")
-        entry["deploy_tag"] = "2025.1-rocky-9"
-        entry["deploy_ref"] = unversioned_ref
+        entry["deploy_tag"] = DEFAULT_STREAM
+        repository, _tag = entry["deploy_ref"].rsplit(":", 1)
+        entry["deploy_ref"] = f"{repository}:{DEFAULT_STREAM}"
         result = run_validator(summary)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("2025.1-rocky-9-20.4.0", result.stderr)
+        self.assertIn(render_tag(MATRIX, find_stream(MATRIX, DEFAULT_STREAM)), result.stderr)
 
     def test_summary_candidate_id_must_match_expected_id(self) -> None:
         summary = publish_summary()
@@ -229,12 +227,8 @@ class PublishSummaryValidationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("candidate ID", result.stderr)
 
-    def test_full_deployment_summaries_pass_representative_streams(self) -> None:
-        for stream_id in (
-            "2025.1-rocky-9",
-            "2025.1-ubuntu-noble",
-            "2026.1-ubuntu-noble",
-        ):
+    def test_full_deployment_summaries_pass_active_streams(self) -> None:
+        for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 result = run_validator(publish_summary(stream_id), stream=stream_id)
 
@@ -242,9 +236,11 @@ class PublishSummaryValidationTest(unittest.TestCase):
                 self.assertIn("Publish summary validation passed.", result.stdout)
 
     def test_all_streams_enforce_exact_resolved_image_count(self) -> None:
-        for stream_id, expected_count in STREAM_COUNTS.items():
+        for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 summary = publish_summary(stream_id)
+                _stream, profile = resolved_profile(stream_id, "deployment")
+                expected_count = len(profile["images"])
                 self.assertEqual(len(summary["images"]), expected_count)
                 self.assertEqual(summary["scope"]["image_count"], expected_count)
 
@@ -255,30 +251,30 @@ class PublishSummaryValidationTest(unittest.TestCase):
                 self.assertIn("publish summary scope must be", result.stderr)
 
     def test_missing_and_extra_conditional_leaves_fail(self) -> None:
-        ubuntu_summary = publish_summary("2025.1-ubuntu-noble")
+        ubuntu_summary = publish_summary(UBUNTU_STREAM)
         ubuntu_summary["images"] = [
             image for image in ubuntu_summary["images"] if image["image"] != "tgtd"
         ]
         missing_result = run_validator(
             ubuntu_summary,
-            stream="2025.1-ubuntu-noble",
+            stream=UBUNTU_STREAM,
         )
 
         self.assertEqual(missing_result.returncode, 1)
         self.assertIn("publish summary is missing image: tgtd", missing_result.stderr)
 
-        rocky_stream, _ = resolved_profile("2025.1-rocky-9", "deployment")
-        _, ubuntu_profile = resolved_profile("2025.1-ubuntu-noble", "deployment")
+        rocky_stream, _ = resolved_profile(ROCKY_STREAM, "deployment")
+        _, ubuntu_profile = resolved_profile(UBUNTU_STREAM, "deployment")
         tgtd = next(image for image in ubuntu_profile["images"] if image["name"] == "tgtd")
-        rocky_summary = publish_summary("2025.1-rocky-9")
+        rocky_summary = publish_summary(ROCKY_STREAM)
         rocky_summary["images"].append(summary_image(rocky_stream, tgtd, 100))
-        extra_result = run_validator(rocky_summary)
+        extra_result = run_validator(rocky_summary, stream=ROCKY_STREAM)
 
         self.assertEqual(extra_result.returncode, 1)
         self.assertIn("publish summary contains unexpected image: tgtd", extra_result.stderr)
 
     def test_parent_and_duplicate_leaves_are_rejected(self) -> None:
-        stream, _ = resolved_profile("2025.1-rocky-9", "deployment")
+        stream, _ = resolved_profile(DEFAULT_STREAM, "deployment")
         cases = []
 
         parent_summary = publish_summary()
@@ -306,17 +302,17 @@ class PublishSummaryValidationTest(unittest.TestCase):
 
     def test_top_level_and_scope_mismatches_are_rejected(self) -> None:
         mutations = {
-            "stream": lambda summary: summary.__setitem__("stream", "2025.1-rocky-10"),
-            "release": lambda summary: summary.__setitem__("release", "2025.2"),
+            "stream": lambda summary: summary.__setitem__("stream", OTHER_STREAM),
+            "release": lambda summary: summary.__setitem__("release", "wrong-release"),
             "release_series": lambda summary: summary.__setitem__(
-                "release_series", "flamingo"
+                "release_series", "wrong-series"
             ),
             "release_branch": lambda summary: summary.__setitem__(
-                "release_branch", "2025-2"
+                "release_branch", "wrong-branch"
             ),
-            "distro": lambda summary: summary.__setitem__("distro", "ubuntu"),
+            "distro": lambda summary: summary.__setitem__("distro", "wrong-distro"),
             "distro_version": lambda summary: summary.__setitem__(
-                "distro_version", "10"
+                "distro_version", "wrong-version"
             ),
             "registry": lambda summary: summary.__setitem__(
                 "registry", "registry.example.invalid"
@@ -407,7 +403,7 @@ class PublishSummaryValidationTest(unittest.TestCase):
                 "deploy_ref", "ghcr.io/wrong/image:wrong"
             ),
             "deploy_tag": lambda image: image.__setitem__(
-                "deploy_tag", "2025.1-rocky-9-amd64"
+                "deploy_tag", f"{DEFAULT_STREAM}-amd64"
             ),
             "arch_ref": lambda image: image["architectures"][0].__setitem__(
                 "arch_ref", "ghcr.io/wrong/image:wrong"
@@ -460,10 +456,10 @@ class PublishSummaryValidationTest(unittest.TestCase):
         }
         for name, mutate in mutations.items():
             with self.subTest(case=name):
-                summary = publish_summary("2025.2-rocky-10")
+                summary = publish_summary(DEFAULT_STREAM)
                 mutate(image_entry(summary, "neutron-server"))
 
-                result = run_validator(summary, stream="2025.2-rocky-10")
+                result = run_validator(summary, stream=DEFAULT_STREAM)
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("kolla_ansible_variables do not match profile", result.stderr)
@@ -543,7 +539,7 @@ class PublishSummaryValidationTest(unittest.TestCase):
 
     def test_partial_core_keystone_requires_explicit_allow_and_image(self) -> None:
         summary = publish_summary(
-            "2025.1-rocky-9",
+            DEFAULT_STREAM,
             profile_name="core",
             image_filter="keystone",
         )

@@ -133,12 +133,14 @@ class RepositoryBoundaryTest(unittest.TestCase):
                 self.assertIn(normalized_token, folded)
 
     def render_plan(self) -> dict:
+        matrix = json.loads(read_text(MATRIX_PATH))
+        stream_id = matrix["streams"][0]["id"]
         result = subprocess.run(
             [
                 sys.executable,
                 str(PLAN_PUBLISH),
                 "--stream",
-                "2025.1-rocky-9",
+                stream_id,
                 "--profile",
                 "deployment",
                 "--dry-run",
@@ -676,9 +678,11 @@ class RepositoryBoundaryTest(unittest.TestCase):
 
     def test_publish_plan_has_only_generic_stream_lock_path(self) -> None:
         plan = self.render_plan()
+        matrix = json.loads(read_text(MATRIX_PATH))
+        stream_id = matrix["streams"][0]["id"]
         self.assertEqual(
             plan["kolla_ansible_lock_file"],
-            "artifacts/kolla-ansible-image-lock-2025.1-rocky-9.yml",
+            f"artifacts/kolla-ansible-image-lock-{stream_id}.yml",
         )
         self.assert_json_has_no_environment_state(plan)
 

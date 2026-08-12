@@ -44,11 +44,13 @@ EXPECTED_VERSION_PROVENANCE = {
 
 
 def candidate_plan() -> dict:
+    matrix = load_matrix()
+    stream_id = matrix["streams"][0]["id"]
     result = subprocess.run(
         [
             sys.executable,
             str(PLANNER),
-            "--stream", "2025.1-rocky-9",
+            "--stream", stream_id,
             "--profile", "core",
             "--image", "keystone",
             "--candidate-id", TEST_CANDIDATE_ID,
@@ -149,7 +151,11 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
             find_stream(matrix, stream["id"])["kolla_version"]
             for stream in matrix["streams"]
         }
-        self.assertEqual(set(fixture["versions"]), matrix_versions)
+        self.assertTrue(
+            matrix_versions.issubset(fixture["versions"]),
+            f"active matrix Kolla versions missing from fixture: "
+            f"{sorted(matrix_versions - set(fixture['versions']))!r}",
+        )
         self.assertEqual(fixture["versions"], EXPECTED_VERSION_PROVENANCE)
         source_text = fixture["summary_method_source"]
         self.assertIs(type(source_text), str)

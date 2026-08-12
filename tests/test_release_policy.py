@@ -28,11 +28,28 @@ class ReleasePolicyTest(unittest.TestCase):
     def branch_matrix(self, release: str) -> dict:
         matrix = load_matrix()
         branch_matrix = copy.deepcopy(matrix)
-        branch_matrix["streams"] = [
+        matching_streams = [
             stream for stream in matrix["streams"] if stream["release"] == release
         ]
+        if matching_streams and release in matrix["toolchains"]:
+            branch_matrix["streams"] = copy.deepcopy(matching_streams)
+            branch_matrix["toolchains"] = {
+                release: copy.deepcopy(matrix["toolchains"][release])
+            }
+            return branch_matrix
+
+        # Cross-release policy tests must not depend on another release being
+        # present in the branch-local production matrix. Retarget the current
+        # release's valid shapes while preserving the provenance object schema.
+        stream = copy.deepcopy(matrix["streams"][0])
+        stream["id"] = f"{release}-synthetic-stream"
+        stream["release"] = release
+        toolchain = copy.deepcopy(next(iter(matrix["toolchains"].values())))
+        toolchain["series"] = f"synthetic-{release}"
+        toolchain["release_branch"] = release_branch_for(release)
+        branch_matrix["streams"] = [stream]
         branch_matrix["toolchains"] = {
-            release: copy.deepcopy(matrix["toolchains"][release])
+            release: toolchain
         }
         return branch_matrix
 
@@ -89,24 +106,24 @@ class ReleasePolicyTest(unittest.TestCase):
                     branch_for_ref(git_ref)
 
     def test_branch_local_matrix_accepts_only_its_release(self) -> None:
-        matrix = load_matrix()
         branch_matrix = self.branch_matrix("2025.1")
 
         self.assertEqual(validate_matrix_branch(branch_matrix, "2025-1"), [])
 
-        branch_matrix["streams"].append(copy.deepcopy(matrix["streams"][3]))
+        foreign_stream = self.branch_matrix("2025.2")["streams"][0]
+        branch_matrix["streams"].append(copy.deepcopy(foreign_stream))
         errors = validate_matrix_branch(branch_matrix, "2025-1")
         self.assertTrue(
-            any("2025.2-rocky-10" in error and "2025.2" in error for error in errors),
+            any(
+                foreign_stream["id"] in error and "2025.2" in error
+                for error in errors
+            ),
             errors,
         )
 
     def test_branch_local_matrix_requires_one_matching_toolchain(self) -> None:
-        matrix = load_matrix()
-        branch_matrix = copy.deepcopy(matrix)
-        branch_matrix["streams"] = [
-            stream for stream in matrix["streams"] if stream["release"] == "2025.2"
-        ]
+        branch_matrix = self.branch_matrix("2025.2")
+        branch_matrix["toolchains"] = {}
 
         errors = validate_matrix_branch(branch_matrix, "2025-2")
 
