@@ -6,7 +6,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
@@ -42,52 +41,6 @@ EXPECTED_ACTIONS = {
 ACTION_RE = re.compile(
     r"(?m)^\s*uses:\s+([^@\s]+)@([0-9a-f]{40})\s+#\s+(v[0-9]+)\s*$"
 )
-FAKE_DOCKER = textwrap.dedent(
-    r"""
-    #!/usr/bin/env python3
-    import json
-    import os
-    import pathlib
-    import sys
-
-    args = sys.argv[1:]
-    log_path = pathlib.Path(os.environ["FAKE_DOCKER_LOG"])
-    with log_path.open("a", encoding="utf-8") as log:
-        log.write(json.dumps(args) + "\n")
-
-    fail_contains = os.environ.get("FAKE_DOCKER_FAIL_CONTAINS")
-    if fail_contains and any(fail_contains in argument for argument in args):
-        print("forced docker failure", file=sys.stderr)
-        raise SystemExit(23)
-
-    state_path = pathlib.Path(os.environ["FAKE_DOCKER_STATE"])
-    state = (
-        json.loads(state_path.read_text(encoding="utf-8"))
-        if state_path.exists()
-        else {}
-    )
-    if len(args) == 5 and args[:4] == [
-        "buildx", "imagetools", "inspect", "--raw"
-    ]:
-        reference = args[4]
-        mismatch_ref = os.environ.get("FAKE_DOCKER_MISMATCH_REF")
-        if reference == mismatch_ref:
-            raw = f"mismatch:{reference}".encode()
-        else:
-            raw = f"raw:{state.get(reference, reference)}".encode()
-        sys.stdout.buffer.write(raw)
-    elif len(args) == 6 and args[:4] == [
-        "buildx", "imagetools", "create", "--tag"
-    ]:
-        state[args[4]] = args[5]
-        state_path.write_text(json.dumps(state), encoding="utf-8")
-    else:
-        print(f"unexpected fake docker command: {args!r}", file=sys.stderr)
-        raise SystemExit(64)
-    """
-).lstrip()
-
-
 def expected_action_use(repository: str) -> str:
     sha, release = EXPECTED_ACTIONS[repository]
     return f"uses: {repository}@{sha} # {release}"
@@ -123,43 +76,6 @@ def python_heredoc(document: str, step_header: str) -> str:
     return "\n".join(body) + "\n"
 
 
-def alias_fixture() -> tuple[dict, dict]:
-    candidate_id = "123456789-1"
-    stream = "2025.1-rocky-9"
-    images = []
-    summary_images = []
-    for index, image in enumerate(("keystone", "nova-api"), start=1):
-        repository = (
-            "ghcr.io/supergate-hub/kolla-container-images/" + image
-        )
-        deploy_ref = f"{repository}:{stream}-candidate-{candidate_id}"
-        images.append(
-            {
-                "image": image,
-                "stream_ref": f"{repository}:{stream}",
-                "deploy_ref": deploy_ref,
-            }
-        )
-        summary_images.append(
-            {
-                "image": image,
-                "deploy_ref": deploy_ref,
-                "manifest_digest": f"sha256:{index:064x}",
-            }
-        )
-    return (
-        {
-            "candidate_id": candidate_id,
-            "publish_summary_file": "artifacts/publish-summary.json",
-            "images": images,
-        },
-        {
-            "candidate_id": candidate_id,
-            "images": summary_images,
-        },
-    )
-
-
 class PublishWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -171,10 +87,6 @@ class PublishWorkflowTest(unittest.TestCase):
         cls.publish_doc = PUBLISH_DOC.read_text(encoding="utf-8")
         cls.design_spec = DESIGN_SPEC.read_text(encoding="utf-8")
         cls.implementation_plan = IMPLEMENTATION_PLAN.read_text(encoding="utf-8")
-        cls.alias_script = python_heredoc(
-            cls.publish,
-            "      - name: Update convenience stream aliases",
-        )
         cls.matrix_script = python_heredoc(
             cls.publish,
             "      - name: Publish dynamic build matrices",
@@ -182,59 +94,6 @@ class PublishWorkflowTest(unittest.TestCase):
 
     def publish_job(self, name: str) -> str:
         return yaml_block(self.publish, f"  {name}:")
-
-    def run_alias_script(
-        self,
-        plan: dict,
-        summary: dict,
-        *,
-        mismatch_ref: str | None = None,
-        fail_contains: str | None = None,
-    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            plan_path = temp_path / "artifacts" / "plan" / "publish-plan.json"
-            summary_path = temp_path / plan["publish_summary_file"]
-            plan_path.parent.mkdir(parents=True)
-            summary_path.parent.mkdir(parents=True, exist_ok=True)
-            plan_path.write_text(json.dumps(plan), encoding="utf-8")
-            summary_path.write_text(json.dumps(summary), encoding="utf-8")
-
-            fake_bin = temp_path / "bin"
-            fake_bin.mkdir()
-            fake_docker = fake_bin / "docker"
-            fake_docker.write_text(FAKE_DOCKER, encoding="utf-8")
-            fake_docker.chmod(0o755)
-            command_log = temp_path / "docker-commands.jsonl"
-            environment = os.environ.copy()
-            environment.update(
-                {
-                    "PATH": str(fake_bin) + os.pathsep + environment.get("PATH", ""),
-                    "FAKE_DOCKER_LOG": str(command_log),
-                    "FAKE_DOCKER_STATE": str(temp_path / "docker-state.json"),
-                }
-            )
-            if mismatch_ref is not None:
-                environment["FAKE_DOCKER_MISMATCH_REF"] = mismatch_ref
-            if fail_contains is not None:
-                environment["FAKE_DOCKER_FAIL_CONTAINS"] = fail_contains
-
-            result = subprocess.run(
-                [sys.executable, "-c", self.alias_script],
-                cwd=temp_path,
-                env=environment,
-                text=True,
-                capture_output=True,
-            )
-            commands = (
-                [
-                    json.loads(line)
-                    for line in command_log.read_text(encoding="utf-8").splitlines()
-                ]
-                if command_log.exists()
-                else []
-            )
-            return result, commands
 
     def run_matrix_script(
         self,
@@ -512,17 +371,39 @@ class PublishWorkflowTest(unittest.TestCase):
             finalize.index("docker login ghcr.io"),
         )
 
-    def test_every_mutating_layer_fails_closed_to_protected_main(self) -> None:
+    def test_publish_plan_is_bound_to_exact_release_ref_and_branch_matrix(self) -> None:
+        job = self.publish_job("publish-plan")
+        self.assertIn("Validate release branch matrix", job)
+        self.assertIn("PUBLISH_BRANCH: ${{ github.ref_name }}", job)
+        self.assertIn("scripts/validate-release-context.py matrix", job)
+        self.assertIn('--branch "$PUBLISH_BRANCH"', job)
+        self.assertIn("Bind frozen plan to release ref", job)
+        self.assertIn("PUBLISH_REF: ${{ github.ref }}", job)
+        self.assertIn("scripts/validate-release-context.py publish", job)
+        self.assertIn('--git-ref "$PUBLISH_REF"', job)
+        self.assertLess(
+            job.index("Bind frozen plan to release ref"),
+            job.index("Upload publish plan"),
+        )
+
+    def test_every_mutating_layer_fails_closed_to_protected_release_ref(self) -> None:
         for name in ("authorize-publish", "finalize-publish"):
             with self.subTest(job=name):
                 job = self.publish_job(name)
-                guard = job.index("Require protected main ref")
-                checkout = job.index("Check out repository")
-                self.assertLess(guard, checkout)
+                guard = job.index("protected release context")
                 self.assertIn("PUBLISH_REF: ${{ github.ref }}", job)
                 self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", job)
-                self.assertIn('"$PUBLISH_REF" != "refs/heads/main"', job)
-                self.assertIn('"$REF_PROTECTED" != "true"', job)
+                self.assertIn("scripts/validate-release-context.py publish", job)
+                self.assertIn('--git-ref "$PUBLISH_REF"', job)
+                self.assertIn("--require-protected", job)
+                self.assertIn('--ref-protected "$REF_PROTECTED"', job)
+                self.assertNotIn("refs/heads/main", job)
+                next_sensitive_step = (
+                    "docker login ghcr.io"
+                    if name == "finalize-publish"
+                    else "python3 scripts/validate-publish-approval.py"
+                )
+                self.assertLess(guard, job.index(next_sensitive_step))
 
         guard = self.build_unit.index("Require repository-owned invocation")
         checkout = self.build_unit.index("Check out repository")
@@ -532,8 +413,11 @@ class PublishWorkflowTest(unittest.TestCase):
             "CALLER_REF_PROTECTED: ${{ github.ref_protected }}",
             self.build_unit,
         )
-        self.assertIn('"$CALLER_REF" != "refs/heads/main"', self.build_unit)
-        self.assertIn('"$CALLER_REF_PROTECTED" != "true"', self.build_unit)
+        self.assertIn("scripts/validate-release-context.py publish", self.build_unit)
+        self.assertIn('--git-ref "$CALLER_REF"', self.build_unit)
+        self.assertIn("--require-protected", self.build_unit)
+        self.assertIn('--ref-protected "$CALLER_REF_PROTECTED"', self.build_unit)
+        self.assertNotIn("refs/heads/main", self.build_unit)
 
     def test_dynamic_stages_follow_parent_then_leaf_dependency_order(self) -> None:
         expected = {
@@ -652,7 +536,10 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertNotIn("docker/setup-buildx-action", self.build_unit)
         self.assertNotIn("cache: pip", self.build_unit)
         self.assertIn("pip install --no-cache-dir", self.build_unit)
-        self.assertIn('"kolla==$KOLLA_VERSION" "docker==7.1.0"', self.build_unit)
+        self.assertIn("scripts/frozen_sources.py prepare", self.build_unit)
+        self.assertIn('PBR_VERSION="$KOLLA_VERSION"', self.build_unit)
+        self.assertIn('"$KOLLA_SOURCE_DIR"', self.build_unit)
+        self.assertNotIn('"kolla==$KOLLA_VERSION"', self.build_unit)
         self.assertIn(".venv/bin/kolla-build --version", self.build_unit)
 
     def test_build_unit_and_collectors_exchange_only_evidence(self) -> None:
@@ -754,228 +641,28 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('expected_parent_names', job)
         self.assertIn('expected_image_names', job)
         self.assertIn('evidence["stream"] != plan["stream"]', job)
-        self.assertIn('evidence["kolla_version"] != plan["kolla_version"]', job)
+        self.assertIn('evidence["schema_version"] != 2', job)
+        self.assertIn('evidence["kolla"] != plan["kolla"]', job)
+        for key in (
+            "release_series",
+            "release_branch",
+            "release_metadata",
+            "kolla",
+            "kolla_ansible",
+        ):
+            self.assertIn(f'"{key}": plan["{key}"]', job)
         self.assertIn('record["smoke"].get("passed") is not True', job)
         self.assertNotIn('publish_summary["images"].append(parent', job)
 
-    def test_candidate_artifact_is_uploaded_before_stream_alias_updates(self) -> None:
+    def test_final_artifact_is_uploaded_without_candidate_alias_mutation(self) -> None:
         job = self.publish_job("finalize-publish")
-        manifests = job.index("Create and verify candidate multi-architecture manifests")
+        manifests = job.index("Create and verify final multi-architecture manifests")
         validate = job.index("Validate summary and generate eligible candidate lock")
         upload = job.index("Upload publish artifacts")
-        aliases = job.index("Update convenience stream aliases")
         self.assertLess(manifests, validate)
         self.assertLess(validate, upload)
-        self.assertLess(upload, aliases)
-
-    def test_stream_aliases_are_created_from_candidate_immutable_digests(self) -> None:
-        step = yaml_block(
-            self.publish_job("finalize-publish"),
-            "      - name: Update convenience stream aliases",
-        )
-        self.assertIn('stream_ref = planned_image["stream_ref"]', step)
-        self.assertIn('candidate_ref = summary_image["deploy_ref"]', step)
-        self.assertIn('immutable_ref = f"{repository}@{manifest_digest}"', step)
-        self.assertRegex(
-            step,
-            r'"imagetools",\s+"create",\s+"--tag",\s+stream_ref,\s+immutable_ref',
-        )
-        self.assertIn("if stream_raw.stdout != immutable_raw.stdout:", step)
-
-    def test_alias_step_executes_two_images_sequentially_from_immutable_refs(self) -> None:
-        plan, summary = alias_fixture()
-
-        result, commands = self.run_alias_script(plan, summary)
-
-        expected_commands = []
-        for planned_image, summary_image in zip(
-            plan["images"],
-            summary["images"],
-            strict=True,
-        ):
-            repository = planned_image["deploy_ref"].rpartition(":")[0]
-            immutable_ref = f"{repository}@{summary_image['manifest_digest']}"
-            expected_commands.extend(
-                [
-                    ["buildx", "imagetools", "inspect", "--raw", immutable_ref],
-                    [
-                        "buildx",
-                        "imagetools",
-                        "create",
-                        "--tag",
-                        planned_image["stream_ref"],
-                        immutable_ref,
-                    ],
-                    [
-                        "buildx",
-                        "imagetools",
-                        "inspect",
-                        "--raw",
-                        planned_image["stream_ref"],
-                    ],
-                ]
-            )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr, "")
-        self.assertEqual(commands, expected_commands)
-
-    def test_alias_step_rejects_preflight_tampering_without_docker(self) -> None:
-        cases = []
-
-        plan, summary = alias_fixture()
-        summary["candidate_id"] = "123456789-2"
-        cases.append(
-            (
-                "candidate ID mismatch",
-                "publish summary candidate ID does not match frozen plan",
-                plan,
-                summary,
-            )
-        )
-
-        plan, summary = alias_fixture()
-        summary["images"][1]["image"] = summary["images"][0]["image"]
-        cases.append(
-            (
-                "duplicate summary names",
-                "publish summary contains duplicate image names",
-                plan,
-                summary,
-            )
-        )
-
-        plan, summary = alias_fixture()
-        summary["images"][0]["image"] = "glance-api"
-        cases.append(
-            (
-                "membership mismatch",
-                "publish summary images do not match frozen plan",
-                plan,
-                summary,
-            )
-        )
-
-        plan, summary = alias_fixture()
-        summary["images"][0]["deploy_ref"] += "-wrong"
-        cases.append(
-            (
-                "candidate ref mismatch",
-                "candidate ref mismatch: keystone",
-                plan,
-                summary,
-            )
-        )
-
-        plan, summary = alias_fixture()
-        wrong_repository_ref = plan["images"][0]["deploy_ref"].replace(
-            "ghcr.io/supergate-hub/kolla-container-images/keystone",
-            "ghcr.io/supergate-hub/other/keystone",
-        )
-        plan["images"][0]["deploy_ref"] = wrong_repository_ref
-        summary["images"][0]["deploy_ref"] = wrong_repository_ref
-        cases.append(
-            (
-                "repository mismatch",
-                "candidate/stream ref mismatch: keystone",
-                plan,
-                summary,
-            )
-        )
-
-        plan, summary = alias_fixture()
-        summary["images"][0]["manifest_digest"] = "sha256:bad"
-        cases.append(
-            (
-                "malformed digest",
-                "candidate digest is invalid: keystone",
-                plan,
-                summary,
-            )
-        )
-
-        for name, expected_error, plan, summary in cases:
-            with self.subTest(case=name):
-                result, commands = self.run_alias_script(plan, summary)
-
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(expected_error, result.stderr)
-                self.assertEqual(commands, [])
-
-    def test_alias_step_raw_mismatch_stops_before_later_image_write(self) -> None:
-        plan, summary = alias_fixture()
-        first_plan = plan["images"][0]
-        first_summary = summary["images"][0]
-        repository = first_plan["deploy_ref"].rpartition(":")[0]
-        immutable_ref = f"{repository}@{first_summary['manifest_digest']}"
-
-        result, commands = self.run_alias_script(
-            plan,
-            summary,
-            mismatch_ref=first_plan["stream_ref"],
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(
-            result.stderr,
-            "stream alias bytes do not match candidate: keystone\n",
-        )
-        self.assertEqual(
-            commands,
-            [
-                ["buildx", "imagetools", "inspect", "--raw", immutable_ref],
-                [
-                    "buildx",
-                    "imagetools",
-                    "create",
-                    "--tag",
-                    first_plan["stream_ref"],
-                    immutable_ref,
-                ],
-                [
-                    "buildx",
-                    "imagetools",
-                    "inspect",
-                    "--raw",
-                    first_plan["stream_ref"],
-                ],
-            ],
-        )
-        self.assertFalse(
-            any(plan["images"][1]["stream_ref"] in command for command in commands)
-        )
-
-    def test_alias_step_docker_failure_propagates_and_stops_later_writes(self) -> None:
-        plan, summary = alias_fixture()
-        first_plan = plan["images"][0]
-        first_summary = summary["images"][0]
-        repository = first_plan["deploy_ref"].rpartition(":")[0]
-        immutable_ref = f"{repository}@{first_summary['manifest_digest']}"
-
-        result, commands = self.run_alias_script(
-            plan,
-            summary,
-            fail_contains=first_plan["stream_ref"],
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("returned non-zero exit status 23", result.stderr)
-        self.assertEqual(
-            commands,
-            [
-                ["buildx", "imagetools", "inspect", "--raw", immutable_ref],
-                [
-                    "buildx",
-                    "imagetools",
-                    "create",
-                    "--tag",
-                    first_plan["stream_ref"],
-                    immutable_ref,
-                ],
-            ],
-        )
-        self.assertFalse(
-            any(plan["images"][1]["stream_ref"] in command for command in commands)
-        )
+        self.assertNotIn("Update convenience stream aliases", job)
+        self.assertNotIn('planned_image["stream_ref"]', job)
 
     def test_finalize_binds_summary_digest_to_exact_immutable_manifest_bytes(self) -> None:
         job = self.publish_job("finalize-publish")
@@ -1033,7 +720,7 @@ class PublishWorkflowTest(unittest.TestCase):
         job = self.publish_job("finalize-publish")
         manifest_step = yaml_block(
             job,
-            "      - name: Create and verify candidate multi-architecture manifests",
+            "      - name: Create and verify final multi-architecture manifests",
         )
         media_types_match = re.search(
             r"MULTIARCH_MEDIA_TYPES = \{(?P<body>.*?)\n\s+\}",
@@ -1124,13 +811,24 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("find . -type f -name '*.json' -print0", self.validate)
         self.assertIn("python3 -m json.tool", self.validate)
         self.assertIn("set -euo pipefail", self.validate)
-        self.assertIn("python3 scripts/validate-config.py", self.validate)
-        self.assertIn("--stream 2025.1-rocky-9 --profile core --dry-run", self.validate)
-        self.assertIn("--stream 2025.1-rocky-9 --profile deployment --dry-run", self.validate)
         self.assertIn(
-            "--stream 2025.1-rocky-9 --profile core --image keystone --dry-run",
+            "VALIDATION_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}",
             self.validate,
         )
+        branch_gate = yaml_block(
+            self.validate,
+            "      - name: Validate release branch ownership",
+        )
+        self.assertIn("if: ${{ env.VALIDATION_BRANCH != 'main' }}", branch_gate)
+        self.assertIn("scripts/validate-release-context.py matrix", branch_gate)
+        self.assertIn('--branch "$VALIDATION_BRANCH"', branch_gate)
+        self.assertIn("python3 scripts/validate-config.py", self.validate)
+        self.assertIn("Validate every active stream dry-run plan", self.validate)
+        self.assertIn('for stream in matrix["streams"]', self.validate)
+        self.assertIn('if stream["publish_enabled"] is True', self.validate)
+        self.assertIn('for profile in matrix["profiles"]', self.validate)
+        self.assertIn('"--image",\n                      "keystone"', self.validate)
+        self.assertNotIn("--stream 2025.1-rocky-9", self.validate)
         self.assertIn("python3 -m unittest discover -s tests -v", self.validate)
 
 

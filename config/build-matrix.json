@@ -1,22 +1,68 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "owner": "supergate-hub",
   "repository": "kolla-container-images",
   "registry": "ghcr.io",
   "profiles": ["core", "deployment"],
+  "release_metadata": {
+    "repository": "https://opendev.org/openstack/releases",
+    "commit": "b52dca944f47a401baa8f93a6994217d2a93ea56"
+  },
+  "toolchains": {
+    "2025.1": {
+      "series": "epoxy",
+      "release_branch": "2025-1",
+      "kolla": {
+        "repository": "https://opendev.org/openstack/kolla",
+        "version": "20.4.0",
+        "commit": "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5"
+      },
+      "kolla_ansible": {
+        "repository": "https://opendev.org/openstack/kolla-ansible",
+        "version": "20.4.0",
+        "commit": "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696"
+      }
+    },
+    "2025.2": {
+      "series": "flamingo",
+      "release_branch": "2025-2",
+      "kolla": {
+        "repository": "https://opendev.org/openstack/kolla",
+        "version": "21.1.0",
+        "commit": "436395ae3523ee925abac3338e63fc5822208744"
+      },
+      "kolla_ansible": {
+        "repository": "https://opendev.org/openstack/kolla-ansible",
+        "version": "21.1.0",
+        "commit": "ea3326dd085369383b5b02edc4ddd192e29aed52"
+      }
+    },
+    "2026.1": {
+      "series": "gazpacho",
+      "release_branch": "2026-1",
+      "kolla": {
+        "repository": "https://opendev.org/openstack/kolla",
+        "version": "22.0.0",
+        "commit": "dcc077f50eafc5849c7de3fdb800353684fe1210"
+      },
+      "kolla_ansible": {
+        "repository": "https://opendev.org/openstack/kolla-ansible",
+        "version": "22.0.0",
+        "commit": "e9e3c092a7b3c308581e7597404c72fcfd4dd485"
+      }
+    }
+  },
   "streams": [
-    {"id": "2025.1-rocky-9", "release": "2025.1", "kolla_version": "20.4.0", "kolla_ansible_version": "20.4.0", "distro": "rocky", "base_tag": "9", "tag_token": "9", "publish_enabled": true},
-    {"id": "2025.1-rocky-10", "release": "2025.1", "kolla_version": "20.4.0", "kolla_ansible_version": "20.4.0", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
-    {"id": "2025.1-ubuntu-noble", "release": "2025.1", "kolla_version": "20.4.0", "kolla_ansible_version": "20.4.0", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true},
-    {"id": "2025.2-rocky-10", "release": "2025.2", "kolla_version": "21.1.0", "kolla_ansible_version": "21.1.0", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
-    {"id": "2025.2-ubuntu-noble", "release": "2025.2", "kolla_version": "21.1.0", "kolla_ansible_version": "21.1.0", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true},
-    {"id": "2026.1-rocky-10", "release": "2026.1", "kolla_version": "22.0.0", "kolla_ansible_version": "22.0.0", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
-    {"id": "2026.1-ubuntu-noble", "release": "2026.1", "kolla_version": "22.0.0", "kolla_ansible_version": "22.0.0", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true}
+    {"id": "2025.1-rocky-9", "release": "2025.1", "distro": "rocky", "base_tag": "9", "tag_token": "9", "publish_enabled": true},
+    {"id": "2025.1-rocky-10", "release": "2025.1", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
+    {"id": "2025.1-ubuntu-noble", "release": "2025.1", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true},
+    {"id": "2025.2-rocky-10", "release": "2025.2", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
+    {"id": "2025.2-ubuntu-noble", "release": "2025.2", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true},
+    {"id": "2026.1-rocky-10", "release": "2026.1", "distro": "rocky", "base_tag": "10", "tag_token": "10", "publish_enabled": true},
+    {"id": "2026.1-ubuntu-noble", "release": "2026.1", "distro": "ubuntu", "base_tag": "24.04", "tag_token": "noble", "publish_enabled": true}
   ],
   "architectures": ["amd64", "arm64"],
   "tag_policy": {
-    "deploy_tag_template": "{release}-{distro}-{tag_token}",
-    "candidate_tag_template": "{release}-{distro}-{tag_token}-candidate-{candidate_id}",
-    "candidate_arch_tag_template": "{release}-{distro}-{tag_token}-candidate-{candidate_id}-{arch}"
+    "deploy_tag_template": "{release}-{distro}-{tag_token}-{kolla_ansible_version}"
   }
 }

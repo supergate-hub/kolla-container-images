@@ -7,6 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from scripts.profile_resolver import find_stream
+
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
@@ -174,9 +176,11 @@ class RepositoryBoundaryTest(unittest.TestCase):
         readme = read_text(README)
         streams = matrix["streams"]
 
-        self.assertEqual(len(streams), 7)
+        self.assertGreaterEqual(len(streams), 1)
+        self.assertLessEqual(len(streams), 7)
         self.assertTrue(all(stream["publish_enabled"] is True for stream in streams))
-        for stream in streams:
+        for raw_stream in streams:
+            stream = find_stream(matrix, raw_stream["id"])
             with self.subTest(stream=stream["id"]):
                 rows = [
                     line
@@ -204,8 +208,11 @@ class RepositoryBoundaryTest(unittest.TestCase):
 
         self.assert_tokens(
             readme,
-            "All seven streams",
+            "All listed streams",
             "publish-capable",
+            "matching protected release branch",
+            "main",
+            "cannot publish",
             "dry_run: true",
             "approval",
             "Ubuntu",
@@ -425,7 +432,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
             re.compile(
                 r'(?m)^nova_compute_image_full:\s*"ghcr\.io/supergate-hub/'
                 r'kolla-container-images/nova-compute:2025\.1-rocky-9-'
-                r'candidate-123456789-1"\s*$'
+                r'20\.4\.0"\s*$'
             ),
         )
         self.assertNotRegex(
@@ -478,7 +485,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
                     "ancestor chain",
                     "local Linux Docker",
                     "candidate artifact",
-                    "stream alias",
+                    "candidate-qualified image tags",
                     "openstack-infra-ops",
                     "publish-plan-<candidate-id>",
                     "native-amd64-<candidate-id>",
@@ -498,6 +505,51 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "14 GB",
             "8 GiB",
             "2 GiB",
+        )
+
+    def test_operational_docs_define_release_source_and_final_tag_contract(
+        self,
+    ) -> None:
+        final_ref = (
+            "ghcr.io/supergate-hub/kolla-container-images/nova-compute:"
+            "2025.1-rocky-9-20.4.0"
+        )
+        for path in (README, PUBLISH_DOC, READINESS_DOC):
+            with self.subTest(path=path.relative_to(ROOT)):
+                document = read_text(path)
+                self.assert_tokens(
+                    document,
+                    "candidate ID",
+                    "candidate-qualified image tags",
+                    "unversioned stream alias",
+                    "Kolla commit",
+                    "source checkout",
+                    "Kolla-Ansible",
+                    "{release}-{distro}-{tag_token}-{kolla_ansible_version}",
+                    final_ref,
+                    f"{final_ref}-amd64",
+                    f"{final_ref}-arm64",
+                )
+                self.assertNotRegex(
+                    document,
+                    r"ghcr\.io/supergate-hub/kolla-container-images/"
+                    r"[a-z0-9-]+:[^\s\"']*candidate-[a-z0-9-]+",
+                )
+                self.assertNotRegex(
+                    document,
+                    r"ghcr\.io/supergate-hub/kolla-container-images/"
+                    r"[a-z0-9-]+:2025\.1-rocky-9(?=[\s\"'`]|$)",
+                )
+
+        publish = read_text(PUBLISH_DOC)
+        self.assert_tokens(
+            publish,
+            "--ref 2025-1",
+            "--ref 2025-2",
+            "--ref 2026-1",
+            "github.ref_protected",
+            "main",
+            "rejects",
         )
 
     def test_publish_doc_lists_eight_manual_prerequisites_and_external_material(
@@ -530,7 +582,11 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "dispatch",
             "GitHub App",
             "no package-write permission",
-            "--ref main",
+            "--ref 2025-1",
+            "2025-2",
+            "2026-1",
+            "main",
+            "publish ref로 사용할 수 없다",
             "github.ref_protected",
             "visibility",
             "link",
@@ -573,12 +629,16 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "Docker",
             "Buildx",
             "network access",
-            "matrix-pinned Kolla",
+            "matrix-pinned OpenStack Releases, Kolla, and Kolla-Ansible commits",
+            "detached",
+            "source checkout",
+            "does not install Kolla from PyPI",
             "--no-cache-dir",
             "dependency tiers 0, 1, and 2",
             "one anchored target",
             "per architecture",
             "--skip-existing",
+            "forbidden",
             "--threads 1",
             "--push-threads 1",
         )

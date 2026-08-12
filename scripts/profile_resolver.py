@@ -6,6 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.release_policy import release_branch_for
+except ModuleNotFoundError:
+    from release_policy import release_branch_for
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX_PATH = ROOT / "config" / "build-matrix.json"
@@ -13,6 +18,24 @@ PROFILES_DIR = ROOT / "config" / "profiles"
 SELECTOR_FIELDS = {"streams": "id", "releases": "release", "distros": "distro"}
 LOCAL_DRY_RUN_CANDIDATE_ID = "local-dry-run"
 CANDIDATE_ID_RE = re.compile(r"^[1-9][0-9]*-[1-9][0-9]*$")
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+TOOLCHAIN_KEYS = {"series", "release_branch", "kolla", "kolla_ansible"}
+SOURCE_PIN_KEYS = {"repository", "version", "commit"}
+SOURCE_REPOSITORIES = {
+    "kolla": "https://opendev.org/openstack/kolla",
+    "kolla_ansible": "https://opendev.org/openstack/kolla-ansible",
+}
+RESOLVED_TOOLCHAIN_FIELDS = {
+    "release_series",
+    "release_branch",
+    "kolla_repository",
+    "kolla_version",
+    "kolla_commit",
+    "kolla_ansible_repository",
+    "kolla_ansible_version",
+    "kolla_ansible_commit",
+    "toolchain",
+}
 
 
 def load_json(path: Path) -> Any:
@@ -28,10 +51,99 @@ def stream_ids(matrix: dict[str, Any]) -> list[str]:
     return [stream["id"] for stream in matrix["streams"]]
 
 
+def find_toolchain(matrix: dict[str, Any], release: str) -> dict[str, Any]:
+    toolchains = matrix.get("toolchains")
+    if not isinstance(toolchains, dict):
+        raise ValueError("matrix toolchains must be an object")
+    toolchain = toolchains.get(release)
+    if not isinstance(toolchain, dict):
+        accepted = ", ".join(sorted(map(str, toolchains)))
+        raise ValueError(
+            f"unsupported toolchain release: {release}; accepted releases: {accepted}"
+        )
+    return toolchain
+
+
+def resolve_stream(
+    matrix: dict[str, Any],
+    stream: dict[str, Any],
+) -> dict[str, Any]:
+    """Join branch-local stream data with its release-scoped source toolchain."""
+    conflicting_fields = set(stream) & RESOLVED_TOOLCHAIN_FIELDS
+    if conflicting_fields:
+        raise ValueError(
+            "stream must inherit toolchain fields by release; conflicting fields: "
+            f"{sorted(conflicting_fields)!r}"
+        )
+    release = stream.get("release")
+    if not isinstance(release, str):
+        raise ValueError("stream release must be a string")
+    toolchain = find_toolchain(matrix, release)
+    if set(toolchain) != TOOLCHAIN_KEYS:
+        raise ValueError(
+            f"toolchain {release!r} keys must be exactly {sorted(TOOLCHAIN_KEYS)!r}"
+        )
+    expected_branch = release_branch_for(release)
+    if toolchain.get("release_branch") != expected_branch:
+        raise ValueError(
+            f"toolchain {release!r} release_branch must be {expected_branch!r}"
+        )
+    series = toolchain.get("series")
+    if not isinstance(series, str) or not series:
+        raise ValueError(f"toolchain {release!r} series must be a string")
+
+    sources: dict[str, dict[str, str]] = {}
+    for project, expected_repository in SOURCE_REPOSITORIES.items():
+        source = toolchain.get(project)
+        if not isinstance(source, dict) or set(source) != SOURCE_PIN_KEYS:
+            raise ValueError(
+                f"toolchain {release!r} {project} pin keys must be exactly "
+                f"{sorted(SOURCE_PIN_KEYS)!r}"
+            )
+        repository = source.get("repository")
+        version = source.get("version")
+        commit = source.get("commit")
+        if repository != expected_repository:
+            raise ValueError(
+                f"toolchain {release!r} {project} repository must be "
+                f"{expected_repository!r}"
+            )
+        if not isinstance(version, str) or not version:
+            raise ValueError(
+                f"toolchain {release!r} {project} version must be a string"
+            )
+        if not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
+            raise ValueError(
+                f"toolchain {release!r} {project} commit must be a lowercase "
+                "40-character SHA"
+            )
+        sources[project] = {
+            "repository": repository,
+            "version": version,
+            "commit": commit,
+        }
+
+    resolved = copy.deepcopy(stream)
+    resolved.update(
+        {
+            "release_series": series,
+            "release_branch": expected_branch,
+            "kolla_repository": sources["kolla"]["repository"],
+            "kolla_version": sources["kolla"]["version"],
+            "kolla_commit": sources["kolla"]["commit"],
+            "kolla_ansible_repository": sources["kolla_ansible"]["repository"],
+            "kolla_ansible_version": sources["kolla_ansible"]["version"],
+            "kolla_ansible_commit": sources["kolla_ansible"]["commit"],
+            "toolchain": copy.deepcopy(toolchain),
+        }
+    )
+    return resolved
+
+
 def find_stream(matrix: dict[str, Any], stream_id: str) -> dict[str, Any]:
     for stream in matrix["streams"]:
         if stream["id"] == stream_id:
-            return stream
+            return resolve_stream(matrix, stream)
     accepted = ", ".join(stream_ids(matrix))
     raise ValueError(f"unsupported stream: {stream_id}; accepted streams: {accepted}")
 
@@ -130,26 +242,6 @@ def render_tag(
         distro=stream["distro"],
         base_tag=stream["base_tag"],
         tag_token=stream["tag_token"],
+        kolla_ansible_version=stream["kolla_ansible_version"],
     )
     return f"{stream_tag}-{arch}" if arch else stream_tag
-
-
-def render_candidate_tag(
-    matrix: dict[str, Any],
-    stream: dict[str, Any],
-    candidate_id: str,
-    arch: str | None = None,
-) -> str:
-    candidate_id = validate_candidate_id(candidate_id)
-    template_name = (
-        "candidate_arch_tag_template" if arch else "candidate_tag_template"
-    )
-    return matrix["tag_policy"][template_name].format(
-        stream=stream["id"],
-        release=stream["release"],
-        distro=stream["distro"],
-        base_tag=stream["base_tag"],
-        tag_token=stream["tag_token"],
-        candidate_id=candidate_id,
-        arch=arch or "",
-    )

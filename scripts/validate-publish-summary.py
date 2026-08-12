@@ -14,7 +14,7 @@ from profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
+    render_tag,
     resolve_profile,
     validate_candidate_id,
 )
@@ -27,8 +27,13 @@ SUMMARY_KEYS = frozenset(
         "candidate_id",
         "stream",
         "release",
+        "release_series",
+        "release_branch",
         "distro",
         "distro_version",
+        "release_metadata",
+        "kolla",
+        "kolla_ansible",
         "profile",
         "scope",
         "registry",
@@ -127,8 +132,24 @@ def validate_scope(
         "candidate_id": candidate_id,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
+        "release_metadata": {
+            "repository": matrix["release_metadata"]["repository"],
+            "commit": matrix["release_metadata"]["commit"],
+        },
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "registry": matrix["registry"],
         "owner": matrix["owner"],
@@ -214,10 +235,9 @@ def validate_image(
     image_summary: dict[str, Any],
     matrix: dict[str, Any],
     stream: dict[str, Any],
-    candidate_id: str,
 ) -> list[str]:
     errors: list[str] = []
-    deploy_tag = render_candidate_tag(matrix, stream, candidate_id)
+    deploy_tag = render_tag(matrix, stream)
     expected_ref = image_ref(
         matrix["registry"],
         matrix["owner"],
@@ -283,7 +303,7 @@ def validate_image(
             matrix["owner"],
             matrix["repository"],
             image,
-            render_candidate_tag(matrix, stream, candidate_id, arch),
+            render_tag(matrix, stream, arch),
         )
         arch_ref = architecture.get("arch_ref")
         if type(arch_ref) is not str or arch_ref != expected_arch_ref:
@@ -346,7 +366,6 @@ def validate_publish_summary(
                 image_summary,
                 matrix,
                 stream,
-                candidate_id,
             )
         )
     return errors

@@ -46,9 +46,34 @@ responsibility.
 
 ## Supported streams
 
-`config/build-matrix.json` is the source of truth. It selects release, base OS,
-and pinned Kolla toolchain as one reviewed stream rather than as free-form
-workflow fields.
+`config/build-matrix.json` is the source of truth. `main` carries the aggregate
+catalog shown below so common changes can be validated together. Each release
+branch carries only its owned subset: `2025-1` owns `2025.1`, `2025-2` owns
+`2025.2`, and `2026-1` owns `2026.1`. A mixed-release or incomplete
+branch-local matrix fails validation.
+
+Streams select release and base OS, while one release-scoped toolchain records
+the exact Kolla and Kolla-Ansible version/commit pair inherited by every distro
+stream in that release. The matrix also pins the OpenStack Releases metadata
+snapshot used as the provenance source; these values are never supplied as
+free-form workflow fields.
+
+| OpenStack release | Series / release branch | Kolla source | Kolla-Ansible source |
+| --- | --- | --- | --- |
+| `2025.1` | Epoxy / `2025-1` | `20.4.0` @ `99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5` | `20.4.0` @ `0786e1d6bd9a6da2d8ae15cc16a891bef0d32696` |
+| `2025.2` | Flamingo / `2025-2` | `21.1.0` @ `436395ae3523ee925abac3338e63fc5822208744` | `21.1.0` @ `ea3326dd085369383b5b02edc4ddd192e29aed52` |
+| `2026.1` | Gazpacho / `2026-1` | `22.0.0` @ `dcc077f50eafc5849c7de3fdb800353684fe1210` | `22.0.0` @ `e9e3c092a7b3c308581e7597404c72fcfd4dd485` |
+
+The metadata source is `openstack/releases` at commit
+`b52dca944f47a401baa8f93a6994217d2a93ea56`. The workflow checks out that exact
+metadata commit, proves its deliverable YAML names the configured Kolla and
+Kolla-Ansible version/commit pair, and checks out both source commits with
+detached `HEAD`. It installs Kolla from its exact source checkout and verifies
+the installed version and local-source provenance. The version is additional
+identity, not a PyPI substitute for the pinned Kolla commit. Kolla-Ansible is
+not installed to build images; its exact checkout and pin are preserved in the
+plan, summary, and lock provenance for the external consumer. Any mismatch
+fails closed.
 
 | Stream ID and deploy tag | Kolla / Kolla-Ansible pins | Kolla build base | Role |
 | --- | --- | --- | --- |
@@ -60,11 +85,12 @@ workflow fields.
 | `2026.1-rocky-10` | `22.0.0` / `22.0.0` | Rocky `10` | Build, manifest, digest, native-smoke, and lock compatibility |
 | `2026.1-ubuntu-noble` | `22.0.0` / `22.0.0` | Ubuntu `24.04`; deploy token `noble` | Build, manifest, digest, native-smoke, and lock compatibility |
 
-All seven streams are publish-capable behind the same `dry_run: true` default,
-scope variable, exact approval phrase, and protected-environment gate. The six
-compatibility streams do not create a standing cluster. When a future stream
-becomes primary, external operations first validate its candidate on shared
-Stg and only then promote it to Prod.
+All listed streams are publish-capable from their matching protected release
+branch behind the same `dry_run: true` default, scope variable, exact approval
+phrase, and protected-environment gate. `main` is validation-only and cannot
+publish. The six compatibility streams do not create a standing cluster. When
+a future stream becomes primary, external operations first validate its
+candidate on shared Stg and only then promote it to Prod.
 
 The `core` profile has 21 leaves in every stream. The stream-resolved
 `deployment` closure has these exact leaf counts:
@@ -161,49 +187,61 @@ imply a standing compatibility cluster.
 
 ## Image and lock outputs
 
-For candidate ID `123456789-1`, one selected leaf is published under these
-native child tags:
+For a `2025.1-rocky-9` build pinned to Kolla-Ansible `20.4.0`, one selected leaf
+is published under these final native child tags:
 
 ```text
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-amd64
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-arm64
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-amd64
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-arm64
 ```
 
-After both child digests pass validation, the workflow creates the
-candidate multi-architecture reference used by the lock:
+After both child digests pass validation, the workflow creates the final
+multi-architecture reference used by the lock:
 
 ```text
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0
 ```
 
-Only after the complete candidate artifact is uploaded may the workflow update
-this convenience stream alias:
-
-```text
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9
-```
-
-The stream alias is convenience-only and is never a candidate-lock input.
+The tag contract is
+`{release}-{distro}-{tag_token}-{kolla_ansible_version}` with `-{arch}` added
+only to native child tags. Candidate-qualified image tags and an unversioned
+stream alias are not published. Candidate ID still identifies one workflow run
+and its plan, evidence, summary, terminal artifact, and generic lock; it is not
+part of an image tag.
 
 The candidate lock supplies tag-only Kolla-Ansible variables and records the
 digest binding separately:
 
 ```yaml
 _kolla_candidate_lock:
-  schema_version: 1
+  schema_version: 2
   stream: "2025.1-rocky-9"
+  release: "2025.1"
+  release_series: "epoxy"
+  release_branch: "2025-1"
+  release_metadata:
+    repository: "https://opendev.org/openstack/releases"
+    commit: "b52dca944f47a401baa8f93a6994217d2a93ea56"
+  kolla:
+    repository: "https://opendev.org/openstack/kolla"
+    version: "20.4.0"
+    commit: "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5"
+  kolla_ansible:
+    repository: "https://opendev.org/openstack/kolla-ansible"
+    version: "20.4.0"
+    commit: "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696"
   scope:
     profile: "deployment"
     image: "all"
     image_count: 63
   images:
     "nova-compute":
-      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1"
+      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
       manifest_digest: "sha256:<multi-arch-manifest-digest>"
       immutable_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute@sha256:<multi-arch-manifest-digest>"
       kolla_ansible_variables:
         - "nova_compute_image_full"
-nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1"
+nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
 ```
 
 Kolla-Ansible consumes the root-level tag-only variables. Before deployment,
@@ -214,8 +252,9 @@ lock selects neither an architecture nor an environment.
 ## Repository layout
 
 ```text
-config/build-matrix.json         Seven streams, native architectures, registry, and pins
+config/build-matrix.json         Release toolchains, seven streams, architectures, and registry
 config/profiles/                 Stream-aware image catalogs and Kolla-Ansible mappings
+scripts/release_policy.py        Canonical OpenStack release and branch ownership rules
 scripts/validate-config.py       Configuration validator
 scripts/plan-publish.py          Read-only frozen-plan renderer
 scripts/run-build-unit.py        One-target native build, push, disk check, and smoke
@@ -238,6 +277,8 @@ python3 -m json.tool config/build-matrix.json >/dev/null
 python3 -m json.tool config/profiles/core.json >/dev/null
 python3 -m json.tool config/profiles/deployment.json >/dev/null
 python3 scripts/validate-config.py
+# On a release branch, use its own branch name (this intentionally fails on aggregate main):
+python3 scripts/validate-release-context.py matrix --matrix config/build-matrix.json --branch 2025-1
 python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile deployment --candidate-id local-dry-run --dry-run
 python3 -m unittest discover -s tests -v
 ```
@@ -245,6 +286,7 @@ python3 -m unittest discover -s tests -v
 The planner requires `--dry-run` and performs no registry mutation. Manual
 operators and CI each start a separate `workflow_dispatch` run; candidate
 identity is derived inside that run, never supplied as an input. Real
-publication remains disabled unless every scope-specific approval control
-passes. See [docs/publish.md](docs/publish.md) for the exact inputs, artifacts,
-manual prerequisites, Kolla-Ansible consumption example, and handoff.
+publication remains disabled unless it runs from the matching protected release
+branch and every scope-specific approval control passes. See
+[docs/publish.md](docs/publish.md) for the exact inputs, artifacts, manual
+prerequisites, Kolla-Ansible consumption example, and handoff.

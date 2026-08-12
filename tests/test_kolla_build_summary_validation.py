@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.profile_resolver import load_matrix
+from scripts.profile_resolver import find_stream, load_matrix
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -144,8 +144,10 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
             fixture["source_extraction"],
             "ast.get_source_segment for KollaWorker.summary",
         )
+        matrix = load_matrix()
         matrix_versions = {
-            stream["kolla_version"] for stream in load_matrix()["streams"]
+            find_stream(matrix, stream["id"])["kolla_version"]
+            for stream in matrix["streams"]
         }
         self.assertEqual(set(fixture["versions"]), matrix_versions)
         self.assertEqual(fixture["versions"], EXPECTED_VERSION_PROVENANCE)

@@ -14,7 +14,7 @@ from scripts.profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
+    render_tag,
     resolve_profile,
 )
 
@@ -32,15 +32,10 @@ PINNED_KOLLA_PARSER_MODULE_SHA256 = {
 ROOT_ASSIGNMENT_RE = re.compile(r'^([a-z0-9_]+): "([^"]+)"$')
 MATRIX = load_matrix()
 TEST_CANDIDATE_ID = "123456789-1"
-candidate_tag = "2025.1-rocky-9-candidate-123456789-1"
-candidate_ref = (
+deploy_tag = "2025.1-rocky-9-20.4.0"
+deploy_ref = (
     "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-    + candidate_tag
-)
-amd64_ref = candidate_ref + "-amd64"
-arm64_ref = candidate_ref + "-arm64"
-stream_ref = (
-    "ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9"
+    + deploy_tag
 )
 NEW_NEUTRON_ALIASES = {
     "neutron_rpc_server_image_full",
@@ -74,7 +69,7 @@ def resolved_profile(stream_id: str, profile_name: str) -> tuple[dict, dict]:
 
 def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
     image = profile_image["name"]
-    deploy_tag = render_candidate_tag(MATRIX, stream, TEST_CANDIDATE_ID)
+    deploy_tag = render_tag(MATRIX, stream)
     repository = (
         f"{MATRIX['registry']}/{MATRIX['owner']}/{MATRIX['repository']}/{image}"
     )
@@ -90,7 +85,7 @@ def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
                 "platform": f"linux/{arch}",
                 "arch_ref": (
                     f"{repository}:"
-                    f"{render_candidate_tag(MATRIX, stream, TEST_CANDIDATE_ID, arch)}"
+                    f"{render_tag(MATRIX, stream, arch)}"
                 ),
                 "digest": digest(index * 10 + arch_index + 1),
             }
@@ -118,8 +113,21 @@ def publish_summary(
         "candidate_id": TEST_CANDIDATE_ID,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
+        "release_metadata": copy.deepcopy(MATRIX["release_metadata"]),
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "scope": {
             "profile": profile["name"],
@@ -268,8 +276,29 @@ def parse_lock_yaml(lock: str) -> dict:
         return value
 
     require("_kolla_candidate_lock:")
-    require("  schema_version: 1")
+    require("  schema_version: 2")
+    candidate_id = read_json("  candidate_id: ")
     stream = read_json("  stream: ")
+    release = read_json("  release: ")
+    release_series = read_json("  release_series: ")
+    release_branch = read_json("  release_branch: ")
+    require("  release_metadata:")
+    release_metadata = {
+        "repository": read_json("    repository: "),
+        "commit": read_json("    commit: "),
+    }
+    require("  kolla:")
+    kolla = {
+        "repository": read_json("    repository: "),
+        "version": read_json("    version: "),
+        "commit": read_json("    commit: "),
+    }
+    require("  kolla_ansible:")
+    kolla_ansible = {
+        "repository": read_json("    repository: "),
+        "version": read_json("    version: "),
+        "commit": read_json("    commit: "),
+    }
     require("  scope:")
     require('    profile: "deployment"')
     require('    image: "all"')
@@ -299,8 +328,15 @@ def parse_lock_yaml(lock: str) -> dict:
 
     parsed = {
         "_kolla_candidate_lock": {
-            "schema_version": 1,
+            "schema_version": 2,
+            "candidate_id": candidate_id,
             "stream": stream,
+            "release": release,
+            "release_series": release_series,
+            "release_branch": release_branch,
+            "release_metadata": release_metadata,
+            "kolla": kolla,
+            "kolla_ansible": kolla_ansible,
             "scope": {
                 "profile": "deployment",
                 "image": "all",
@@ -337,8 +373,15 @@ def expected_lock_data(stream_id: str, summary: dict) -> dict:
             assignments[variable] = entry["deploy_ref"]
     return {
         "_kolla_candidate_lock": {
-            "schema_version": 1,
+            "schema_version": 2,
+            "candidate_id": summary["candidate_id"],
             "stream": stream["id"],
+            "release": summary["release"],
+            "release_series": summary["release_series"],
+            "release_branch": summary["release_branch"],
+            "release_metadata": summary["release_metadata"],
+            "kolla": summary["kolla"],
+            "kolla_ansible": summary["kolla_ansible"],
             "scope": {
                 "profile": "deployment",
                 "image": "all",
@@ -360,15 +403,32 @@ def expected_assignments(stream_id: str, summary: dict) -> dict[str, str]:
 
 
 class LockGenerationTest(unittest.TestCase):
-    def test_candidate_lock_root_and_metadata_use_candidate_ref(self) -> None:
+    def test_candidate_lock_root_and_metadata_use_final_deploy_ref(self) -> None:
         summary = publish_summary()
         result, lock = generate_lock(summary)
         self.assertEqual(result.returncode, 0, result.stderr)
         assert lock is not None
         parsed = parse_lock_yaml(lock)
-        entry = parsed["_kolla_candidate_lock"]["images"]["keystone"]
-        self.assertEqual(entry["deploy_ref"], candidate_ref)
-        self.assertEqual(parsed["keystone_image_full"], candidate_ref)
+        metadata = parsed["_kolla_candidate_lock"]
+        self.assertEqual(metadata["schema_version"], 2)
+        self.assertEqual(metadata["candidate_id"], TEST_CANDIDATE_ID)
+        self.assertEqual(metadata["release"], summary["release"])
+        self.assertEqual(metadata["release_series"], summary["release_series"])
+        self.assertEqual(metadata["release_branch"], summary["release_branch"])
+        self.assertEqual(metadata["release_metadata"], summary["release_metadata"])
+        self.assertEqual(metadata["kolla"], summary["kolla"])
+        self.assertEqual(metadata["kolla_ansible"], summary["kolla_ansible"])
+        entry = metadata["images"]["keystone"]
+        self.assertEqual(entry["deploy_ref"], deploy_ref)
+        self.assertEqual(parsed["keystone_image_full"], deploy_ref)
+        summary_entry = image_entry(summary, "keystone")
+        self.assertEqual(
+            [
+                architecture["arch_ref"]
+                for architecture in summary_entry["architectures"]
+            ],
+            [f"{deploy_ref}-amd64", f"{deploy_ref}-arm64"],
+        )
         self.assertEqual(
             entry["immutable_ref"],
             "ghcr.io/supergate-hub/kolla-container-images/keystone@"
@@ -426,7 +486,8 @@ class LockGenerationTest(unittest.TestCase):
         self.assertEqual(fixture["schema_version"], 1)
         contracts = fixture["versions"]
         versions = {
-            stream["kolla_ansible_version"] for stream in MATRIX["streams"]
+            find_stream(MATRIX, stream["id"])["kolla_ansible_version"]
+            for stream in MATRIX["streams"]
         }
         self.assertEqual(set(contracts), versions)
         self.assertEqual(
@@ -613,6 +674,30 @@ class LockGenerationTest(unittest.TestCase):
                 lambda summary: summary.__setitem__("owner", "wrong-owner"),
                 "owner",
             ),
+            "release_series": (
+                lambda summary: summary.__setitem__("release_series", "wrong-series"),
+                "release_series",
+            ),
+            "release_branch": (
+                lambda summary: summary.__setitem__("release_branch", "wrong-branch"),
+                "release_branch",
+            ),
+            "release_metadata": (
+                lambda summary: summary["release_metadata"].__setitem__(
+                    "commit", "0" * 40
+                ),
+                "release_metadata",
+            ),
+            "kolla": (
+                lambda summary: summary["kolla"].__setitem__("commit", "0" * 40),
+                "kolla",
+            ),
+            "kolla_ansible": (
+                lambda summary: summary["kolla_ansible"].__setitem__(
+                    "commit", "0" * 40
+                ),
+                "kolla_ansible",
+            ),
             "missing deploy_ref": (
                 lambda summary: summary["images"][0].pop("deploy_ref"),
                 "deploy_ref",
@@ -670,6 +755,10 @@ class LockGenerationTest(unittest.TestCase):
         unexpected_top_level = publish_summary()
         unexpected_top_level["environment"] = "dev"
         cases["unexpected top-level environment"] = unexpected_top_level
+
+        missing_release_metadata = publish_summary()
+        missing_release_metadata.pop("release_metadata")
+        cases["missing release_metadata"] = missing_release_metadata
 
         missing_deploy_tag = publish_summary()
         missing_deploy_tag["images"][0].pop("deploy_tag")

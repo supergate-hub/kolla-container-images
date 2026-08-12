@@ -50,6 +50,54 @@ EXPECTED_STREAMS = {
         "noble",
     ),
 }
+EXPECTED_RELEASE_METADATA = {
+    "repository": "https://opendev.org/openstack/releases",
+    "commit": "b52dca944f47a401baa8f93a6994217d2a93ea56",
+}
+EXPECTED_TOOLCHAINS = {
+    "2025.1": {
+        "series": "epoxy",
+        "release_branch": "2025-1",
+        "kolla": {
+            "repository": "https://opendev.org/openstack/kolla",
+            "version": "20.4.0",
+            "commit": "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5",
+        },
+        "kolla_ansible": {
+            "repository": "https://opendev.org/openstack/kolla-ansible",
+            "version": "20.4.0",
+            "commit": "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696",
+        },
+    },
+    "2025.2": {
+        "series": "flamingo",
+        "release_branch": "2025-2",
+        "kolla": {
+            "repository": "https://opendev.org/openstack/kolla",
+            "version": "21.1.0",
+            "commit": "436395ae3523ee925abac3338e63fc5822208744",
+        },
+        "kolla_ansible": {
+            "repository": "https://opendev.org/openstack/kolla-ansible",
+            "version": "21.1.0",
+            "commit": "ea3326dd085369383b5b02edc4ddd192e29aed52",
+        },
+    },
+    "2026.1": {
+        "series": "gazpacho",
+        "release_branch": "2026-1",
+        "kolla": {
+            "repository": "https://opendev.org/openstack/kolla",
+            "version": "22.0.0",
+            "commit": "dcc077f50eafc5849c7de3fdb800353684fe1210",
+        },
+        "kolla_ansible": {
+            "repository": "https://opendev.org/openstack/kolla-ansible",
+            "version": "22.0.0",
+            "commit": "e9e3c092a7b3c308581e7597404c72fcfd4dd485",
+        },
+    },
+}
 
 NEUTRON_VARIABLES = [
     "neutron_server_image_full",
@@ -144,6 +192,32 @@ class ConfigValidationTest(unittest.TestCase):
         )
         return errors
 
+    def validate_matrix(
+        self,
+        matrix: dict[str, object],
+        *,
+        branch_name: str | None = None,
+    ) -> list[str]:
+        errors: list[str] = []
+        self.validator["validate_matrix"](
+            matrix,
+            errors,
+            branch_name=branch_name,
+        )
+        return errors
+
+    def branch_matrix(self, release: str) -> dict[str, object]:
+        matrix = copy.deepcopy(self.matrix)
+        matrix["streams"] = [
+            stream
+            for stream in matrix["streams"]
+            if stream["release"] == release
+        ]
+        matrix["toolchains"] = {
+            release: copy.deepcopy(matrix["toolchains"][release])
+        }
+        return matrix
+
     @staticmethod
     def remove_image(profile: dict[str, object], image_name: str) -> None:
         profile["images"] = [
@@ -154,22 +228,20 @@ class ConfigValidationTest(unittest.TestCase):
                 image for image in group["images"] if image != image_name
             ]
 
-    def test_matrix_declares_exact_seven_stream_policy(self) -> None:
-        self.assertEqual(self.matrix["schema_version"], 2)
+    def test_matrix_declares_exact_release_toolchains_and_seven_streams(self) -> None:
+        self.assertEqual(self.matrix["schema_version"], 3)
         self.assertEqual(self.matrix["owner"], "supergate-hub")
         self.assertEqual(self.matrix["repository"], "kolla-container-images")
         self.assertEqual(self.matrix["registry"], "ghcr.io")
         self.assertEqual(self.matrix["profiles"], ["core", "deployment"])
+        self.assertEqual(self.matrix["release_metadata"], EXPECTED_RELEASE_METADATA)
+        self.assertEqual(self.matrix["toolchains"], EXPECTED_TOOLCHAINS)
         self.assertEqual(self.matrix["architectures"], ["amd64", "arm64"])
         self.assertEqual(
             self.matrix["tag_policy"],
             {
-                "deploy_tag_template": "{release}-{distro}-{tag_token}",
-                "candidate_tag_template": (
-                    "{release}-{distro}-{tag_token}-candidate-{candidate_id}"
-                ),
-                "candidate_arch_tag_template": (
-                    "{release}-{distro}-{tag_token}-candidate-{candidate_id}-{arch}"
+                "deploy_tag_template": (
+                    "{release}-{distro}-{tag_token}-{kolla_ansible_version}"
                 ),
             },
         )
@@ -177,6 +249,22 @@ class ConfigValidationTest(unittest.TestCase):
 
         for stream_id, expected in EXPECTED_STREAMS.items():
             with self.subTest(stream=stream_id):
+                raw_stream = next(
+                    stream
+                    for stream in self.matrix["streams"]
+                    if stream["id"] == stream_id
+                )
+                self.assertEqual(
+                    set(raw_stream),
+                    {
+                        "id",
+                        "release",
+                        "distro",
+                        "base_tag",
+                        "tag_token",
+                        "publish_enabled",
+                    },
+                )
                 stream = find_stream(self.matrix, stream_id)
                 self.assertEqual(
                     (
@@ -192,8 +280,21 @@ class ConfigValidationTest(unittest.TestCase):
                 self.assertEqual(
                     stream["kolla_version"], stream["kolla_ansible_version"]
                 )
+                toolchain = EXPECTED_TOOLCHAINS[stream["release"]]
+                self.assertEqual(stream["release_series"], toolchain["series"])
+                self.assertEqual(
+                    stream["release_branch"], toolchain["release_branch"]
+                )
+                self.assertEqual(stream["kolla_commit"], toolchain["kolla"]["commit"])
+                self.assertEqual(
+                    stream["kolla_ansible_commit"],
+                    toolchain["kolla_ansible"]["commit"],
+                )
                 self.assertIs(stream["publish_enabled"], True)
-                self.assertEqual(render_tag(self.matrix, stream), stream_id)
+                self.assertEqual(
+                    render_tag(self.matrix, stream),
+                    f"{stream_id}-{stream['kolla_ansible_version']}",
+                )
 
     def test_profiles_review_every_stream_and_resolve_neutron_aliases(self) -> None:
         for profile_name in self.matrix["profiles"]:
@@ -305,6 +406,91 @@ class ConfigValidationTest(unittest.TestCase):
         )
         self.assertEqual(completed.stdout.strip(), "Configuration validation passed.")
         self.assertEqual(completed.stderr, "")
+
+    def test_validator_accepts_each_complete_release_branch_subset(self) -> None:
+        for release in EXPECTED_TOOLCHAINS:
+            branch_name = release.replace(".", "-")
+            with self.subTest(release=release, branch=branch_name):
+                matrix = self.branch_matrix(release)
+                errors = self.validate_matrix(
+                    matrix,
+                    branch_name=branch_name,
+                )
+                self.validator["validate_profiles"](matrix, errors)
+                self.assertEqual(errors, [])
+
+    def test_matrix_rejects_incomplete_or_mixed_release_branch_subsets(self) -> None:
+        incomplete = self.branch_matrix("2025.1")
+        incomplete["streams"].pop()
+        incomplete_errors = self.validate_matrix(
+            incomplete,
+            branch_name="2025-1",
+        )
+        self.assertTrue(
+            any(
+                "reviewed streams for active releases" in error
+                for error in incomplete_errors
+            ),
+            incomplete_errors,
+        )
+
+        mixed = self.branch_matrix("2025.1")
+        mixed["streams"].append(copy.deepcopy(self.matrix["streams"][3]))
+        mixed["toolchains"]["2025.2"] = copy.deepcopy(
+            self.matrix["toolchains"]["2025.2"]
+        )
+        mixed_errors = self.validate_matrix(mixed, branch_name="2025-1")
+        self.assertTrue(
+            any(
+                "branch '2025-1' owns release '2025.1'" in error
+                for error in mixed_errors
+            ),
+            mixed_errors,
+        )
+
+    def test_matrix_rejects_legacy_stream_level_toolchain_pins(self) -> None:
+        matrix = copy.deepcopy(self.matrix)
+        matrix["streams"][0]["kolla_version"] = "20.4.0"
+        matrix["streams"][0]["kolla_ansible_version"] = "20.4.0"
+
+        errors = self.validate_matrix(matrix)
+
+        self.assertTrue(
+            any("streams[0] keys must be exactly" in error for error in errors),
+            errors,
+        )
+
+    def test_matrix_rejects_missing_unused_and_malformed_toolchains(self) -> None:
+        missing = copy.deepcopy(self.matrix)
+        del missing["toolchains"]["2026.1"]
+        missing_errors = self.validate_matrix(missing)
+        self.assertTrue(
+            any("toolchain releases must exactly match" in error for error in missing_errors),
+            missing_errors,
+        )
+
+        unused = copy.deepcopy(self.matrix)
+        unused["toolchains"]["2027.1"] = copy.deepcopy(
+            unused["toolchains"]["2026.1"]
+        )
+        unused_errors = self.validate_matrix(unused)
+        self.assertTrue(
+            any("toolchain releases must exactly match" in error for error in unused_errors),
+            unused_errors,
+        )
+
+        malformed = copy.deepcopy(self.matrix)
+        malformed["toolchains"]["2025.1"]["kolla"]["commit"] = "99b84ab"
+        malformed["toolchains"]["2025.1"]["release_branch"] = "main"
+        malformed_errors = self.validate_matrix(malformed)
+        self.assertTrue(
+            any("lowercase 40-character SHA" in error for error in malformed_errors),
+            malformed_errors,
+        )
+        self.assertTrue(
+            any("release_branch must be '2025-1'" in error for error in malformed_errors),
+            malformed_errors,
+        )
 
     def test_runtime_validator_rejects_coherent_core_leaf_removal(self) -> None:
         profile = copy.deepcopy(load_json(PROFILES_DIR / "core.json"))
@@ -489,29 +675,16 @@ class ConfigValidationTest(unittest.TestCase):
                     errors,
                 )
 
-        cases = (
-            ("deploy_tag_template", "{}", "deploy_tag_template fields"),
-            (
-                "candidate_tag_template",
-                "{release}-{distro}-{tag_token}",
-                "candidate_tag_template fields",
-            ),
-            (
-                "candidate_arch_tag_template",
-                "{release}-{distro}-{tag_token}-candidate-{candidate_id}",
-                "candidate_arch_tag_template fields",
-            ),
+        matrix = copy.deepcopy(self.matrix)
+        matrix["tag_policy"]["candidate_tag_template"] = (
+            "{release}-{distro}-{tag_token}-candidate-{candidate_id}"
         )
-        for field, template, expected_error in cases:
-            with self.subTest(field=field):
-                matrix = copy.deepcopy(self.matrix)
-                matrix["tag_policy"][field] = template
-                errors: list[str] = []
-                validate_matrix(matrix, errors)
-                self.assertTrue(
-                    any(expected_error in error for error in errors),
-                    errors,
-                )
+        errors: list[str] = []
+        validate_matrix(matrix, errors)
+        self.assertTrue(
+            any("tag_policy keys must be exactly" in error for error in errors),
+            errors,
+        )
 
 
 if __name__ == "__main__":

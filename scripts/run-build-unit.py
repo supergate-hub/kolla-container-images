@@ -18,6 +18,7 @@ from typing import Any, Callable, Sequence
 
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 IMAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+UNIT_EVIDENCE_SCHEMA_VERSION = 2
 UNIT_KEYS = {
     "id",
     "kind",
@@ -39,7 +40,7 @@ UNIT_EVIDENCE_KEYS = {
     "schema_version",
     "candidate_id",
     "stream",
-    "kolla_version",
+    "kolla",
     "unit_id",
     "kind",
     "tier",
@@ -168,9 +169,12 @@ def validate_unit(unit: Any) -> dict[str, Any]:
         raise BuildUnitError(f"frozen unit command is not structured argv: {unit_id}")
     if command[0] != "kolla-build" or command[-1] != f"^{target}$":
         raise BuildUnitError(f"frozen unit command target is invalid: {unit_id}")
-    for flag in ("--skip-existing", "--push"):
-        if command.count(flag) != 1:
-            raise BuildUnitError(f"frozen unit command must contain {flag}: {unit_id}")
+    if "--skip-existing" in command:
+        raise BuildUnitError(
+            f"frozen unit command must rebuild the final architecture tag: {unit_id}"
+        )
+    if command.count("--push") != 1:
+        raise BuildUnitError(f"frozen unit command must contain --push: {unit_id}")
     if option_value(command, "--summary-json-file") != unit["summary_file"]:
         raise BuildUnitError(f"frozen summary path does not match command: {unit_id}")
     if option_value(command, "--logs-dir") != unit["logs_dir"]:
@@ -210,9 +214,17 @@ def select_unit(plan: dict[str, Any], unit_id: str) -> dict[str, Any]:
 def validate_plan_identity(plan: Any) -> dict[str, Any]:
     if type(plan) is not dict:
         raise BuildUnitError("frozen publish plan must be an object")
-    for key in ("candidate_id", "stream", "kolla_version"):
+    for key in ("candidate_id", "stream"):
         if type(plan.get(key)) is not str or not plan[key]:
             raise BuildUnitError(f"frozen publish plan {key} is invalid")
+    kolla = plan.get("kolla")
+    if (
+        type(kolla) is not dict
+        or set(kolla) != {"repository", "version", "commit"}
+        or not all(type(kolla[key]) is str and kolla[key] for key in kolla)
+        or not re.fullmatch(r"[0-9a-f]{40}", kolla["commit"])
+    ):
+        raise BuildUnitError("frozen publish plan Kolla source pin is invalid")
     return plan
 
 
@@ -413,10 +425,10 @@ def validate_input_record(
     if type(record) is not dict or set(record) != UNIT_EVIDENCE_KEYS:
         raise BuildUnitError("input unit evidence schema is invalid")
     expected = {
-        "schema_version": 1,
+        "schema_version": UNIT_EVIDENCE_SCHEMA_VERSION,
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
-        "kolla_version": plan["kolla_version"],
+        "kolla": plan["kolla"],
         "unit_id": planned_unit["id"],
         "kind": planned_unit["kind"],
         "tier": planned_unit["tier"],
@@ -583,10 +595,10 @@ def execute_build_unit(
         }
 
     evidence = {
-        "schema_version": 1,
+        "schema_version": UNIT_EVIDENCE_SCHEMA_VERSION,
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
-        "kolla_version": plan["kolla_version"],
+        "kolla": plan["kolla"],
         "unit_id": unit["id"],
         "kind": unit["kind"],
         "tier": unit["tier"],

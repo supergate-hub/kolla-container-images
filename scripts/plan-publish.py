@@ -14,7 +14,6 @@ from profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
     render_tag,
     resolve_profile,
     validate_candidate_id,
@@ -147,7 +146,6 @@ def kolla_build_command(
         summary_file,
         "--logs-dir",
         logs_dir,
-        "--skip-existing",
         "--push",
         f"^{target}$",
     ]
@@ -278,7 +276,7 @@ def build_unit(
     target: str,
     ancestor_chain: list[str],
 ) -> dict[str, Any]:
-    arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+    arch_tag = render_tag(matrix, stream, arch)
     unit_id = f"{arch}-{kind}-{target}"
     summary_file = (
         f"artifacts/kolla-summary/{stream['id']}/{candidate_id}/{unit_id}.json"
@@ -330,8 +328,7 @@ def build_plan(
     candidate_id: str = LOCAL_DRY_RUN_CANDIDATE_ID,
 ) -> dict[str, Any]:
     candidate_id = validate_candidate_id(candidate_id)
-    stream_tag = render_tag(matrix, stream)
-    candidate_tag = render_candidate_tag(matrix, stream, candidate_id)
+    deploy_tag = render_tag(matrix, stream)
     registry = matrix["registry"]
     owner = matrix["owner"]
     repository = matrix["repository"]
@@ -364,7 +361,7 @@ def build_plan(
         image = image_entry["name"]
         architectures = []
         for arch in matrix["architectures"]:
-            arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+            arch_tag = render_tag(matrix, stream, arch)
             arch_ref = image_ref(registry, owner, repository, image, arch_tag)
             architectures.append(
                 {
@@ -377,22 +374,16 @@ def build_plan(
                 }
             )
 
-        deploy_ref = image_ref(
-            registry, owner, repository, image, candidate_tag
-        )
-        stream_ref = image_ref(
-            registry, owner, repository, image, stream_tag
-        )
+        deploy_ref = image_ref(registry, owner, repository, image, deploy_tag)
         arch_refs = [architecture["arch_ref"] for architecture in architectures]
         images.append(
             {
                 "image": image,
                 "kolla_ansible_variables": image_entry["kolla_ansible_variables"],
-                "deploy_tag": candidate_tag,
+                "deploy_tag": deploy_tag,
                 "deploy_ref": deploy_ref,
-                "stream_ref": stream_ref,
                 "expected_ghcr_ref": deploy_ref,
-                "manifest_metadata_file": manifest_metadata_file(image, candidate_tag),
+                "manifest_metadata_file": manifest_metadata_file(image, deploy_tag),
                 "architectures": architectures,
                 "commands": {
                     "manifest_create": [
@@ -403,7 +394,7 @@ def build_plan(
                         "--tag",
                         deploy_ref,
                         "--metadata-file",
-                        manifest_metadata_file(image, candidate_tag),
+                        manifest_metadata_file(image, deploy_tag),
                         *arch_refs,
                     ],
                     "manifest_inspect": [
@@ -499,7 +490,7 @@ def build_plan(
     images_by_name = {image["image"]: image for image in images}
     build_architectures = []
     for arch in matrix["architectures"]:
-        arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+        arch_tag = render_tag(matrix, stream, arch)
         platform = ARCH_TO_PLATFORM[arch]
         build_architectures.append(
             {
@@ -542,10 +533,26 @@ def build_plan(
         "candidate_id": candidate_id,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
         "kolla_version": stream["kolla_version"],
         "kolla_ansible_version": stream["kolla_ansible_version"],
+        "release_metadata": {
+            "repository": matrix["release_metadata"]["repository"],
+            "commit": matrix["release_metadata"]["commit"],
+        },
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "image_filter": image_filter,
         "scope": {

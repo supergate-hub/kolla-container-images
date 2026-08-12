@@ -76,10 +76,10 @@ def unit_record(plan: dict, unit: dict) -> dict:
     digest = digest_for(unit["id"])
     repository = unit["arch_ref"].rpartition(":")[0]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
-        "kolla_version": plan["kolla_version"],
+        "kolla": plan["kolla"],
         "unit_id": unit["id"],
         "kind": unit["kind"],
         "tier": unit["tier"],
@@ -219,6 +219,9 @@ class BuildUnitTest(unittest.TestCase):
                 "built": ["keystone"],
                 "skipped": ["base", "openstack-base", "keystone-base"],
             })
+            self.assertEqual(evidence["schema_version"], 2)
+            self.assertEqual(evidence["kolla"], plan["kolla"])
+            self.assertNotIn("kolla_version", evidence)
             self.assertEqual(
                 [entry["image"] for entry in evidence["ancestors"]],
                 unit["ancestor_chain"],
@@ -322,6 +325,32 @@ class BuildUnitTest(unittest.TestCase):
                     disk_sampler=lambda: TEN_GIB,
                     machine="x86_64",
                 )
+            self.assertNotIn(unit["command"], runner.commands)
+
+    def test_tampered_ancestor_kolla_commit_is_rejected_before_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            plan, unit, plan_path, evidence_dir = self.prepare_leaf(temp_path)
+            record_path = sorted(evidence_dir.glob("*.json"))[0]
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["kolla"]["commit"] = "0" * 40
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            runner = FakeRunner(unit)
+
+            with self.assertRaisesRegex(
+                BUILD_UNIT.BuildUnitError,
+                "input evidence kolla does not match frozen unit",
+            ):
+                BUILD_UNIT.execute_build_unit(
+                    plan_path,
+                    unit["id"],
+                    evidence_dir,
+                    temp_path / "unit.json",
+                    runner=runner,
+                    disk_sampler=lambda: TEN_GIB,
+                    machine="x86_64",
+                )
+
             self.assertNotIn(unit["command"], runner.commands)
 
     def test_stage_one_leaf_uses_stage_zero_leaf_by_immutable_digest(self) -> None:

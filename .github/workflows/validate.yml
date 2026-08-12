@@ -12,6 +12,8 @@ jobs:
     name: Validate repository configuration and publish plans
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      VALIDATION_BRANCH: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
 
     steps:
       - name: Check out repository
@@ -27,17 +29,65 @@ jobs:
               python3 -m json.tool "$json_file" >/dev/null
             done
 
+      - name: Validate release branch ownership
+        if: ${{ env.VALIDATION_BRANCH != 'main' }}
+        run: >-
+          python3 scripts/validate-release-context.py matrix
+          --matrix config/build-matrix.json
+          --branch "$VALIDATION_BRANCH"
+
       - name: Validate repository configuration
         run: python3 scripts/validate-config.py
 
-      - name: Validate core profile dry-run plan
-        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile core --dry-run >/dev/null
+      - name: Validate every active stream dry-run plan
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
 
-      - name: Validate deployment profile dry-run plan
-        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile deployment --dry-run >/dev/null
-
-      - name: Validate Keystone dry-run plan
-        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile core --image keystone --dry-run >/dev/null
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          active_streams = [
+              stream["id"]
+              for stream in matrix["streams"]
+              if stream["publish_enabled"] is True
+          ]
+          if not active_streams:
+              raise SystemExit("branch matrix must contain an active stream")
+          for stream in active_streams:
+              for profile in matrix["profiles"]:
+                  subprocess.run(
+                      [
+                          sys.executable,
+                          "scripts/plan-publish.py",
+                          "--stream",
+                          stream,
+                          "--profile",
+                          profile,
+                          "--dry-run",
+                      ],
+                      check=True,
+                      stdout=subprocess.DEVNULL,
+                  )
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "scripts/plan-publish.py",
+                      "--stream",
+                      stream,
+                      "--profile",
+                      "core",
+                      "--image",
+                      "keystone",
+                      "--dry-run",
+                  ],
+                  check=True,
+                  stdout=subprocess.DEVNULL,
+              )
+          PY
 
       - name: Run complete unit suite
         run: python3 -m unittest discover -s tests -v

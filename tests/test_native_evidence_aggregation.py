@@ -89,10 +89,10 @@ def records_for(plan: dict) -> dict[str, dict]:
                 "passed": True,
             }
         records[unit["id"]] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "candidate_id": plan["candidate_id"],
             "stream": plan["stream"],
-            "kolla_version": plan["kolla_version"],
+            "kolla": plan["kolla"],
             "unit_id": unit["id"],
             "kind": unit["kind"],
             "tier": unit["tier"],
@@ -168,7 +168,9 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                 self.assertEqual(evidence["arch"], arch)
                 self.assertEqual(evidence["platform"], f"linux/{arch}")
                 self.assertEqual(evidence["stream"], self.plan["stream"])
-                self.assertEqual(evidence["kolla_version"], self.plan["kolla_version"])
+                self.assertEqual(evidence["schema_version"], 2)
+                self.assertEqual(evidence["kolla"], self.plan["kolla"])
+                self.assertNotIn("kolla_version", evidence)
                 self.assertEqual(
                     set(evidence),
                     {
@@ -177,7 +179,7 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                         "arch",
                         "platform",
                         "runner_machine",
-                        "kolla_version",
+                        "kolla",
                         "parents",
                         "images",
                     },
@@ -253,6 +255,24 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                     temp_path / "native",
                 )
 
+    def test_native_aggregation_rejects_tampered_kolla_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            records = copy.deepcopy(self.records)
+            records["amd64-parent-base"]["kolla"]["commit"] = "0" * 40
+            unit_dir = self.prepare_unit_dir(temp_path, records)
+
+            with self.assertRaisesRegex(
+                AGGREGATOR.EvidenceError,
+                "unit evidence kolla mismatch: amd64-parent-base",
+            ):
+                AGGREGATOR.aggregate_native(
+                    self.plan,
+                    self.units,
+                    unit_dir,
+                    temp_path / "native",
+                )
+
     def test_selected_leaf_dependency_digest_is_fail_closed(self) -> None:
         plan, units = AGGREGATOR.validate_plan(
             candidate_plan(profile="deployment", image=None)
@@ -304,7 +324,11 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
     def test_candidate_pin_platform_disk_and_smoke_are_fail_closed(self) -> None:
         cases = (
             ("candidate_id", "wrong-candidate", "candidate_id mismatch"),
-            ("kolla_version", "0.0.0", "kolla_version mismatch"),
+            (
+                "kolla",
+                {**self.plan["kolla"], "commit": "0" * 40},
+                "kolla mismatch",
+            ),
             ("platform", "linux/arm64", "platform mismatch"),
         )
         for key, value, message in cases:

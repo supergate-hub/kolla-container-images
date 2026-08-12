@@ -33,12 +33,15 @@ derives its candidate ID from `github.run_id` and `github.run_attempt`; neither
 manual operators nor CI pass candidate identity. Local read-only planning uses
 the reserved `local-dry-run` candidate ID.
 
-CI dispatches `publish.yml` on the reviewed protected ref with `--ref main`
-(or Actions API `ref: main`). Its repository-scoped GitHub App installation
-token, or equivalent short-lived credential, has `Actions: write` and no
-package-write permission. The dispatched workflow's parent/leaf build units
-and `finalize-publish` separately receive `packages: write` from their
-job-scoped `GITHUB_TOKEN` policy.
+CI dispatches `publish.yml` on the protected branch that owns the requested
+release: `--ref 2025-1`, `--ref 2025-2`, or `--ref 2026-1` (or the equivalent
+Actions API `ref`). The workflow rejects `main`, another branch, a tag, a
+mixed-release matrix, and a plan whose release/source pins do not exactly match
+that branch. Its repository-scoped GitHub App installation token, or equivalent
+short-lived credential, has `Actions: write` and no package-write permission.
+The dispatched workflow's parent/leaf build units and `finalize-publish`
+separately receive `packages: write` from their job-scoped `GITHUB_TOKEN`
+policy.
 
 ## Inputs and dry-run default
 
@@ -56,17 +59,19 @@ Keep `dry_run: true` for routine planning:
 
 ```bash
 gh workflow run publish.yml \
-  --ref main \
+  --ref 2025-1 \
   --field stream=2025.1-rocky-9 \
   --field profile=core \
   --field image=keystone \
   --field dry_run=true
 ```
 
-The `publish-plan` job validates the repository configuration, renders one
-frozen publish plan, and uploads `artifacts/plan/publish-plan.json` as
+The `publish-plan` job validates the branch-local repository configuration,
+binds its sole release/toolchain to the Git ref, renders one frozen publish
+plan, and uploads `artifacts/plan/publish-plan.json` as
 `publish-plan-<candidate-id>`. With `dry_run: true`, no authorization, registry
-login, build, push, manifest, or lock-generation job runs.
+login, build, push, manifest, or lock-generation job runs. Dry runs still use
+the matching release branch; local planning is the non-branch alternative.
 
 ## Publication approval
 
@@ -97,7 +102,10 @@ Every `dry_run: false` run also crosses the protected GitHub environment
 configured manually. `authorize-publish` validates the three repository
 variables and exact phrase against the frozen plan. Every parent/leaf build
 unit and `finalize-publish` revalidates that approval before registry login.
-Planning, authorization, and evidence aggregation remain read-only.
+They also revalidate that `github.ref_protected` is true and that the ref,
+branch-local matrix, plan release, OpenStack Releases metadata snapshot, Kolla
+pin, and Kolla-Ansible pin agree exactly. Planning, authorization, and evidence
+aggregation remain read-only.
 
 ## Publication sequence
 
@@ -134,12 +142,14 @@ There is no `collect-parent-evidence` job and no parent-index artifact. Each
 dependent job downloads the preceding raw unit JSON evidence directly, and
 the final native aggregation verifies the complete frozen-plan closure.
 
-Every build matrix uses `max-parallel: 4`. The frozen command for every
-unit contains one anchored target, `--skip-existing`, `--threads 1`, and
-`--push-threads 1`. A child job pulls its planned ancestors by immutable digest,
-validates their native platform, and applies the candidate tags locally before
-Kolla runs. The current Kolla summary must report only that target as built
-and exactly its ancestor chain as skipped.
+Every build matrix uses `max-parallel: 4`. The frozen command for every unit
+contains one anchored target, `--threads 1`, and `--push-threads 1`. It does not
+use `--skip-existing`: the versioned final architecture tag must be rebuilt by
+the current pinned source rather than accepted merely because a tag already
+exists. A child job pulls its planned ancestors by immutable digest, validates
+their native platform, and applies the planned final architecture tags locally
+before Kolla runs. The current Kolla summary must report only that target as
+built and exactly its ancestor chain as skipped.
 
 This public repository uses only the standard native GitHub-hosted runners:
 
@@ -150,8 +160,15 @@ ARM64: ubuntu-24.04-arm (aarch64, linux/arm64)
 
 Larger runners and privately managed runner fleets are outside this design.
 Each hosted VM is fresh: the job verifies its native machine and local Linux
-Docker Unix socket, prunes Docker, installs the pinned Python packages without
-a pip cache, and creates a job-scoped `DOCKER_CONFIG` below `RUNNER_TEMP`.
+Docker Unix socket, prunes Docker, and checks out the exact OpenStack Releases,
+Kolla, and Kolla-Ansible commits. The Kolla commit and both provenance peers
+are immutable inputs. It verifies all detached `HEAD` values and
+proves the pinned Releases deliverable YAML contains the configured version and
+commit pair. It installs Kolla from its source checkout, verifies the installed
+version and local-source provenance, and does not install Kolla-Ansible because
+the image build consumes Kolla. It never substitutes
+`pip install kolla==<version>` or a moving branch for the commit pin. The job
+also creates a job-scoped `DOCKER_CONFIG` below `RUNNER_TEMP`.
 
 The standard hosted runner has 14 GB of SSD storage. A unit fails before build
 when free Docker storage after cleanup is below 8 GiB, and disk sampling fails
@@ -209,11 +226,16 @@ Only `deployment/all` may produce that generic candidate lock. A core,
 Keystone, partial deployment, incomplete evidence set, or invalid publish
 summary cannot produce one.
 
-`publish-<stream>-<candidate-id>` is uploaded as the complete candidate
-artifact before any stream alias changes. A partial stream-alias failure fails
-the workflow but cannot invalidate that candidate lock. Recovery uses
-**Re-run all jobs**, creating a new candidate ID; aliases are non-transactional
-convenience references and are never lock inputs.
+`publish-<stream>-<candidate-id>` is the complete candidate artifact and
+evidence identity. Candidate ID remains in artifact names and is validated
+through plan, evidence, summary, and lock generation, but never appears in an
+image tag. The workflow publishes neither candidate-qualified image tags nor
+an unversioned stream alias. Recovery uses **Re-run all jobs**, creating a new
+candidate ID and a complete same-attempt evidence set.
+
+The final multi-architecture tag is
+`{release}-{distro}-{tag_token}-{kolla_ansible_version}`. Native children add
+only `-amd64` or `-arm64` to that tag.
 
 ## Kolla-Ansible multi-architecture consumption
 
@@ -235,29 +257,45 @@ openstack_tag_suffix: ""
 The generated candidate lock is supplied alongside `globals.yml` as an
 operations-managed `globals.d` file or explicit extra-vars file:
 
-For candidate ID `123456789-1`, the corresponding image references are:
+For candidate ID `123456789-1`, a `2025.1-rocky-9` run with
+Kolla-Ansible `20.4.0` records these image references. Candidate ID identifies
+the evidence and generic lock, not the image tag:
 
 ```text
 AMD64 child:
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-amd64
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-amd64
 ARM64 child:
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-arm64
-Candidate multi-architecture ref used by the lock:
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1
-Convenience stream alias, not used by the lock:
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-arm64
+Final multi-architecture ref used by the lock:
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0
 ```
 
 ```yaml
 # generated candidate lock supplied as an extra-vars file
 _kolla_candidate_lock:
+  schema_version: 2
+  stream: "2025.1-rocky-9"
+  release: "2025.1"
+  release_series: "epoxy"
+  release_branch: "2025-1"
+  release_metadata:
+    repository: "https://opendev.org/openstack/releases"
+    commit: "b52dca944f47a401baa8f93a6994217d2a93ea56"
+  kolla:
+    repository: "https://opendev.org/openstack/kolla"
+    version: "20.4.0"
+    commit: "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5"
+  kolla_ansible:
+    repository: "https://opendev.org/openstack/kolla-ansible"
+    version: "20.4.0"
+    commit: "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696"
   # Digest-bound supply evidence; Kolla-Ansible roles ignore this reserved data.
   images:
     "nova-compute":
-      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1"
+      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
       manifest_digest: "sha256:<multi-arch-manifest-digest>"
       immutable_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute@sha256:<multi-arch-manifest-digest>"
-nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1"
+nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
 ```
 
 Before deployment, openstack-infra-ops resolves every deploy_ref, compares its
@@ -289,17 +327,19 @@ environment, variable은 canary 전에 준비하고, package 연결과 Public �
    package가 repository의 visibility/permission model을 상속하는 GitHub 기본값을
    사용하지만, granular GHCR visibility를 추정하지 말고 canary 뒤 실제 값이
    Public인지 확인한다.
-2. `Settings -> Branches` 또는 `Settings -> Rules -> Rulesets`에서 `main`을
-   보호한다. 정확히 다음을 선택한다: pull request 필수, 승인 최소
-   1명, required status check
+2. `Settings -> Branches` 또는 `Settings -> Rules -> Rulesets`에서 원격 release
+   branch `2025-1`, `2025-2`, `2026-1`을 먼저 생성하고 모두 보호한다. 정확히
+   다음을 선택한다: pull request 필수, 승인 최소 1명, required status check
    `Validate repository configuration and publish plans`, conversation 해결 필수,
    force push 금지, branch 삭제 금지, bypass 대상 없음. 실제 publish 코드는
-   `github.ref == refs/heads/main` 및 `github.ref_protected == true`를 다시 검사하므로,
-   이 보호가 없으면 package push를 시작할 수 없다.
+   exact `refs/heads/YYYY-N` 형식, branch가 소유한 release subset, 그리고
+   `github.ref_protected == true`를 다시 검사한다. 원격 branch protection은 코드로
+   생성되지 않는 필수 선행조건이다. `main`은 aggregate catalog와 공통 변경 검증용이며
+   publish ref로 사용할 수 없다.
 3. `Settings -> Environments`에서 `ghcr-publish`를 만든다. required
    reviewer를 지정하고 deployment branches/tags는 selected branches and tags의
-   `main`만 허용한다. 특정 개인을 임의로 추측해 지정하지 말고 조직의
-   실제 publish 승인자를 선택한다.
+   `2025-1`, `2025-2`, `2026-1`만 허용한다. `main`과 tag는 허용하지 않는다.
+   특정 개인을 임의로 추측해 지정하지 말고 조직의 실제 publish 승인자를 선택한다.
 4. `Settings -> Secrets and variables -> Actions -> Variables`에
    `ALLOW_GHCR_PUBLISH`, `ALLOW_GHCR_FULL_CORE_PUBLISH`,
    `ALLOW_GHCR_DEPLOYMENT_PUBLISH`를 만든다. 평소에는 모두 `false`로 두고,
@@ -310,27 +350,31 @@ environment, variable은 canary 전에 준비하고, package 연결과 Public �
    `finalize-publish` job에만 job-scoped `packages: write`를 사용한다. 외부 CI가
    dispatch한다면 repository-scoped GitHub App 또는 동등한 단기 credential에
    `Actions: write`만 주고 no package-write permission을 유지한다.
-6. Feature branch에서 `dry_run: true`를 dispatch해 먼저 검증한다. Dry-run은
-   branch protection이 없는 feature branch에서도 허용되지만 registry를 변경하지 않는다.
+6. 공통 변경은 `main`에서 aggregate matrix로 검증하고, release별 matrix subset을
+   해당 release branch에 반영한다. Feature branch에서는 local planner와
+   `validate-release-context.py`를 사용한다. Workflow dry-run은 registry를 변경하지
+   않지만, real publish와 동일하게 정확한 release branch에서 dispatch해야 한다.
    생성된 `publish-plan-<candidate-id>`에서 Keystone가 양 architecture 합계
-   8개 unit인지와 exact count-bearing approval phrase를 확인한 뒤 보호된
-   `main`으로 PR을 merge한다.
+   8개 unit인지와 exact count-bearing approval phrase를 확인한다.
 
    ```bash
-   feature_branch="$(git branch --show-current)"
+   python3 scripts/validate-release-context.py matrix \
+     --matrix config/build-matrix.json \
+     --branch 2025-1
    gh workflow run publish.yml \
-     --ref "$feature_branch" \
+     --ref 2025-1 \
      --field stream=2025.1-rocky-9 \
      --field profile=core \
      --field image=keystone \
      --field dry_run=true
    ```
 
-### First canary: 보호된 main에서
+### First canary: 보호된 release branch에서
 
 7. `ALLOW_GHCR_PUBLISH=true`만 활성화하고 `core/keystone`를
-   `dry_run: false`, `--ref main`, dry-run plan의 exact approval phrase로 별도
-   dispatch한다. 실행 내역에서 standard hosted label
+   `dry_run: false`, `--ref 2025-1`, dry-run plan의 exact approval phrase로 별도
+   dispatch한다. 다른 release는 stream과 `--ref`를 함께 대응시킨다. 실행 내역에서
+   standard hosted label
    `ubuntu-24.04`/`ubuntu-24.04-arm`, 정확히 8개 unit, 각 unit의 8 GiB
    preflight와 관측된 2 GiB minimum, 양 architecture native evidence,
    Keystone의 exact two-platform multi-architecture manifest와 publish summary를
@@ -343,7 +387,7 @@ environment, variable은 canary 전에 준비하고, package 연결과 Public �
 
    ```bash
    gh workflow run publish.yml \
-     --ref main \
+     --ref 2025-1 \
      --field stream=2025.1-rocky-9 \
      --field profile=core \
      --field image=keystone \
@@ -364,9 +408,9 @@ environment, variable은 canary 전에 준비하고, package 연결과 Public �
    docker logout ghcr.io || true
    anonymous_docker_config="$(mktemp -d)"
    DOCKER_CONFIG="$anonymous_docker_config" docker buildx imagetools inspect \
-     ghcr.io/supergate-hub/kolla-container-images/keystone:<candidate-tag>
+     ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9-20.4.0
    DOCKER_CONFIG="$anonymous_docker_config" docker pull \
-     ghcr.io/supergate-hub/kolla-container-images/keystone:<candidate-tag>
+     ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9-20.4.0
    rm -rf -- "$anonymous_docker_config"
    ```
 

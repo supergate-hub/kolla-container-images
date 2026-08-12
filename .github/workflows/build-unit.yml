@@ -47,8 +47,8 @@ jobs:
             echo "This build-unit workflow only accepts repository-owned calls." >&2
             exit 1
           fi
-          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
-            echo "Build publication requires the protected main branch." >&2
+          if [[ ! "$CALLER_REF" =~ ^refs/heads/[0-9]{4}-[0-9]+$ ]] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Build publication requires a protected YYYY-N release branch." >&2
             exit 1
           fi
 
@@ -62,6 +62,18 @@ jobs:
         with:
           name: ${{ inputs.publish_plan_artifact }}
           path: artifacts/plan
+
+      - name: Bind frozen plan to protected release branch
+        env:
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$CALLER_REF"
+          --require-protected
+          --ref-protected "$CALLER_REF_PROTECTED"
 
       - name: Download prerequisite evidence
         if: ${{ inputs.input_evidence_artifact_pattern != '' }}
@@ -128,9 +140,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install the frozen Kolla and Docker SDK versions
+      - name: Check out and install the frozen Kolla source
+        env:
+          UNIT_ID: ${{ fromJSON(inputs.unit).id }}
         run: |
           set -euo pipefail
+          source_root="$RUNNER_TEMP/kolla-sources-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$UNIT_ID"
+          python3 scripts/frozen_sources.py prepare \
+            --matrix config/build-matrix.json \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --checkout-root "$source_root"
           KOLLA_VERSION="$(
             python3 - <<'PY'
           import json
@@ -139,19 +158,22 @@ jobs:
           plan = json.loads(
               pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
           )
-          matrix = json.loads(
-              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
-          )
-          streams = [entry for entry in matrix["streams"] if entry["id"] == plan["stream"]]
-          if len(streams) != 1 or plan["kolla_version"] != streams[0]["kolla_version"]:
-              raise SystemExit("frozen plan Kolla pin does not match the stream matrix pin")
-          print(plan["kolla_version"])
+          print(plan["kolla"]["version"])
           PY
           )"
+          KOLLA_SOURCE_DIR="$source_root/kolla"
           python3 -m venv .venv
           .venv/bin/python -m pip install --no-cache-dir --upgrade pip
           .venv/bin/python -m pip install --no-cache-dir \
-            "kolla==$KOLLA_VERSION" "docker==7.1.0"
+            -r "$KOLLA_SOURCE_DIR/requirements.txt" "docker==7.1.0"
+          PBR_VERSION="$KOLLA_VERSION" \
+            .venv/bin/python -m pip install --no-cache-dir --no-deps \
+            "$KOLLA_SOURCE_DIR"
+          .venv/bin/python -m pip check
+          .venv/bin/python scripts/frozen_sources.py verify-install \
+            --matrix config/build-matrix.json \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --checkout-root "$source_root"
           .venv/bin/python - <<'PY'
           import docker
 

@@ -64,6 +64,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate release branch matrix
+        env:
+          PUBLISH_BRANCH: ${{ github.ref_name }}
+        run: >-
+          python3 scripts/validate-release-context.py matrix
+          --matrix config/build-matrix.json
+          --branch "$PUBLISH_BRANCH"
+
       - name: Validate repository configuration
         run: python3 scripts/validate-config.py
 
@@ -86,6 +94,15 @@ jobs:
             plan_args+=(--image "$IMAGE")
           fi
           python3 scripts/plan-publish.py "${plan_args[@]}" > artifacts/plan/publish-plan.json
+
+      - name: Bind frozen plan to release ref
+        env:
+          PUBLISH_REF: ${{ github.ref }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$PUBLISH_REF"
 
       - name: Publish dynamic build matrices
         id: publish-matrices
@@ -145,17 +162,6 @@ jobs:
       contents: read
 
     steps:
-      - name: Require protected main ref
-        env:
-          PUBLISH_REF: ${{ github.ref }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        run: |
-          set -euo pipefail
-          if [ "$PUBLISH_REF" != "refs/heads/main" ] || [ "$REF_PROTECTED" != "true" ]; then
-            echo "Real publication requires the protected main branch." >&2
-            exit 1
-          fi
-
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -166,6 +172,18 @@ jobs:
         with:
           name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/plan
+
+      - name: Validate protected release context
+        env:
+          PUBLISH_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$PUBLISH_REF"
+          --require-protected
+          --ref-protected "$REF_PROTECTED"
 
       - name: Validate publish approval
         env:
@@ -342,17 +360,6 @@ jobs:
       packages: write
 
     steps:
-      - name: Require protected main ref
-        env:
-          PUBLISH_REF: ${{ github.ref }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        run: |
-          set -euo pipefail
-          if [ "$PUBLISH_REF" != "refs/heads/main" ] || [ "$REF_PROTECTED" != "true" ]; then
-            echo "Finalization requires the protected main branch." >&2
-            exit 1
-          fi
-
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -375,6 +382,18 @@ jobs:
         with:
           name: native-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/arch
+
+      - name: Revalidate protected release context
+        env:
+          PUBLISH_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$PUBLISH_REF"
+          --require-protected
+          --ref-protected "$REF_PROTECTED"
 
       - name: Revalidate publish approval
         env:
@@ -410,7 +429,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
-      - name: Create and verify candidate multi-architecture manifests
+      - name: Create and verify final multi-architecture manifests
         run: |
           python3 - <<'PY'
           import hashlib
@@ -432,7 +451,7 @@ jobs:
               "arch",
               "platform",
               "runner_machine",
-              "kolla_version",
+              "kolla",
               "parents",
               "images",
           }
@@ -462,15 +481,15 @@ jobs:
               evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
               if not isinstance(evidence, dict) or set(evidence) != EXPECTED_EVIDENCE_KEYS:
                   raise SystemExit(f"native-{arch} evidence schema is invalid")
-              if type(evidence["schema_version"]) is not int or evidence["schema_version"] != 1:
-                  raise SystemExit(f"native-{arch} evidence schema version must be 1")
+              if type(evidence["schema_version"]) is not int or evidence["schema_version"] != 2:
+                  raise SystemExit(f"native-{arch} evidence schema version must be 2")
               if evidence["stream"] != plan["stream"]:
                   raise SystemExit(f"native-{arch} stream does not match frozen scope")
               if evidence["arch"] != arch or evidence["platform"] != f"linux/{arch}":
                   raise SystemExit(f"native-{arch} architecture identity is invalid")
               if evidence["runner_machine"] != EXPECTED_MACHINES[arch]:
                   raise SystemExit(f"native-{arch} runner machine is invalid")
-              if evidence["kolla_version"] != plan["kolla_version"]:
+              if evidence["kolla"] != plan["kolla"]:
                   raise SystemExit(f"native-{arch} Kolla pin does not match frozen plan")
 
               planned_arch = planned_by_arch[arch]
@@ -550,6 +569,11 @@ jobs:
               "candidate_id": plan["candidate_id"],
               "stream": plan["stream"],
               "release": plan["release"],
+              "release_series": plan["release_series"],
+              "release_branch": plan["release_branch"],
+              "release_metadata": plan["release_metadata"],
+              "kolla": plan["kolla"],
+              "kolla_ansible": plan["kolla_ansible"],
               "distro": plan["distro"],
               "distro_version": plan["distro_version"],
               "profile": plan["profile"],
@@ -821,75 +845,6 @@ jobs:
             artifacts/manifests/
           if-no-files-found: error
           retention-days: 7
-
-      - name: Update convenience stream aliases
-        run: |
-          python3 - <<'PY'
-          import json
-          import pathlib
-          import re
-          import subprocess
-
-          DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
-          plan = json.loads(
-              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
-          )
-          summary = json.loads(
-              pathlib.Path(plan["publish_summary_file"]).read_text(encoding="utf-8")
-          )
-          if summary.get("candidate_id") != plan.get("candidate_id"):
-              raise SystemExit("publish summary candidate ID does not match frozen plan")
-          planned_images = plan.get("images")
-          summary_images = summary.get("images")
-          if not isinstance(planned_images, list) or not isinstance(summary_images, list):
-              raise SystemExit("candidate plan and summary images must be lists")
-          summary_by_name = {entry.get("image"): entry for entry in summary_images}
-          if len(summary_by_name) != len(summary_images):
-              raise SystemExit("publish summary contains duplicate image names")
-          if set(summary_by_name) != {entry.get("image") for entry in planned_images}:
-              raise SystemExit("publish summary images do not match frozen plan")
-
-          for planned_image in planned_images:
-              image_name = planned_image["image"]
-              summary_image = summary_by_name[image_name]
-              stream_ref = planned_image["stream_ref"]
-              candidate_ref = summary_image["deploy_ref"]
-              if candidate_ref != planned_image["deploy_ref"]:
-                  raise SystemExit(f"candidate ref mismatch: {image_name}")
-              repository, separator, candidate_tag = candidate_ref.rpartition(":")
-              stream_repository, stream_separator, stream_tag = stream_ref.rpartition(":")
-              if (
-                  not separator
-                  or not stream_separator
-                  or not candidate_tag
-                  or not stream_tag
-                  or repository != stream_repository
-              ):
-                  raise SystemExit(f"candidate/stream ref mismatch: {image_name}")
-              manifest_digest = summary_image["manifest_digest"]
-              if not isinstance(manifest_digest, str) or not DIGEST_RE.fullmatch(manifest_digest):
-                  raise SystemExit(f"candidate digest is invalid: {image_name}")
-              immutable_ref = f"{repository}@{manifest_digest}"
-              immutable_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", immutable_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              subprocess.run(
-                  [
-                      "docker", "buildx", "imagetools", "create",
-                      "--tag", stream_ref, immutable_ref,
-                  ],
-                  check=True,
-              )
-              stream_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", stream_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              if stream_raw.stdout != immutable_raw.stdout:
-                  raise SystemExit(f"stream alias bytes do not match candidate: {image_name}")
-          PY
 
       - name: Remove ephemeral Docker client state
         if: ${{ always() }}

@@ -12,6 +12,8 @@ from typing import Any
 
 
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
+UNIT_EVIDENCE_SCHEMA_VERSION = 2
+NATIVE_EVIDENCE_SCHEMA_VERSION = 2
 UNIT_KEYS = {
     "id",
     "kind",
@@ -33,7 +35,7 @@ UNIT_EVIDENCE_KEYS = {
     "schema_version",
     "candidate_id",
     "stream",
-    "kolla_version",
+    "kolla",
     "unit_id",
     "kind",
     "tier",
@@ -65,7 +67,7 @@ LEGACY_EVIDENCE_KEYS = {
     "arch",
     "platform",
     "runner_machine",
-    "kolla_version",
+    "kolla",
     "parents",
     "images",
 }
@@ -105,9 +107,17 @@ def immutable_ref(arch_ref: str, digest: str) -> str:
 def validate_plan(plan: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if type(plan) is not dict:
         raise EvidenceError("frozen publish plan must be an object")
-    for key in ("candidate_id", "stream", "kolla_version"):
+    for key in ("candidate_id", "stream"):
         if type(plan.get(key)) is not str or not plan[key]:
             raise EvidenceError(f"frozen publish plan {key} is invalid")
+    kolla = plan.get("kolla")
+    if (
+        type(kolla) is not dict
+        or set(kolla) != {"repository", "version", "commit"}
+        or not all(type(kolla[key]) is str and kolla[key] for key in kolla)
+        or not re.fullmatch(r"[0-9a-f]{40}", kolla["commit"])
+    ):
+        raise EvidenceError("frozen publish plan Kolla source pin is invalid")
     build = plan.get("build")
     if type(build) is not dict:
         raise EvidenceError("frozen publish plan build must be an object")
@@ -217,10 +227,10 @@ def validate_record(
     if type(record) is not dict or set(record) != UNIT_EVIDENCE_KEYS:
         raise EvidenceError(f"unit evidence schema is invalid: {unit['id']}")
     expected = {
-        "schema_version": 1,
+        "schema_version": UNIT_EVIDENCE_SCHEMA_VERSION,
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
-        "kolla_version": plan["kolla_version"],
+        "kolla": plan["kolla"],
         "unit_id": unit["id"],
         "kind": unit["kind"],
         "tier": unit["tier"],
@@ -454,12 +464,12 @@ def aggregate_native(
         if len(machines) != 1:
             raise EvidenceError(f"native runner machine is inconsistent: {arch}")
         evidence = {
-            "schema_version": 1,
+            "schema_version": NATIVE_EVIDENCE_SCHEMA_VERSION,
             "stream": plan["stream"],
             "arch": arch,
             "platform": f"linux/{arch}",
             "runner_machine": machines.pop(),
-            "kolla_version": plan["kolla_version"],
+            "kolla": plan["kolla"],
             "parents": parent_output,
             "images": image_output,
         }

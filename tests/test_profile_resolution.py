@@ -8,9 +8,9 @@ from pathlib import Path
 
 from scripts.profile_resolver import (
     find_stream,
+    find_toolchain,
     load_matrix,
     load_profile,
-    render_candidate_tag,
     render_tag,
     resolve_profile,
     selector_matches,
@@ -36,15 +36,45 @@ class ProfileResolutionTest(unittest.TestCase):
             "tag_token": "9",
         }
         self.matrix = {
-            "schema_version": 2,
+            "schema_version": 3,
             "streams": [self.ubuntu_2026, self.rocky_2025],
+            "toolchains": {
+                "2026.1": {
+                    "series": "gazpacho",
+                    "release_branch": "2026-1",
+                    "kolla": {
+                        "repository": "https://opendev.org/openstack/kolla",
+                        "version": "22.0.0",
+                        "commit": "a" * 40,
+                    },
+                    "kolla_ansible": {
+                        "repository": (
+                            "https://opendev.org/openstack/kolla-ansible"
+                        ),
+                        "version": "22.0.0",
+                        "commit": "b" * 40,
+                    },
+                },
+                "2025.1": {
+                    "series": "epoxy",
+                    "release_branch": "2025-1",
+                    "kolla": {
+                        "repository": "https://opendev.org/openstack/kolla",
+                        "version": "20.4.0",
+                        "commit": "c" * 40,
+                    },
+                    "kolla_ansible": {
+                        "repository": (
+                            "https://opendev.org/openstack/kolla-ansible"
+                        ),
+                        "version": "20.4.0",
+                        "commit": "d" * 40,
+                    },
+                },
+            },
             "tag_policy": {
-                "deploy_tag_template": "{release}-{distro}-{tag_token}",
-                "candidate_tag_template": (
-                    "{release}-{distro}-{tag_token}-candidate-{candidate_id}"
-                ),
-                "candidate_arch_tag_template": (
-                    "{release}-{distro}-{tag_token}-candidate-{candidate_id}-{arch}"
+                "deploy_tag_template": (
+                    "{release}-{distro}-{tag_token}-{kolla_ansible_version}"
                 ),
             },
         }
@@ -129,7 +159,41 @@ class ProfileResolutionTest(unittest.TestCase):
 
     def test_stream_ids_and_find_stream_preserve_matrix_order(self) -> None:
         self.assertEqual(stream_ids(self.matrix), ["alpha", "beta"])
-        self.assertIs(find_stream(self.matrix, "beta"), self.rocky_2025)
+        stream = find_stream(self.matrix, "beta")
+        self.assertEqual(stream["id"], "beta")
+        self.assertEqual(stream["release_branch"], "2025-1")
+        self.assertEqual(stream["kolla_version"], "20.4.0")
+        self.assertEqual(stream["kolla_commit"], "c" * 40)
+        self.assertEqual(stream["kolla_ansible_version"], "20.4.0")
+        self.assertEqual(stream["kolla_ansible_commit"], "d" * 40)
+        self.assertEqual(self.matrix["streams"][1], self.rocky_2025)
+        stream["toolchain"]["kolla"]["version"] = "changed"
+        self.assertEqual(
+            self.matrix["toolchains"]["2025.1"]["kolla"]["version"],
+            "20.4.0",
+        )
+
+    def test_find_toolchain_lists_accepted_releases_on_failure(self) -> None:
+        self.assertIs(
+            find_toolchain(self.matrix, "2025.1"),
+            self.matrix["toolchains"]["2025.1"],
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "accepted releases: 2025.1, 2026.1",
+        ):
+            find_toolchain(self.matrix, "2027.1")
+
+    def test_resolved_stream_rejects_conflicting_or_malformed_pins(self) -> None:
+        conflicting = copy.deepcopy(self.matrix)
+        conflicting["streams"][1]["kolla_version"] = "20.4.0"
+        with self.assertRaisesRegex(ValueError, "conflicting fields"):
+            find_stream(conflicting, "beta")
+
+        malformed = copy.deepcopy(self.matrix)
+        malformed["toolchains"]["2025.1"]["kolla"]["commit"] = "c" * 39
+        with self.assertRaisesRegex(ValueError, "lowercase 40-character SHA"):
+            find_stream(malformed, "beta")
 
     def test_find_stream_lists_accepted_ids_on_failure(self) -> None:
         with self.assertRaisesRegex(ValueError, "accepted streams: alpha, beta"):
@@ -226,26 +290,17 @@ class ProfileResolutionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "schema_version must be 3"):
             resolve_profile({**self.profile, "schema_version": 2}, self.ubuntu_2026)
 
-    def test_render_stream_and_candidate_tags_are_explicitly_separate(self) -> None:
+    def test_render_final_and_architecture_tags_include_kolla_ansible_version(
+        self,
+    ) -> None:
+        stream = find_stream(self.matrix, "alpha")
         self.assertEqual(
-            render_tag(self.matrix, self.ubuntu_2026),
-            "2026.1-ubuntu-noble",
+            render_tag(self.matrix, stream),
+            "2026.1-ubuntu-noble-22.0.0",
         )
         self.assertEqual(
-            render_tag(self.matrix, self.ubuntu_2026, "arm64"),
-            "2026.1-ubuntu-noble-arm64",
-        )
-        self.assertEqual(
-            render_candidate_tag(
-                self.matrix, self.ubuntu_2026, "123456789-1"
-            ),
-            "2026.1-ubuntu-noble-candidate-123456789-1",
-        )
-        self.assertEqual(
-            render_candidate_tag(
-                self.matrix, self.ubuntu_2026, "123456789-1", "arm64"
-            ),
-            "2026.1-ubuntu-noble-candidate-123456789-1-arm64",
+            render_tag(self.matrix, stream, "arm64"),
+            "2026.1-ubuntu-noble-22.0.0-arm64",
         )
 
     def test_candidate_id_validation_rejects_non_run_shapes(self) -> None:

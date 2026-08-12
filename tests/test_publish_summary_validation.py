@@ -12,7 +12,7 @@ from scripts.profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
+    render_tag,
     resolve_profile,
 )
 
@@ -21,14 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_SUMMARY = ROOT / "scripts" / "validate-publish-summary.py"
 MATRIX = load_matrix()
 TEST_CANDIDATE_ID = "123456789-1"
-candidate_tag = "2025.1-rocky-9-candidate-123456789-1"
-candidate_ref = (
-    "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-    + candidate_tag
-)
-amd64_ref = candidate_ref + "-amd64"
-arm64_ref = candidate_ref + "-arm64"
-stream_ref = (
+unversioned_ref = (
     "ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9"
 )
 STREAM_COUNTS = {
@@ -54,7 +47,7 @@ def resolved_profile(stream_id: str, profile_name: str) -> tuple[dict, dict]:
 
 def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
     image = profile_image["name"]
-    deploy_tag = render_candidate_tag(MATRIX, stream, TEST_CANDIDATE_ID)
+    deploy_tag = render_tag(MATRIX, stream)
     repository = (
         f"{MATRIX['registry']}/{MATRIX['owner']}/{MATRIX['repository']}/{image}"
     )
@@ -70,7 +63,7 @@ def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
                 "platform": f"linux/{arch}",
                 "arch_ref": (
                     f"{repository}:"
-                    f"{render_candidate_tag(MATRIX, stream, TEST_CANDIDATE_ID, arch)}"
+                    f"{render_tag(MATRIX, stream, arch)}"
                 ),
                 "digest": digest(index * 10 + arch_index + 1),
             }
@@ -98,8 +91,21 @@ def publish_summary(
         "candidate_id": TEST_CANDIDATE_ID,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
+        "release_metadata": copy.deepcopy(MATRIX["release_metadata"]),
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "scope": {
             "profile": profile["name"],
@@ -202,14 +208,14 @@ def run_validator(
 
 
 class PublishSummaryValidationTest(unittest.TestCase):
-    def test_stable_stream_ref_is_rejected_as_candidate_deploy_ref(self) -> None:
+    def test_unversioned_stream_ref_is_rejected_as_deploy_ref(self) -> None:
         summary = publish_summary()
         entry = image_entry(summary, "keystone")
         entry["deploy_tag"] = "2025.1-rocky-9"
-        entry["deploy_ref"] = stream_ref
+        entry["deploy_ref"] = unversioned_ref
         result = run_validator(summary)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("candidate-123456789-1", result.stderr)
+        self.assertIn("2025.1-rocky-9-20.4.0", result.stderr)
 
     def test_summary_candidate_id_must_match_expected_id(self) -> None:
         summary = publish_summary()
@@ -302,6 +308,12 @@ class PublishSummaryValidationTest(unittest.TestCase):
         mutations = {
             "stream": lambda summary: summary.__setitem__("stream", "2025.1-rocky-10"),
             "release": lambda summary: summary.__setitem__("release", "2025.2"),
+            "release_series": lambda summary: summary.__setitem__(
+                "release_series", "flamingo"
+            ),
+            "release_branch": lambda summary: summary.__setitem__(
+                "release_branch", "2025-2"
+            ),
             "distro": lambda summary: summary.__setitem__("distro", "ubuntu"),
             "distro_version": lambda summary: summary.__setitem__(
                 "distro_version", "10"
@@ -312,6 +324,15 @@ class PublishSummaryValidationTest(unittest.TestCase):
             "owner": lambda summary: summary.__setitem__("owner", "wrong-owner"),
             "repository": lambda summary: summary.__setitem__(
                 "repository", "wrong-repository"
+            ),
+            "release_metadata": lambda summary: summary["release_metadata"].__setitem__(
+                "commit", "0" * 40
+            ),
+            "kolla": lambda summary: summary["kolla"].__setitem__(
+                "commit", "0" * 40
+            ),
+            "kolla_ansible": lambda summary: summary["kolla_ansible"].__setitem__(
+                "commit", "0" * 40
             ),
             "profile": lambda summary: summary.__setitem__("profile", "core"),
             "scope_profile": lambda summary: summary["scope"].__setitem__(

@@ -3,7 +3,8 @@
 This document defines the prerequisites and evidence for an approved
 `dry_run: false` publication. It does not authorize a publish. Complete the
 manual GitHub/GHCR checklist in [publish.md](publish.md) before the first real
-run.
+run. Publication is allowed only from the protected release branch that owns
+the matrix: `2025-1`, `2025-2`, or `2026-1`. `main` cannot publish.
 
 ## Standard hosted runner contract
 
@@ -26,9 +27,14 @@ its billing terms.
 Larger runners and privately managed runner fleets are not part of this
 workflow. Every parent-tier and leaf-stage matrix uses `max-parallel: 4`. Each fresh VM
 must provide local Linux Docker, Buildx, Python 3, network access to the pinned
-Python packages and GHCR, and the advertised native architecture. The workflow
-selects Python 3.12 and installs the matrix-pinned Kolla package with
-`docker==7.1.0` using `--no-cache-dir`.
+Kolla repository commit and GHCR, and the advertised native architecture. The
+workflow selects Python 3.12 and checks out the exact matrix-pinned OpenStack
+Releases, Kolla, and Kolla-Ansible commits with detached `HEAD`. It verifies the
+pinned deliverable metadata and installs Kolla from its source checkout with
+`docker==7.1.0` using `--no-cache-dir`, then verifies installed local-source
+provenance. Kolla-Ansible is verified but not installed for the image build.
+The workflow does not install Kolla from PyPI by version or build a moving
+branch.
 
 The standard runner has 14 GB of SSD storage, so a complete profile is never
 built in one job. After `docker system prune -af --volumes`, each unit must
@@ -64,22 +70,25 @@ python3 scripts/plan-publish.py \
 
 The workflow derives candidate ID from `github.run_id` and
 `github.run_attempt`; local read-only planning uses `local-dry-run`. The plan
-freezes the stream pin, resolved leaf set, parent chains, native
+freezes the release branch, OpenStack Releases metadata snapshot, exact Kolla
+and Kolla-Ansible source pins, resolved leaf set, parent chains, native
 references, exact build-unit matrices, evidence paths, summary/lock paths, and
-exact count-bearing approval phrase. The workflow installs the matrix-pinned
-Kolla version and `docker==7.1.0`, then imports the SDK, checks its version,
-and exercises `kolla-build --version` before registry login. It does not use a
-hard-coded Kolla version or moving branch.
+exact count-bearing approval phrase. The workflow verifies the branch-local
+matrix and frozen plan agree, fetches and checks out the frozen Kolla commit,
+installs it from that checkout with `docker==7.1.0`, checks its declared
+version, and exercises `kolla-build --version` before registry login. A version
+string alone, PyPI package, moving branch, or mismatched commit fails closed.
 
 The plan places parents in dependency tiers 0, 1, and 2, then creates leaf
 stage 0 and optional leaf stage 1. Stage 1 is normally empty; the deployment
 profile uses it for the selected-leaf dependency
 `ovn-sb-db-server -> ovn-sb-db-relay`. Each unit has one anchored target and an
 exact ancestor chain. It pulls the preceding raw unit evidence by immutable
-digest, validates the platform, applies only the planned candidate tag locally,
-and runs `kolla-build` with `--skip-existing`, `--threads 1`, and
-`--push-threads 1`. The current Kolla summary must contain exactly the target
-in `built` and exactly the ancestor chain in `skipped`.
+digest, validates the platform, applies only the planned final architecture tag
+locally, and runs `kolla-build` with `--threads 1` and `--push-threads 1`.
+`--skip-existing` is forbidden so a pre-existing final tag cannot replace a
+build from the frozen commit. The current Kolla summary must contain exactly
+the target in `built` and exactly the ancestor chain in `skipped`.
 
 ```text
 parent tier 0 -> parent tier 1 -> parent tier 2
@@ -99,12 +108,16 @@ leaf-stage-1 jobs, or 158 native build jobs.
 
 ## Native image evidence
 
-For a real candidate ID `123456789-1`, the planned child references are:
+For a real candidate ID `123456789-1`, the planned child references for
+`2025.1-rocky-9` and Kolla-Ansible `20.4.0` are:
 
 ```text
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-amd64
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1-arm64
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-amd64
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-arm64
 ```
+
+Candidate ID identifies the plan and evidence set. It is not part of either
+child tag or the architecture-neutral final tag.
 
 Every parent and leaf job uploads one
 `unit-evidence-<arch>-<kind>-<target>-<candidate-id>` JSON artifact. Parent
@@ -122,7 +135,7 @@ measurements, and the leaf smoke result. Before accepting it, the unit job:
 1. verifies the hosted native machine and local Unix Docker socket, prunes
    Docker, and passes the 8 GiB preflight;
 2. pulls every planned ancestor by immutable digest, verifies its local native
-   platform and digest, and applies its candidate tag locally;
+   platform and digest, and applies its planned final architecture tag locally;
 3. executes the one-target frozen command while sampling disk space;
 4. validates exact `built` and `skipped` summary sets and the 2 GiB minimum;
 5. verifies the pushed target descriptor, immutable digest, and native
@@ -162,12 +175,14 @@ those exact raw bytes; and requires the mutable deploy tag to return identical
 bytes before recording the digest for every selected leaf in
 `artifacts/publish-summary-<stream>.json`.
 
-The terminal upload is `publish-<stream>-<candidate-id>`, containing the
+The terminal upload is the complete candidate artifact
+`publish-<stream>-<candidate-id>`, containing the
 validated summary, raw multi-architecture manifest evidence under
 `artifacts/manifests/`, and a candidate lock only for a complete
-`deployment/all` scope. The workflow uploads this candidate artifact before it
-changes any stream alias. Generate that lock from a validated full summary
-with the same expected identity:
+`deployment/all` scope. Candidate ID remains an artifact/evidence identity;
+the workflow does not publish candidate-qualified image tags or unversioned
+stream aliases. Generate that lock from a validated full summary with the same
+expected identity:
 
 ```bash
 python3 scripts/generate-lock.py \
@@ -183,23 +198,37 @@ and root variable is:
 
 ```yaml
 _kolla_candidate_lock:
+  schema_version: 2
+  stream: "2025.1-rocky-9"
+  release: "2025.1"
+  release_series: "epoxy"
+  release_branch: "2025-1"
+  release_metadata:
+    repository: "https://opendev.org/openstack/releases"
+    commit: "b52dca944f47a401baa8f93a6994217d2a93ea56"
+  kolla:
+    repository: "https://opendev.org/openstack/kolla"
+    version: "20.4.0"
+    commit: "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5"
+  kolla_ansible:
+    repository: "https://opendev.org/openstack/kolla-ansible"
+    version: "20.4.0"
+    commit: "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696"
   images:
     "nova-compute":
-      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1"
+      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
       manifest_digest: "sha256:<multi-arch-manifest-digest>"
       immutable_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute@sha256:<multi-arch-manifest-digest>"
-nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-candidate-123456789-1"
+nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
 ```
 
-The stable stream alias
-`ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9`
-is convenience-only and never a lock input. All upload/download names contain
-candidate ID. **Re-run failed jobs is forbidden** because the incremented run
-attempt would not have a complete same-candidate upstream artifact set.
-Operators recover only with **Re-run all jobs**, which gives every unit a new
-candidate ID and rebuilds the entire dependency closure. A partial stream-alias
-failure cannot invalidate the already uploaded candidate lock; its recovery is
-also a full rerun under a new candidate ID.
+The final tag contract is
+`{release}-{distro}-{tag_token}-{kolla_ansible_version}` and child tags add
+`-{arch}`. All upload/download names contain candidate ID. **Re-run failed
+jobs is forbidden** because the incremented run attempt would not have a
+complete same-candidate upstream artifact set. Operators recover only with
+**Re-run all jobs**, which gives every unit a new candidate ID and rebuilds the
+entire dependency closure.
 
 The lock contains tag-only architecture-neutral *_image_full variables for
 Kolla-Ansible plus a reserved _kolla_candidate_lock mapping. For every image,
@@ -225,15 +254,18 @@ evidence.
 
 ## First-publish readiness sequence
 
-1. Run `python3 scripts/validate-config.py` and inspect the required dry-run
-   plan. A feature branch may run `dry_run: true`; it cannot mutate GHCR.
-2. Complete the pre-canary public-repository, protected-main ruleset,
-   `ghcr-publish` required-reviewer/main-only restriction, repository-variable,
-   and read-default workflow permission steps in [publish.md](publish.md).
-   The code-level protected-main guard blocks a real publish until `main` is
-   actually protected.
+1. Run `python3 scripts/validate-config.py` and inspect a local `--dry-run`
+   plan on a feature branch; local planning cannot mutate GHCR. A GitHub
+   workflow dry-run must be dispatched from the exact release branch so its
+   branch-local matrix and frozen plan can be bound to that ref.
+2. Complete the pre-canary public-repository, protected release-branch rulesets,
+   `ghcr-publish` required-reviewer/release-branch restrictions,
+   repository-variable, and read-default workflow permission steps in
+   [publish.md](publish.md). The code-level release-context guard blocks a real
+   publish until the matching remote branch is actually protected; `main` is
+   rejected.
 3. Use the narrow `core/keystone` scope for the first separately approved real
-   publish from protected `main`, with the exact approval phrase and only
+   publish from protected `2025-1`, with the exact approval phrase and only
    `ALLOW_GHCR_PUBLISH=true`. It must use the two standard hosted labels and
    produce exactly eight parent/leaf build units. Before the first push, verify
    that no same-name pre-existing GHCR package is unlinked from this repository.
