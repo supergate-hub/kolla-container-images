@@ -10,10 +10,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.openstack_source_set import validate_frozen_source_contract
+except ModuleNotFoundError:
+    from openstack_source_set import validate_frozen_source_contract
+
 
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
-UNIT_EVIDENCE_SCHEMA_VERSION = 2
-NATIVE_EVIDENCE_SCHEMA_VERSION = 2
+UNIT_EVIDENCE_SCHEMA_VERSION = 3
+NATIVE_EVIDENCE_SCHEMA_VERSION = 3
 UNIT_KEYS = {
     "id",
     "kind",
@@ -36,6 +41,8 @@ UNIT_EVIDENCE_KEYS = {
     "candidate_id",
     "stream",
     "kolla",
+    "base",
+    "openstack_sources",
     "unit_id",
     "kind",
     "tier",
@@ -61,13 +68,15 @@ DISK_KEYS = {
     "minimum_during_build",
     "after_build",
 }
-LEGACY_EVIDENCE_KEYS = {
+NATIVE_EVIDENCE_KEYS = {
     "schema_version",
     "stream",
     "arch",
     "platform",
     "runner_machine",
     "kolla",
+    "base",
+    "openstack_sources",
     "parents",
     "images",
 }
@@ -118,6 +127,13 @@ def validate_plan(plan: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         or not re.fullmatch(r"[0-9a-f]{40}", kolla["commit"])
     ):
         raise EvidenceError("frozen publish plan Kolla source pin is invalid")
+    base = plan.get("base")
+    if type(base) is not dict:
+        raise EvidenceError("frozen publish plan base resolution is invalid")
+    try:
+        validate_frozen_source_contract(plan.get("openstack_sources"))
+    except ValueError as error:
+        raise EvidenceError(f"frozen OpenStack sources are invalid: {error}") from error
     build = plan.get("build")
     if type(build) is not dict:
         raise EvidenceError("frozen publish plan build must be an object")
@@ -231,6 +247,8 @@ def validate_record(
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
         "kolla": plan["kolla"],
+        "base": plan["base"],
+        "openstack_sources": plan["openstack_sources"],
         "unit_id": unit["id"],
         "kind": unit["kind"],
         "tier": unit["tier"],
@@ -379,7 +397,7 @@ def architecture_metadata(plan: dict[str, Any], arch: str) -> dict[str, Any]:
         if type(metadata.get(key)) is not list or any(
             type(entry) is not dict
             or type(entry.get("image")) is not str
-            or type(entry.get("arch_ref")) is not str
+            or type(entry.get("revision_arch_ref")) is not str
             for entry in metadata[key]
         ):
             raise EvidenceError(f"frozen legacy {arch} {key} metadata is invalid")
@@ -435,7 +453,7 @@ def aggregate_native(
         for planned in metadata["parents"]:
             unit = units_by_target[planned["image"]]
             record = records_by_id[unit["id"]]
-            if planned["arch_ref"] != record["arch_ref"]:
+            if planned["revision_arch_ref"] != record["arch_ref"]:
                 raise EvidenceError(f"legacy parent ref does not match unit: {unit['id']}")
             parent_output.append(
                 {
@@ -449,7 +467,7 @@ def aggregate_native(
         for planned in metadata["images"]:
             unit = units_by_target[planned["image"]]
             record = records_by_id[unit["id"]]
-            if planned["arch_ref"] != record["arch_ref"]:
+            if planned["revision_arch_ref"] != record["arch_ref"]:
                 raise EvidenceError(f"legacy leaf ref does not match unit: {unit['id']}")
             image_output.append(
                 {
@@ -470,10 +488,12 @@ def aggregate_native(
             "platform": f"linux/{arch}",
             "runner_machine": machines.pop(),
             "kolla": plan["kolla"],
+            "base": plan["base"],
+            "openstack_sources": plan["openstack_sources"],
             "parents": parent_output,
             "images": image_output,
         }
-        if set(evidence) != LEGACY_EVIDENCE_KEYS:
+        if set(evidence) != NATIVE_EVIDENCE_KEYS:
             raise AssertionError("internal legacy evidence schema mismatch")
         output = output_dir / f"native-{arch}.json"
         output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")

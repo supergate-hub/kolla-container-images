@@ -12,16 +12,43 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from scripts.profile_resolver import find_stream, resolve_profile, stream_ids
+    from scripts.frozen_sources import (
+        DELIVERABLE_FILES,
+        DELIVERABLE_PROJECTS,
+        FrozenSourceError,
+        parse_deliverable_pin,
+        verify_exact_checkout,
+    )
+    from scripts.openstack_source_set import OpenStackSourceSetError, load_source_set
+    from scripts.profile_resolver import (
+        find_stream,
+        reject_duplicate_keys,
+        resolve_profile,
+        stream_ids,
+    )
     from scripts.release_policy import release_branch_for, validate_matrix_branch
 except ModuleNotFoundError:
-    from profile_resolver import find_stream, resolve_profile, stream_ids
+    from frozen_sources import (
+        DELIVERABLE_FILES,
+        DELIVERABLE_PROJECTS,
+        FrozenSourceError,
+        parse_deliverable_pin,
+        verify_exact_checkout,
+    )
+    from openstack_source_set import OpenStackSourceSetError, load_source_set
+    from profile_resolver import (
+        find_stream,
+        reject_duplicate_keys,
+        resolve_profile,
+        stream_ids,
+    )
     from release_policy import release_branch_for, validate_matrix_branch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX_PATH = ROOT / "config" / "build-matrix.json"
 PROFILES_DIR = ROOT / "config" / "profiles"
+SOURCE_SETS_DIR = ROOT / "config" / "openstack-sources"
 
 EXPECTED_IDENTITY = {
     "owner": "supergate-hub",
@@ -29,98 +56,46 @@ EXPECTED_IDENTITY = {
     "registry": "ghcr.io",
 }
 EXPECTED_PROFILES = ["core", "deployment"]
-EXPECTED_STREAMS = {
-    "2025.1-rocky-9": ("2025.1", "rocky", "9", "9"),
-    "2025.1-rocky-10": ("2025.1", "rocky", "10", "10"),
-    "2025.1-ubuntu-noble": (
-        "2025.1",
-        "ubuntu",
-        "24.04",
-        "noble",
-    ),
-    "2025.2-rocky-10": ("2025.2", "rocky", "10", "10"),
-    "2025.2-ubuntu-noble": (
-        "2025.2",
-        "ubuntu",
-        "24.04",
-        "noble",
-    ),
-    "2026.1-rocky-10": ("2026.1", "rocky", "10", "10"),
-    "2026.1-ubuntu-noble": (
-        "2026.1",
-        "ubuntu",
-        "24.04",
-        "noble",
-    ),
-}
-STREAM_FIELDS = (
-    "release",
-    "distro",
-    "base_tag",
-    "tag_token",
+MATRIX_KEYS = frozenset(
+    {
+        "schema_version",
+        "owner",
+        "repository",
+        "registry",
+        "profiles",
+        "release_metadata",
+        "releases",
+        "toolchains",
+        "bases",
+        "streams",
+        "architectures",
+        "tag_policy",
+    }
 )
-STREAM_KEYS = frozenset({"id", *STREAM_FIELDS, "publish_enabled"})
-EXPECTED_RELEASE_METADATA = {
-    "repository": "https://opendev.org/openstack/releases",
-    "commit": "b52dca944f47a401baa8f93a6994217d2a93ea56",
-}
-EXPECTED_TOOLCHAINS = {
-    "2025.1": {
-        "series": "epoxy",
-        "release_branch": "2025-1",
-        "kolla": {
-            "repository": "https://opendev.org/openstack/kolla",
-            "version": "20.4.0",
-            "commit": "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5",
-        },
-        "kolla_ansible": {
-            "repository": "https://opendev.org/openstack/kolla-ansible",
-            "version": "20.4.0",
-            "commit": "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696",
-        },
-    },
-    "2025.2": {
-        "series": "flamingo",
-        "release_branch": "2025-2",
-        "kolla": {
-            "repository": "https://opendev.org/openstack/kolla",
-            "version": "21.1.0",
-            "commit": "436395ae3523ee925abac3338e63fc5822208744",
-        },
-        "kolla_ansible": {
-            "repository": "https://opendev.org/openstack/kolla-ansible",
-            "version": "21.1.0",
-            "commit": "ea3326dd085369383b5b02edc4ddd192e29aed52",
-        },
-    },
-    "2026.1": {
-        "series": "gazpacho",
-        "release_branch": "2026-1",
-        "kolla": {
-            "repository": "https://opendev.org/openstack/kolla",
-            "version": "22.0.0",
-            "commit": "dcc077f50eafc5849c7de3fdb800353684fe1210",
-        },
-        "kolla_ansible": {
-            "repository": "https://opendev.org/openstack/kolla-ansible",
-            "version": "22.0.0",
-            "commit": "e9e3c092a7b3c308581e7597404c72fcfd4dd485",
-        },
-    },
-}
-TOOLCHAIN_KEYS = frozenset({"series", "release_branch", "kolla", "kolla_ansible"})
-SOURCE_PIN_KEYS = frozenset({"repository", "version", "commit"})
+RELEASE_KEYS = frozenset({"series", "source_set"})
+TOOLCHAIN_KEYS = frozenset({"kolla", "kolla_ansible"})
+SOURCE_PIN_KEYS = frozenset({"repository", "commit"})
+BASE_KEYS = frozenset({"distro", "os_version", "image", "tag"})
+STREAM_KEYS = frozenset(
+    {"id", "release", "toolchain", "base", "publish_enabled"}
+)
+RELEASE_METADATA_KEYS = frozenset({"repository", "commit"})
+RELEASES_REPOSITORY = "https://opendev.org/openstack/releases"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+VERSION_RE = re.compile(r"^[1-9][0-9]*\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*$")
+RELEASE_CONFIG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+BASE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
+SOURCE_SET_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 EXPECTED_ARCHITECTURES = ["amd64", "arm64"]
 EXPECTED_TAG_POLICY = {
     "deploy_tag_template": (
-        "{release}-{distro}-{tag_token}-{kolla_ansible_version}"
+        "{release}-{distro}-{os_version}-{kolla_ansible_version}"
     ),
 }
 DEPLOY_TEMPLATE_FIELDS = {
     "release",
     "distro",
-    "tag_token",
+    "os_version",
     "kolla_ansible_version",
 }
 SELECTOR_FIELDS = {"streams": "id", "releases": "release", "distros": "distro"}
@@ -284,7 +259,7 @@ EXPECTED_DEPLOYMENT_PARENTS = [
 
 def load_json(path: Path) -> Any:
     with path.open(encoding="utf-8") as file_obj:
-        return json.load(file_obj)
+        return json.load(file_obj, object_pairs_hook=reject_duplicate_keys)
 
 
 def template_fields(template: str) -> set[str]:
@@ -300,21 +275,67 @@ def validate_release_metadata(matrix: dict[str, Any], errors: list[str]) -> None
     if not isinstance(metadata, dict):
         errors.append("release_metadata must be an object")
         return
-    if set(metadata) != set(EXPECTED_RELEASE_METADATA):
+    if set(metadata) != RELEASE_METADATA_KEYS:
         errors.append(
             "release_metadata keys must be exactly "
-            f"{sorted(EXPECTED_RELEASE_METADATA)!r}"
+            f"{sorted(RELEASE_METADATA_KEYS)!r}"
         )
-        return
-    if metadata != EXPECTED_RELEASE_METADATA:
+    if metadata.get("repository") != RELEASES_REPOSITORY:
         errors.append(
-            f"release_metadata must be exactly {EXPECTED_RELEASE_METADATA!r}"
+            f"release_metadata.repository must be {RELEASES_REPOSITORY!r}"
         )
+    if not isinstance(metadata.get("commit"), str) or not COMMIT_RE.fullmatch(
+        metadata["commit"]
+    ):
+        errors.append(
+            "release_metadata.commit must be a lowercase 40-character SHA"
+        )
+
+
+def validate_releases(
+    matrix: dict[str, Any],
+    stream_releases: set[str],
+    errors: list[str],
+) -> None:
+    releases = matrix.get("releases")
+    if not isinstance(releases, dict) or not releases:
+        errors.append("releases must be a non-empty object")
+        return
+    if set(releases) != stream_releases:
+        errors.append(
+            "release keys must exactly match stream releases; "
+            f"expected {sorted(stream_releases)!r}, got "
+            f"{sorted(map(str, releases))!r}"
+        )
+    seen_source_sets: set[str] = set()
+    for release, release_config in releases.items():
+        context = f"releases[{release!r}]"
+        try:
+            release_branch_for(release)
+        except ValueError as error:
+            errors.append(f"{context} has invalid release: {error}")
+        if not isinstance(release_config, dict):
+            errors.append(f"{context} must be an object")
+            continue
+        if set(release_config) != RELEASE_KEYS:
+            errors.append(
+                f"{context} keys must be exactly {sorted(RELEASE_KEYS)!r}"
+            )
+        series = release_config.get("series")
+        if not isinstance(series, str) or not RELEASE_CONFIG_RE.fullmatch(series):
+            errors.append(f"{context}.series must be an OpenStack series name")
+        source_set = release_config.get("source_set")
+        if not isinstance(source_set, str) or not SOURCE_SET_ID_RE.fullmatch(source_set):
+            errors.append(f"{context}.source_set must be a source-set ID")
+        elif source_set in seen_source_sets:
+            errors.append(f"duplicate release source_set: {source_set}")
+        else:
+            seen_source_sets.add(source_set)
 
 
 def validate_toolchains(
     matrix: dict[str, Any],
-    stream_releases: set[str],
+    stream_toolchains: set[str],
     errors: list[str],
 ) -> None:
     toolchains = matrix.get("toolchains")
@@ -322,37 +343,23 @@ def validate_toolchains(
         errors.append("toolchains must be a non-empty object")
         return
 
-    if set(toolchains) != stream_releases:
+    if set(toolchains) != stream_toolchains:
         errors.append(
-            "toolchain releases must exactly match stream releases; "
-            f"expected {sorted(stream_releases)!r}, got "
+            "toolchain keys must exactly match stream references; "
+            f"expected {sorted(stream_toolchains)!r}, got "
             f"{sorted(map(str, toolchains))!r}"
         )
 
-    for release, toolchain in toolchains.items():
-        context = f"toolchains[{release!r}]"
-        if not isinstance(release, str):
-            errors.append(f"{context} release key must be a string")
-            continue
-        try:
-            expected_branch = release_branch_for(release)
-        except ValueError as error:
-            errors.append(f"{context} has invalid release: {error}")
-            continue
+    for version, toolchain in toolchains.items():
+        context = f"toolchains[{version!r}]"
+        if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
+            errors.append(f"{context} key must be a Kolla version")
         if not isinstance(toolchain, dict):
             errors.append(f"{context} must be an object")
             continue
         if set(toolchain) != TOOLCHAIN_KEYS:
             errors.append(
                 f"{context} keys must be exactly {sorted(TOOLCHAIN_KEYS)!r}"
-            )
-
-        series = toolchain.get("series")
-        if not isinstance(series, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", series):
-            errors.append(f"{context}.series must be an OpenStack series name")
-        if toolchain.get("release_branch") != expected_branch:
-            errors.append(
-                f"{context}.release_branch must be {expected_branch!r}"
             )
 
         for project, expected_repository in (
@@ -373,28 +380,193 @@ def validate_toolchains(
                 errors.append(
                     f"{source_context}.repository must be {expected_repository!r}"
                 )
-            version = source.get("version")
-            if not isinstance(version, str) or not re.fullmatch(
-                r"[1-9][0-9]*\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*",
-                version,
-            ):
-                errors.append(f"{source_context}.version is invalid: {version!r}")
             commit = source.get("commit")
             if not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
                 errors.append(
                     f"{source_context}.commit must be a lowercase 40-character SHA"
                 )
 
-    expected_toolchains = {
-        release: EXPECTED_TOOLCHAINS[release]
-        for release in sorted(stream_releases)
-        if release in EXPECTED_TOOLCHAINS
-    }
-    if toolchains != expected_toolchains:
-        errors.append(
-            "toolchains must be exactly the reviewed pins for active releases; "
-            f"expected {expected_toolchains!r}"
+
+def validate_release_metadata_toolchain_pins(
+    matrix: dict[str, Any],
+    checkout: Path,
+    errors: list[str],
+) -> None:
+    """Prove every release/toolchain association against an exact metadata checkout."""
+    metadata = matrix.get("release_metadata")
+    if not isinstance(metadata, dict):
+        return
+    repository = metadata.get("repository")
+    commit = metadata.get("commit")
+    if not isinstance(repository, str) or not isinstance(commit, str):
+        return
+    try:
+        verify_exact_checkout(
+            checkout,
+            repository=repository,
+            commit=commit,
         )
+    except FrozenSourceError as error:
+        errors.append(f"release metadata checkout is invalid: {error}")
+        return
+
+    releases = matrix.get("releases")
+    toolchains = matrix.get("toolchains")
+    streams = matrix.get("streams")
+    if not isinstance(releases, dict) or not isinstance(toolchains, dict):
+        return
+    if not isinstance(streams, list):
+        return
+
+    associations = {
+        (stream.get("release"), stream.get("toolchain"))
+        for stream in streams
+        if isinstance(stream, dict)
+        and isinstance(stream.get("release"), str)
+        and isinstance(stream.get("toolchain"), str)
+    }
+    for release, version in sorted(associations):
+        release_config = releases.get(release)
+        toolchain = toolchains.get(version)
+        if not isinstance(release_config, dict) or not isinstance(toolchain, dict):
+            continue
+        series = release_config.get("series")
+        if not isinstance(series, str) or not RELEASE_CONFIG_RE.fullmatch(series):
+            continue
+
+        for project in sorted(DELIVERABLE_PROJECTS):
+            source = toolchain.get(project)
+            if not isinstance(source, dict):
+                continue
+            expected_commit = source.get("commit")
+            if not isinstance(expected_commit, str) or not COMMIT_RE.fullmatch(
+                expected_commit
+            ):
+                continue
+            metadata_path = (
+                checkout
+                / "deliverables"
+                / series
+                / DELIVERABLE_FILES[project]
+            )
+            try:
+                actual_commit = parse_deliverable_pin(
+                    metadata_path,
+                    expected_project=DELIVERABLE_PROJECTS[project],
+                    expected_version=version,
+                )
+            except FrozenSourceError as error:
+                errors.append(
+                    f"release {release!r} toolchain {version!r} {project} cannot "
+                    f"be proven from pinned OpenStack Releases metadata: {error}"
+                )
+                continue
+            if actual_commit != expected_commit:
+                errors.append(
+                    f"toolchains[{version!r}].{project}.commit "
+                    f"{expected_commit!r} does not match pinned OpenStack Releases "
+                    f"metadata {actual_commit!r} for release {release!r}"
+                )
+
+
+def validate_bases(
+    matrix: dict[str, Any],
+    stream_bases: set[str],
+    errors: list[str],
+) -> None:
+    bases = matrix.get("bases")
+    if not isinstance(bases, dict) or not bases:
+        errors.append("bases must be a non-empty object")
+        return
+    if set(bases) != stream_bases:
+        errors.append(
+            "base keys must exactly match stream references; "
+            f"expected {sorted(stream_bases)!r}, got {sorted(map(str, bases))!r}"
+        )
+    for base_id, base in bases.items():
+        context = f"bases[{base_id!r}]"
+        if not isinstance(base_id, str) or not BASE_ID_RE.fullmatch(base_id):
+            errors.append(f"{context} key must be a base ID")
+        if not isinstance(base, dict):
+            errors.append(f"{context} must be an object")
+            continue
+        if set(base) != BASE_KEYS:
+            errors.append(f"{context} keys must be exactly {sorted(BASE_KEYS)!r}")
+        for field in BASE_KEYS:
+            value = base.get(field)
+            if not isinstance(value, str) or not value:
+                errors.append(f"{context}.{field} must be a non-empty string")
+        if any(key in base for key in ("digest", "index_digest", "platform_digests")):
+                errors.append(f"{context} must not pin image digests in raw config")
+
+
+def validate_source_sets(
+    matrix: dict[str, Any],
+    errors: list[str],
+    *,
+    require_exact_files: bool,
+) -> None:
+    releases = matrix.get("releases")
+    if not isinstance(releases, dict):
+        return
+    source_sets_dir = getattr(matrix, "source_sets_dir", SOURCE_SETS_DIR)
+    referenced: set[str] = set()
+    for release, release_config in releases.items():
+        if not isinstance(release_config, dict):
+            continue
+        series = release_config.get("series")
+        source_set_id = release_config.get("source_set")
+        if not all(isinstance(value, str) for value in (release, series, source_set_id)):
+            continue
+        referenced.add(source_set_id)
+        try:
+            source_set = load_source_set(
+                source_sets_dir / f"{source_set_id}.json",
+                expected_id=source_set_id,
+                expected_release=release,
+                expected_series=series,
+            )
+            if source_set.document["schema_version"] != 3:
+                errors.append(
+                    f"release {release!r} active source-set schema_version must be 3"
+                )
+        except OpenStackSourceSetError as error:
+            errors.append(f"release {release!r} source-set is invalid: {error}")
+    try:
+        present = {path.stem for path in source_sets_dir.glob("*.json")}
+    except OSError as error:
+        errors.append(f"cannot inspect source-set directory {source_sets_dir}: {error}")
+        return
+    missing = referenced - present
+    if missing:
+        errors.append(
+            f"source-set files are missing release references: {sorted(missing)!r}"
+        )
+    if require_exact_files:
+        for source_set_id in sorted(present):
+            try:
+                source_set = load_source_set(
+                    source_sets_dir / f"{source_set_id}.json",
+                    expected_id=source_set_id,
+                )
+            except OpenStackSourceSetError as error:
+                errors.append(
+                    f"repository source-set {source_set_id!r} is invalid: {error}"
+                )
+                continue
+            release = source_set.document["release"]
+            release_config = releases.get(release)
+            if not isinstance(release_config, dict):
+                errors.append(
+                    f"source-set {source_set_id!r} belongs to release {release!r}, "
+                    "which is not owned by this matrix"
+                )
+                continue
+            if source_set.document["series"] != release_config.get("series"):
+                errors.append(
+                    f"source-set {source_set_id!r} series does not match release "
+                    f"{release!r}"
+                )
 
 
 def validate_matrix(
@@ -402,9 +574,13 @@ def validate_matrix(
     errors: list[str],
     *,
     branch_name: str | None = None,
+    require_exact_source_files: bool | None = None,
 ) -> None:
-    if matrix.get("schema_version") != 3:
-        errors.append("matrix schema_version must be 3")
+    if matrix.get("schema_version") != 4:
+        errors.append("matrix schema_version must be 4")
+
+    if set(matrix) != MATRIX_KEYS:
+        errors.append(f"matrix keys must be exactly {sorted(MATRIX_KEYS)!r}")
 
     for field, expected in EXPECTED_IDENTITY.items():
         if matrix.get(field) != expected:
@@ -421,6 +597,7 @@ def validate_matrix(
         valid_stream_objects = False
 
     seen_ids: set[str] = set()
+    seen_combinations: set[tuple[str, str, str]] = set()
     for index, stream in enumerate(streams):
         context = f"streams[{index}]"
         if not isinstance(stream, dict):
@@ -439,62 +616,53 @@ def validate_matrix(
             errors.append(f"duplicate stream id: {stream_id}")
         seen_ids.add(stream_id)
 
-        expected = EXPECTED_STREAMS.get(stream_id)
-        if expected is None:
-            errors.append(f"unsupported stream id: {stream_id}")
-        else:
-            actual = tuple(stream.get(field) for field in STREAM_FIELDS)
-            if actual != expected:
-                errors.append(
-                    f"stream {stream_id!r} fields {STREAM_FIELDS!r} "
-                    f"must be {expected!r}"
-                )
+        for field in ("release", "toolchain", "base"):
+            value = stream.get(field)
+            if not isinstance(value, str) or not value:
+                errors.append(f"{context}.{field} must be a non-empty string")
+        combination = tuple(stream.get(field) for field in ("release", "toolchain", "base"))
+        if all(isinstance(value, str) for value in combination):
+            if combination in seen_combinations:
+                errors.append(f"duplicate stream combination: {combination!r}")
+            seen_combinations.add(combination)
 
         publish_enabled = stream.get("publish_enabled")
         if not isinstance(publish_enabled, bool):
             errors.append(f"stream {stream_id!r} publish_enabled must be a boolean")
-        elif publish_enabled is not True:
-            errors.append(f"stream {stream_id!r} publish_enabled must be true")
 
     ids: list[str] = []
     if valid_stream_objects:
         ids = stream_ids(matrix)
-        active_releases = {
-            stream.get("release")
-            for stream in streams
-            if isinstance(stream.get("release"), str)
-        }
-        expected_ids = [
-            stream_id
-            for stream_id, expected in EXPECTED_STREAMS.items()
-            if expected[0] in active_releases
-        ]
-        if ids != expected_ids:
-            errors.append(
-                "stream IDs must be exactly the reviewed streams for active "
-                f"releases: {expected_ids!r}"
-            )
 
     stream_releases = {
         stream["release"]
         for stream in streams
         if isinstance(stream, dict) and isinstance(stream.get("release"), str)
     }
+    stream_toolchains = {
+        stream["toolchain"]
+        for stream in streams
+        if isinstance(stream, dict) and isinstance(stream.get("toolchain"), str)
+    }
+    stream_bases = {
+        stream["base"]
+        for stream in streams
+        if isinstance(stream, dict) and isinstance(stream.get("base"), str)
+    }
     validate_release_metadata(matrix, errors)
-    validate_toolchains(matrix, stream_releases, errors)
-    if branch_name == "main":
-        if not valid_stream_objects or ids != list(EXPECTED_STREAMS):
-            errors.append(
-                "main matrix must contain the complete reviewed stream catalog"
-            )
-        toolchains = matrix.get("toolchains")
-        if not isinstance(toolchains, dict) or set(toolchains) != set(
-            EXPECTED_TOOLCHAINS
-        ):
-            errors.append(
-                "main matrix must contain every reviewed release toolchain"
-            )
-    elif branch_name is not None:
+    validate_releases(matrix, stream_releases, errors)
+    validate_source_sets(
+        matrix,
+        errors,
+        require_exact_files=(
+            branch_name in (None, "main")
+            if require_exact_source_files is None
+            else require_exact_source_files
+        ),
+    )
+    validate_toolchains(matrix, stream_toolchains, errors)
+    validate_bases(matrix, stream_bases, errors)
+    if branch_name not in (None, "main"):
         errors.extend(validate_matrix_branch(matrix, branch_name))
 
     if matrix.get("architectures") != EXPECTED_ARCHITECTURES:
@@ -536,24 +704,25 @@ def validate_matrix(
     if tag_policy != EXPECTED_TAG_POLICY:
         errors.append(f"tag_policy must be exactly {EXPECTED_TAG_POLICY!r}")
 
+    rendered_tags: set[str] = set()
     for stream in streams:
-        if not isinstance(stream, dict) or stream.get("id") not in EXPECTED_STREAMS:
+        if not isinstance(stream, dict) or not isinstance(stream.get("id"), str):
             continue
         stream_id = stream["id"]
         try:
             resolved_stream = find_stream(matrix, stream_id)
             deploy_tag = deploy_template.format(**resolved_stream)
-            expected_deploy_tag = (
-                f"{stream_id}-{resolved_stream['kolla_ansible_version']}"
-            )
-            if deploy_tag != expected_deploy_tag:
+            if deploy_tag != stream_id:
                 errors.append(
-                    f"deploy tag for stream {stream_id!r} must be "
-                    f"{expected_deploy_tag!r}"
+                    f"stream id {stream_id!r} must equal its semantic deploy tag "
+                    f"{deploy_tag!r}"
                 )
+            if deploy_tag in rendered_tags:
+                errors.append(f"duplicate rendered deploy tag: {deploy_tag}")
+            rendered_tags.add(deploy_tag)
             for arch in EXPECTED_ARCHITECTURES:
                 arch_tag = f"{deploy_tag}-{arch}"
-                expected = f"{expected_deploy_tag}-{arch}"
+                expected = f"{stream_id}-{arch}"
                 if arch_tag != expected:
                     errors.append(
                         f"architecture tag for {stream_id!r}/{arch!r} "
@@ -565,7 +734,7 @@ def validate_matrix(
 
 def validate_selector(
     selector: Any,
-    _matrix: dict[str, Any],
+    matrix: dict[str, Any],
     context: str,
     errors: list[str],
 ) -> None:
@@ -580,15 +749,21 @@ def validate_selector(
     if unknown:
         errors.append(f"{context} has unsupported keys: {sorted(unknown)!r}")
 
-    # Profiles are shared by every release branch. Validate dormant selectors
-    # against the reviewed catalog, then resolve only the active matrix streams.
-    stream_objects = [
-        {
-            "id": stream_id,
-            **dict(zip(STREAM_FIELDS, expected, strict=True)),
-        }
-        for stream_id, expected in EXPECTED_STREAMS.items()
-    ]
+    # Profiles are shared by every release branch, so values that are dormant
+    # in a branch-local matrix remain syntactically valid. Cross-field matching
+    # is enforced whenever every selected value is active in this matrix.
+    stream_objects: list[dict[str, Any]] = []
+    streams = matrix.get("streams")
+    if isinstance(streams, list):
+        for raw_stream in streams:
+            if not isinstance(raw_stream, dict) or not isinstance(
+                raw_stream.get("id"), str
+            ):
+                continue
+            try:
+                stream_objects.append(find_stream(matrix, raw_stream["id"]))
+            except (KeyError, TypeError, ValueError):
+                continue
     accepted = {
         field: {
             stream.get(stream_field)
@@ -599,6 +774,8 @@ def validate_selector(
     }
 
     selector_is_valid = not unknown
+    releases = matrix.get("releases")
+    aggregate_catalog = isinstance(releases, dict) and len(releases) > 1
     for field, values in selector.items():
         if field not in SELECTOR_FIELDS:
             continue
@@ -611,13 +788,18 @@ def validate_selector(
             if not isinstance(value, str) or not value:
                 errors.append(f"{field_context} values must be non-empty strings")
                 selector_is_valid = False
-            elif value not in accepted[field]:
+            elif aggregate_catalog and value not in accepted[field]:
                 errors.append(
                     f"{field_context} contains unsupported value: {value!r}"
                 )
                 selector_is_valid = False
 
-    if selector_is_valid and not any(
+    selector_is_active = selector_is_valid and all(
+        set(values) <= accepted[field]
+        for field, values in selector.items()
+        if field in SELECTOR_FIELDS and isinstance(values, list)
+    )
+    if selector_is_active and not any(
         all(
             stream.get(SELECTOR_FIELDS[field]) in values
             for field, values in selector.items()
@@ -910,10 +1092,21 @@ def validate_profile(
     else:
         if len(reviewed_streams) != len(set(reviewed_streams)):
             errors.append(f"{context} reviewed_streams must not contain duplicates")
-        if set(reviewed_streams) != set(EXPECTED_STREAMS):
+        active_streams = set(stream_ids(matrix))
+        if not active_streams <= set(reviewed_streams):
             errors.append(
-                f"{context} reviewed_streams must be exactly "
-                f"{sorted(EXPECTED_STREAMS)!r}"
+                f"{context} reviewed_streams must include every active stream: "
+                f"{sorted(active_streams)!r}"
+            )
+        releases = matrix.get("releases")
+        if (
+            isinstance(releases, dict)
+            and len(releases) > 1
+            and set(reviewed_streams) != active_streams
+        ):
+            errors.append(
+                f"{context} aggregate reviewed_streams must exactly match "
+                f"{sorted(active_streams)!r}"
             )
 
     images = profile.get("images")
@@ -1095,7 +1288,13 @@ def validate_profiles(matrix: dict[str, Any], errors: list[str]) -> None:
         if not profile_path.exists():
             errors.append(f"profile does not exist: {profile_path.relative_to(ROOT)}")
             continue
-        profile = load_json(profile_path)
+        try:
+            profile = load_json(profile_path)
+        except (OSError, UnicodeError, ValueError) as error:
+            errors.append(
+                f"cannot read {profile_path.relative_to(ROOT)}: {error}"
+            )
+            continue
         if not isinstance(profile, dict):
             errors.append(f"{profile_path.relative_to(ROOT)} must contain an object")
             continue
@@ -1111,18 +1310,41 @@ def parse_args() -> argparse.Namespace:
         "--branch",
         help="Optional target branch context: main or an exact YYYY-N release branch",
     )
+    parser.add_argument(
+        "--release-metadata-checkout",
+        type=Path,
+        help=(
+            "Optional exact, detached OpenStack Releases checkout used to prove "
+            "matrix Kolla and Kolla-Ansible pins"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     errors: list[str] = []
-    matrix = load_json(MATRIX_PATH)
-    if not isinstance(matrix, dict):
-        errors.append(f"{MATRIX_PATH.relative_to(ROOT)} must contain an object")
+    try:
+        matrix = load_json(MATRIX_PATH)
+    except (OSError, UnicodeError, ValueError) as error:
+        errors.append(f"cannot read {MATRIX_PATH.relative_to(ROOT)}: {error}")
     else:
-        validate_matrix(matrix, errors, branch_name=args.branch)
-        validate_profiles(matrix, errors)
+        if not isinstance(matrix, dict):
+            errors.append(f"{MATRIX_PATH.relative_to(ROOT)} must contain an object")
+        else:
+            validate_matrix(
+                matrix,
+                errors,
+                branch_name=args.branch,
+                require_exact_source_files=True,
+            )
+            if args.release_metadata_checkout is not None:
+                validate_release_metadata_toolchain_pins(
+                    matrix,
+                    args.release_metadata_checkout,
+                    errors,
+                )
+            validate_profiles(matrix, errors)
 
     if errors:
         print("Configuration validation failed:", file=sys.stderr)

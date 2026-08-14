@@ -15,10 +15,20 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+try:
+    from scripts.openstack_source_set import validate_frozen_source_contract
+except ModuleNotFoundError:
+    from openstack_source_set import validate_frozen_source_contract
+
+try:
+    from scripts.base_resolution import validate_resolved_base
+except ModuleNotFoundError:
+    from base_resolution import validate_resolved_base
+
 
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 IMAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-UNIT_EVIDENCE_SCHEMA_VERSION = 2
+UNIT_EVIDENCE_SCHEMA_VERSION = 3
 UNIT_KEYS = {
     "id",
     "kind",
@@ -41,6 +51,8 @@ UNIT_EVIDENCE_KEYS = {
     "candidate_id",
     "stream",
     "kolla",
+    "base",
+    "openstack_sources",
     "unit_id",
     "kind",
     "tier",
@@ -73,6 +85,9 @@ MIN_PREFLIGHT_FREE_BYTES = 8 * GIB
 MIN_BUILD_FREE_BYTES = 2 * GIB
 DISK_POLL_INTERVAL_SECONDS = 0.25
 DOCKER_ROOT_OVERRIDE = os.environ.get("KOLLA_DOCKER_ROOT")
+KOLLA_BUILD_CONFIG_FILE = "artifacts/config/kolla-build.conf"
+KOLLA_TEMPLATE_OVERRIDE_FILE = "artifacts/config/template-overrides.j2"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuildUnitError(RuntimeError):
@@ -100,6 +115,31 @@ def immutable_ref(arch_ref: str, digest: str) -> str:
     if not DIGEST_RE.fullmatch(digest):
         raise BuildUnitError(f"digest is invalid: {digest!r}")
     return f"{repository}@{digest}"
+
+
+def canonical_repository(repository: str) -> str:
+    """Expand Docker Hub familiar names without changing repository identity."""
+    components = repository.split("/")
+    if not repository or any(not component for component in components):
+        raise BuildUnitError(f"image repository is invalid: {repository!r}")
+
+    first = components[0]
+    has_registry = first == "localhost" or "." in first or ":" in first
+    if not has_registry:
+        components.insert(0, "docker.io")
+    elif first == "index.docker.io":
+        components[0] = "docker.io"
+
+    if components[0] == "docker.io" and len(components) == 2:
+        components.insert(1, "library")
+    return "/".join(components)
+
+
+def canonical_repo_digest(value: str) -> tuple[str, str]:
+    repository, separator, digest = value.rpartition("@")
+    if not separator or not repository or not DIGEST_RE.fullmatch(digest):
+        raise BuildUnitError(f"immutable image ref is invalid: {value!r}")
+    return canonical_repository(repository), digest
 
 
 def option_value(command: list[str], option: str) -> str:
@@ -169,9 +209,13 @@ def validate_unit(unit: Any) -> dict[str, Any]:
         raise BuildUnitError(f"frozen unit command is not structured argv: {unit_id}")
     if command[0] != "kolla-build" or command[-1] != f"^{target}$":
         raise BuildUnitError(f"frozen unit command target is invalid: {unit_id}")
-    if "--skip-existing" in command:
+    if command.count("--skip-existing") != 1:
         raise BuildUnitError(
-            f"frozen unit command must rebuild the final architecture tag: {unit_id}"
+            f"frozen unit command must contain --skip-existing exactly once: {unit_id}"
+        )
+    if "--skip-parents" in command:
+        raise BuildUnitError(
+            f"frozen unit command must not contain --skip-parents: {unit_id}"
         )
     if command.count("--push") != 1:
         raise BuildUnitError(f"frozen unit command must contain --push: {unit_id}")
@@ -211,6 +255,53 @@ def select_unit(plan: dict[str, Any], unit_id: str) -> dict[str, Any]:
     return matches[0]
 
 
+def validate_build_command_contract(
+    plan: dict[str, Any], unit: dict[str, Any]
+) -> None:
+    """Bind executable argv to the frozen source, base, and release inputs."""
+    command = unit["command"]
+    requested_ref = plan["base"]["requested_ref"]
+    base_image, separator, base_tag = requested_ref.rpartition(":")
+    if not separator or not base_image or not base_tag:
+        raise BuildUnitError("frozen base requested_ref is invalid")
+    expected_options = {
+        "--engine": "docker",
+        "--base": plan.get("distro"),
+        "--base-image": base_image,
+        "--base-tag": base_tag,
+        "--openstack-release": plan.get("release"),
+        "--config-file": KOLLA_BUILD_CONFIG_FILE,
+        "--locals-base": ".",
+        "--registry": plan.get("registry"),
+        "--namespace": f"{plan.get('owner')}/{plan.get('repository')}",
+    }
+    for option, expected in expected_options.items():
+        if not isinstance(expected, str) or not expected:
+            raise BuildUnitError(
+                f"frozen plan cannot determine command option {option}"
+            )
+        if option_value(command, option) != expected:
+            raise BuildUnitError(
+                f"frozen command {option} does not match the publish plan"
+            )
+    if command.count("--no-pull") != 1:
+        raise BuildUnitError("frozen command must contain --no-pull exactly once")
+
+    template_content = plan["openstack_sources"]["template_override"]["content"]
+    template_positions = [
+        index for index, value in enumerate(command) if value == "--template-override"
+    ]
+    if template_content:
+        if option_value(command, "--template-override") != KOLLA_TEMPLATE_OVERRIDE_FILE:
+            raise BuildUnitError(
+                "frozen command template override does not match the publish plan"
+            )
+    elif template_positions:
+        raise BuildUnitError(
+            "frozen command must not use a template override for an empty plan input"
+        )
+
+
 def validate_plan_identity(plan: Any) -> dict[str, Any]:
     if type(plan) is not dict:
         raise BuildUnitError("frozen publish plan must be an object")
@@ -225,7 +316,71 @@ def validate_plan_identity(plan: Any) -> dict[str, Any]:
         or not re.fullmatch(r"[0-9a-f]{40}", kolla["commit"])
     ):
         raise BuildUnitError("frozen publish plan Kolla source pin is invalid")
+    base = plan.get("base")
+    expected_base_keys = {
+        "id",
+        "requested_ref",
+        "index_digest",
+        "index_manifest_b64",
+        "platforms",
+    }
+    if (
+        type(base) is not dict
+        or set(base) != expected_base_keys
+        or type(base.get("id")) is not str
+        or type(base.get("requested_ref")) is not str
+        or not DIGEST_RE.fullmatch(str(base.get("index_digest", "")))
+        or type(base.get("platforms")) is not dict
+        or set(base["platforms"]) != {"amd64", "arm64"}
+    ):
+        raise BuildUnitError("frozen publish plan base resolution is invalid")
+    for arch, platform in (("amd64", "linux/amd64"), ("arm64", "linux/arm64")):
+        descriptor = base["platforms"].get(arch)
+        if (
+            type(descriptor) is not dict
+            or set(descriptor) != {"platform", "digest"}
+            or descriptor.get("platform") != platform
+            or not DIGEST_RE.fullmatch(str(descriptor.get("digest", "")))
+        ):
+            raise BuildUnitError("frozen publish plan base platform is invalid")
+    base_image, separator, base_tag = base["requested_ref"].rpartition(":")
+    if not separator or not base_image or not base_tag:
+        raise BuildUnitError("frozen publish plan base resolution is invalid")
+    try:
+        validate_resolved_base(
+            {"id": base["id"], "image": base_image, "tag": base_tag},
+            base,
+        )
+    except ValueError as error:
+        raise BuildUnitError(
+            "frozen publish plan base resolution is invalid"
+        ) from error
+    try:
+        validate_frozen_source_contract(plan.get("openstack_sources"))
+    except ValueError as error:
+        raise BuildUnitError(f"frozen OpenStack sources are invalid: {error}") from error
+    for unit in all_units(plan):
+        validate_build_command_contract(plan, unit)
     return plan
+
+
+def prepare_frozen_base(
+    runner: CommandRunner,
+    plan: dict[str, Any],
+    unit: dict[str, Any],
+) -> None:
+    """Seed Kolla's configured base tag from the frozen native descriptor."""
+    base = plan["base"]
+    repository, separator, tag = base["requested_ref"].rpartition(":")
+    if not separator or not repository or not tag:
+        raise BuildUnitError("frozen base requested_ref is invalid")
+    descriptor = base["platforms"][unit["arch"]]
+    immutable_base = f"{repository}@{descriptor['digest']}"
+    runner.run(["docker", "pull", "--platform", unit["platform"], immutable_base])
+    inspect_local_platform(runner, immutable_base, unit["platform"])
+    verify_local_digest(runner, immutable_base, immutable_base)
+    runner.run(["docker", "tag", immutable_base, base["requested_ref"]])
+    inspect_local_platform(runner, base["requested_ref"], unit["platform"])
 
 
 def validate_summary(summary: Any, unit: dict[str, Any]) -> dict[str, list[str]]:
@@ -349,6 +504,17 @@ def inspect_local_platform(
         )
 
 
+def verify_local_ref_absent(runner: CommandRunner, ref: str) -> None:
+    result = runner.run(
+        ["docker", "image", "ls", "--quiet", "--no-trunc", ref],
+        capture_output=True,
+    )
+    if result.stdout.strip():
+        raise BuildUnitError(
+            f"target architecture ref already exists locally before build: {ref}"
+        )
+
+
 def verify_local_digest(runner: CommandRunner, ref: str, expected_immutable_ref: str) -> None:
     result = runner.run(
         ["docker", "image", "inspect", ref, "--format", "{{json .RepoDigests}}"],
@@ -358,8 +524,19 @@ def verify_local_digest(runner: CommandRunner, ref: str, expected_immutable_ref:
         repo_digests = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise BuildUnitError(f"local RepoDigests for {ref} are not JSON") from exc
-    if type(repo_digests) is not list or expected_immutable_ref not in repo_digests:
+    if type(repo_digests) is not list:
         raise BuildUnitError(f"local image {ref} does not contain expected digest")
+    expected = canonical_repo_digest(expected_immutable_ref)
+    for repo_digest in repo_digests:
+        if type(repo_digest) is not str:
+            continue
+        try:
+            actual = canonical_repo_digest(repo_digest)
+        except BuildUnitError:
+            continue
+        if actual == expected:
+            return
+    raise BuildUnitError(f"local image {ref} does not contain expected digest")
 
 
 def remote_descriptor(
@@ -429,6 +606,8 @@ def validate_input_record(
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
         "kolla": plan["kolla"],
+        "base": plan["base"],
+        "openstack_sources": plan["openstack_sources"],
         "unit_id": planned_unit["id"],
         "kind": planned_unit["kind"],
         "tier": planned_unit["tier"],
@@ -513,6 +692,11 @@ def execute_build_unit(
     disk_sampler: Callable[[], int] | None = None,
     machine: str | None = None,
 ) -> dict[str, Any]:
+    if Path.cwd().resolve() != REPOSITORY_ROOT.resolve():
+        raise BuildUnitError(
+            "build unit must run from the checked-out repository root so frozen "
+            "relative source archives cannot be rebound"
+        )
     runner = runner or CommandRunner()
     if disk_sampler is None:
         docker_root = docker_root_path(runner)
@@ -535,6 +719,8 @@ def execute_build_unit(
         )
 
     consumed_ancestors = resolve_ancestors(plan, unit, input_evidence_dir)
+    if unit["target"] == "base":
+        prepare_frozen_base(runner, plan, unit)
     for ancestor in consumed_ancestors:
         runner.run(
             [
@@ -556,6 +742,7 @@ def execute_build_unit(
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     logs_path.mkdir(parents=True, exist_ok=True)
     summary_path.unlink(missing_ok=True)
+    verify_local_ref_absent(runner, unit["arch_ref"])
     minimum_during_build = runner.run_monitored(unit["command"], disk_sampler)
     after_build = disk_sampler()
     if min(minimum_during_build, after_build) < MIN_BUILD_FREE_BYTES:
@@ -599,6 +786,8 @@ def execute_build_unit(
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
         "kolla": plan["kolla"],
+        "base": plan["base"],
+        "openstack_sources": plan["openstack_sources"],
         "unit_id": unit["id"],
         "kind": unit["kind"],
         "tier": unit["tier"],

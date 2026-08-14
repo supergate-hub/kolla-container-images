@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts" / "validate-kolla-build-summary.py"
 PLANNER = ROOT / "scripts" / "plan-publish.py"
 CONTRACT = ROOT / "tests" / "fixtures" / "kolla-build-summary-contract.json"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 TEST_CANDIDATE_ID = "123456789-1"
 EXPECTED_METHOD_SHA256 = (
     "02c656c628dc9f127ada22d993e0693fe"
@@ -26,6 +27,12 @@ EXPECTED_VERSION_PROVENANCE = {
         "distribution": "kolla==20.4.0",
         "source_path": "kolla/image/kolla_worker.py",
         "module_sha256": "6a035d50858519474d9b60bf7e502621603c151375ca1bbfc9d06abb7fdf658a",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+    "20.5.0": {
+        "distribution": "kolla==20.5.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "de2428c30f3030c17855103cbc491203d6025fa7427093e41e9cbfe091b6325d",
         "summary_method_sha256": EXPECTED_METHOD_SHA256,
     },
     "21.1.0": {
@@ -54,6 +61,7 @@ def candidate_plan() -> dict:
             "--profile", "core",
             "--image", "keystone",
             "--candidate-id", TEST_CANDIDATE_ID,
+            "--base-manifest", str(BASE_INDEX_FIXTURE),
             "--dry-run",
         ],
         cwd=ROOT,

@@ -1,292 +1,272 @@
 # kolla-container-images
 
-This public repository builds and publishes native AMD64 and ARM64 Kolla
-container images as public packages under
-`ghcr.io/supergate-hub/kolla-container-images`, combines each leaf
-into an architecture-neutral multi-architecture manifest, validates its
-evidence, and produces a generic digest-bound candidate lock for
+This repository builds native AMD64 and ARM64 Kolla images, publishes them to
+`ghcr.io/supergate-hub/kolla-container-images`, creates two-platform manifests,
+and emits provenance-rich publish summaries and generic candidate locks for
 Kolla-Ansible.
 
-## 무료 운영 결론
-
-이 이미지 파이프라인을 위해 repository를 여러 개로 나눌 필요가 없다. **Public
-repository 하나**에 소스, workflow, 검증 증거를 함께 두고 GHCR package도
-Public으로 공개하는 구성이 가장 간단하다. repository를 나누어도 무료 혜택이
-늘지 않고, 오히려 설정·권한·증거 추적만 복잡해진다.
-
-Workflow는 repository `GITHUB_TOKEN`으로 package를 생성해 GitHub의 repository
-visibility 상속 기본값을 사용한다. 그래도 각 package가 처음 생성된 뒤 실제
-visibility가 Public인지 확인하고, 필요하면 명시 전환한 다음 익명 pull을 검증해야
-한다. 이 확인 전에는 Public 서빙 완료로 보지 않는다.
-
-현재 GitHub 정책에서 Public repository의 **standard GitHub-hosted runner**
-사용은 과금 대상 런너 분(minute) 제한 없이 무료이며, Public GHCR package의
-storage와 bandwidth도 무료이다. 다만 larger runner는 Public repository에서도
-항상 과금되므로 사용하지 않는다. 이는 영구적 보장이 아니라 현재 GitHub
-정책에 따른 설계이므로 주기적으로 billing 정책을 다시 확인한다. Actions의
-일반적인 job, concurrency, API 제한은 여전히 적용된다.
+The pipeline policy requires every stream to be built and image-smoked on
+native ARM64 CI as well as native AMD64 CI.
 
 ## Responsibility boundary
 
 ```text
-build -> publish per-architecture images -> create multi-arch manifests
+build -> publish revision architecture images -> create revision manifest
       -> publish summary -> generic candidate lock artifact
-      -> hand off to openstack-infra-ops
+      -> update semantic alias -> hand off to openstack-infra-ops
 ```
 
-This repository ends at that generic candidate lock artifact.
-`openstack-infra-ops` owns environment-specific locks, Dev/Stg/Prod tags and
-pointers, candidate selection, site-specific validation, promotion,
-deployment orchestration, and rollback. It also owns external Ceph and site
-configuration. No environment state or deployment action belongs here.
+The handoff is the terminal boundary. `openstack-infra-ops` owns environment
+selection, environment-specific locks and pointers, deployment validation,
+promotion, deployment orchestration, rollback, Ceph, credentials, and
+site-specific configuration. None of that state or automation belongs here.
 
-Management Kubernetes and workload Kubernetes are separate infrastructure.
-They are outside the OpenStack cluster count and outside this repository's
-responsibility.
+## Branch and configuration model
+
+`config/build-matrix.json` uses schema v4. `main` is the aggregate catalog and
+cannot publish. Protected release branches contain the same workflows,
+scripts, tests, and docs as `main`, but only their release-owned matrix rows and
+OpenStack source-set files:
+
+```text
+main
+├── .github/workflows/, scripts/, tests/, docs/
+└── config/
+    ├── build-matrix.json               # every supported release and stream
+    ├── openstack-sources/
+    │   ├── epoxy-*.json
+    │   ├── flamingo-*.json
+    │   └── gazpacho-*.json
+    └── profiles/
+
+2025-1
+├── same common code
+└── config/
+    ├── build-matrix.json               # 2025.1 only
+    ├── openstack-sources/epoxy-*.json
+    └── profiles/
+
+2025-2                                      # 2025.2 + Flamingo source set only
+2026-1                                      # 2026.1 + Gazpacho source set only
+```
+
+The branch name is derived from the OpenStack release (`2025.1` -> `2025-1`)
+and is not duplicated in the matrix. Validation rejects mixed-release branch
+catalogs, unknown references, unused toolchains or bases, duplicate
+release/toolchain/base combinations, and stream IDs that differ from their
+rendered semantic tag.
+
+Schema v4 separates four concerns:
+
+- `releases` maps an OpenStack release and series to an immutable source-set
+  revision.
+- `toolchains` is keyed by the common Kolla/Kolla-Ansible version. Their
+  repositories and exact 40-character commits remain separate and must match
+  the pinned OpenStack Releases metadata.
+- `bases` records only `distro`, exact `os_version`, image repository, and
+  image tag. Digests are deliberately absent from raw configuration.
+- `streams` joins one release, toolchain, and base. It does not repeat Kolla
+  versions, base tags, tag tokens, or digests.
 
 ## Supported streams
 
-`config/build-matrix.json` is the source of truth. `main` carries the aggregate
-catalog shown below so common changes can be validated together. Each release
-branch carries only its owned subset: `2025-1` owns `2025.1`, `2025-2` owns
-`2025.2`, and `2026-1` owns `2026.1`. A mixed-release or incomplete
-branch-local matrix fails validation.
+The aggregate `main` catalog contains exactly these eight active streams:
 
-Streams select release and base OS, while one release-scoped toolchain records
-the exact Kolla and Kolla-Ansible version/commit pair inherited by every distro
-stream in that release. The matrix also pins the OpenStack Releases metadata
-snapshot used as the provenance source; these values are never supplied as
-free-form workflow fields.
+| Stream ID / semantic tag | Release branch | Toolchain | Configured base | Deployment leaves |
+| --- | --- | --- | --- | ---: |
+| `2025.1-rocky-9.8-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Rocky `9.8` | 63 |
+| `2025.1-rocky-10.2-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Rocky `10.2` | 63 |
+| `2025.1-ubuntu-24.04-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Ubuntu `24.04` | 64 |
+| `2025.1-rocky-10.2-20.5.0` | `2025-1` | Kolla / Kolla-Ansible `20.5.0` | Rocky `10.2` | 63 |
+| `2025.2-rocky-10.2-21.1.0` | `2025-2` | Kolla / Kolla-Ansible `21.1.0` | Rocky `10.2` | 63 |
+| `2025.2-ubuntu-24.04-21.1.0` | `2025-2` | Kolla / Kolla-Ansible `21.1.0` | Ubuntu `24.04` | 64 |
+| `2026.1-rocky-10.2-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
+| `2026.1-ubuntu-24.04-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 66 |
 
-| OpenStack release | Series / release branch | Kolla source | Kolla-Ansible source |
-| --- | --- | --- | --- |
-| `2025.1` | Epoxy / `2025-1` | `20.4.0` @ `99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5` | `20.4.0` @ `0786e1d6bd9a6da2d8ae15cc16a891bef0d32696` |
-| `2025.2` | Flamingo / `2025-2` | `21.1.0` @ `436395ae3523ee925abac3338e63fc5822208744` | `21.1.0` @ `ea3326dd085369383b5b02edc4ddd192e29aed52` |
-| `2026.1` | Gazpacho / `2026-1` | `22.0.0` @ `dcc077f50eafc5849c7de3fdb800353684fe1210` | `22.0.0` @ `e9e3c092a7b3c308581e7597404c72fcfd4dd485` |
+The `core` profile resolves to 21 leaves for every stream. The two 2025.1
+Rocky 10.2 streams demonstrate why a release cannot own only one toolchain:
+20.4.0 and 20.5.0 coexist without overwriting each other. When Rocky 10.3 is
+needed, add a new `rocky-10.3` base and new streams; do not mutate the 10.2
+identity.
 
-The metadata source is `openstack/releases` at commit
-`b52dca944f47a401baa8f93a6994217d2a93ea56`. The workflow checks out that exact
-metadata commit, proves its deliverable YAML names the configured Kolla and
-Kolla-Ansible version/commit pair, and checks out both source commits with
-detached `HEAD`. It installs Kolla from its exact source checkout and verifies
-the installed version and local-source provenance. The version is additional
-identity, not a PyPI substitute for the pinned Kolla commit. Kolla-Ansible is
-not installed to build images; its exact checkout and pin are preserved in the
-plan, summary, and lock provenance for the external consumer. Any mismatch
-fails closed.
+## Pinned OpenStack sources
 
-| Stream ID and deploy tag | Kolla / Kolla-Ansible pins | Kolla build base | Role |
-| --- | --- | --- | --- |
-| `2025.1-rocky-9` | `20.4.0` / `20.4.0` | Rocky `9` | Standing Dev/Stg/Prod baseline |
-| `2025.1-rocky-10` | `20.4.0` / `20.4.0` | Rocky `10` | Build, manifest, digest, native-smoke, and lock compatibility |
-| `2025.1-ubuntu-noble` | `20.4.0` / `20.4.0` | Ubuntu `24.04`; deploy token `noble` | Build, manifest, digest, native-smoke, and lock compatibility |
-| `2025.2-rocky-10` | `21.1.0` / `21.1.0` | Rocky `10` | Build, manifest, digest, native-smoke, and lock compatibility |
-| `2025.2-ubuntu-noble` | `21.1.0` / `21.1.0` | Ubuntu `24.04`; deploy token `noble` | Build, manifest, digest, native-smoke, and lock compatibility |
-| `2026.1-rocky-10` | `22.0.0` / `22.0.0` | Rocky `10` | Build, manifest, digest, native-smoke, and lock compatibility |
-| `2026.1-ubuntu-noble` | `22.0.0` / `22.0.0` | Ubuntu `24.04`; deploy token `noble` | Build, manifest, digest, native-smoke, and lock compatibility |
+There is no single commit representing all OpenStack services. Each release
+therefore points to a separate source-set under `config/openstack-sources/`.
+It covers the source closure used by the reviewed profile: parent images,
+services, additions, Horizon plugins, `requirements`, and Kolla Toolbox
+constraints. Every Git build input is an exact `build_commit` SHA. Inline
+Dockerfile downloads used by the reviewed closure, including `ovn-ctl` and
+the Epoxy MariaDB `clustercheck`, are also recorded by commit-addressed URL
+and SHA-256 and rendered as checksum-verifying template overrides.
 
-All listed streams are publish-capable from their matching protected release
-branch behind the same `dry_run: true` default, scope variable, exact approval
-phrase, and protected-environment gate. `main` is validation-only and cannot
-publish. The six compatibility streams do not create a standing cluster. When
-a future stream becomes primary, external operations first validate its
-candidate on shared Stg and only then promote it to Prod.
+`track_ref` such as `stable/2025.1` records where a snapshot was discovered;
+it is metadata and is never passed to Kolla as a build reference.
+`nearest_release` is also explanatory metadata. The build uses only
+`build_commit`. For each native unit, the required commits are fetched without
+remote tags into closed temporary mirrors. The hash-locked PBR installation
+derives the version from the frozen release tag and commit ancestry, then the
+tracked files and that version are exported as sorted, metadata-normalized,
+`.git`-free local archives. Kolla consumes those archives instead of cloning
+the upstream repositories. The source-set canonical digest and deterministic
+`kolla-build.conf` and template-override digests flow through the frozen plan,
+unit/native evidence, publish summary, and lock. A missing pin, moving build
+reference, source closure mismatch, or digest mismatch fails closed.
 
-The `core` profile has 21 leaves in every stream. The stream-resolved
-`deployment` closure has these exact leaf counts:
+Kolla Toolbox constraints are bound to the exact `requirements` commit and
+their recorded SHA-256 is verified in the image build. This keeps those bytes
+inside the same source-set provenance contract rather than trusting a moving
+redirect or an unverified download.
 
-| Release | Rocky | Ubuntu |
-| --- | ---: | ---: |
-| 2025.1 | 63 | 64 |
-| 2025.2 | 63 | 64 |
-| 2026.1 | 65 | 66 |
+Source-set files are append-only revisions. Create a new revision when adding
+a toolchain or intentionally taking a CVE/bugfix snapshot; do not silently
+rewrite an existing revision. Active source-set schema v3 records
+`kolla_source_inputs` for every compatible toolchain: both exact Kolla and
+Kolla-Ansible pins, the pinned `sources.py` digest, and the normalized source
+closure digest. Stream resolution rejects a toolchain that is absent or differs
+from this record, so adding a toolchain requires a new source-set revision.
 
-## Operating topology and architecture policy
+Validation and publish planning also check out the matrix-pinned
+`openstack/releases` commit and compare every Kolla/Kolla-Ansible version and
+commit against its release deliverables before environment approval.
 
-- Dev consists of 2-3 isolated per-user labs on `bb00` as needed.
-- Shared Stg is one HA cluster on `bb01` and `bb02`.
-- Prod is one cluster in the Indeokwon IDC.
+## Frozen base images
 
-Current Dev and Stg OpenStack nodes are AMD64. The pipeline policy requires
-every stream to be built and image-smoked on native ARM64 CI before its ARM64
-artifacts are accepted. A future ARM64 physical node joins the same
-OpenStack cluster when it uses the same release and base-OS stream; it does not
-create another logical environment. QEMU-only output is not native ARM64
-readiness evidence.
+The matrix stores a human-readable base reference such as
+`quay.io/rockylinux/rockylinux:10.2`. Plan generation resolves that tag once
+and freezes the index digest plus exact `linux/amd64` and `linux/arm64` child
+digests. A missing platform fails before any image build.
 
-Builds use only GitHub's standard native hosted runners: `ubuntu-24.04` for
-AMD64 and `ubuntu-24.04-arm` for ARM64. Larger runners and privately managed
-runner fleets are outside this design. To fit the standard runner's 14 GB
-disk, the frozen plan builds exactly one Kolla target per job with
-`--threads 1` and `--push-threads 1`; every build matrix uses
-`max-parallel: 4`.
+Each native unit pulls its frozen child digest, verifies the platform and
+digest, retags it to the configured local base tag, and invokes Kolla with
+`--no-pull`. The same run therefore cannot re-resolve the mutable upstream tag.
+A later run may resolve a different digest and will produce a different
+revision image with that provenance.
 
-The exact dependency DAG is:
+DNF/APT repository snapshots are intentionally out of scope. The plan pins the
+container base, OpenStack sources, and Kolla toolchain, but does not yet promise
+package-level bit-for-bit rebuilds.
 
-```text
-parent tier 0 -> parent tier 1 -> parent tier 2
-              -> leaf stage 0 -> optional leaf stage 1
-              -> aggregate native evidence
-              -> multi-arch manifests -> publish summary -> generic candidate lock
-              -> hand off to openstack-infra-ops
-```
+## Image tags and candidate lock
 
-Leaf stage 1 is normally empty. The deployment profile uses it for the real
-selected-leaf dependency `ovn-sb-db-server -> ovn-sb-db-relay`. Jobs consume
-the immutable digest in the preceding unit's JSON evidence directly; there is
-no parent-index artifact.
-
-Each fresh job must have at least 8 GiB free Docker storage after cleanup and
-must stay at or above 2 GiB while building. The hosted-only design remains a
-feasibility gate until the eight-unit Keystone canary succeeds on both native
-architectures. Successful plan, unit, native, and terminal JSON evidence is
-retained for seven days; failure diagnostics are retained for one day. Jobs do
-not upload Docker layers, image tar files, or Docker caches. The canary is the
-practical confirmation that each sharded target fits the advertised runner,
-not merely a configuration check.
-
-The OpenStack node OS and Kolla container base must match. A Rocky 9 lab VM on
-an Ubuntu physical host satisfies this rule because the OpenStack node is the
-Rocky 9 VM; the hypervisor host OS does not select the container stream.
-
-## Service, storage, and guest-image policy
-
-The deployment profile covers the core OpenStack services plus Cinder, Manila,
-Octavia, Valkey, Prometheus, Grafana, Fluentd, OpenSearch, and OpenSearch
-Dashboards. Backends are selected by the external deployment system:
-
-| Environment or validation tier | Cinder | Manila |
-| --- | --- | --- |
-| Dev | Per-lab LVM with LIO and `iscsid` | Manila Generic with DHSS and an NFS share-server VM |
-| Stg and Prod | External Ceph RBD | External CephFS NFS through cephadm-managed NFS-Ganesha |
-| Compatibility smoke | Disposable LVM with LIO on Rocky or TGT on Ubuntu | Disposable Generic/NFS backend |
-
-Ceph provisioning, pools, identities, `ceph.conf`, keys, and NFS-Ganesha HA
-remain external. Standing Dev/Stg/Prod and compatibility smoke all enable and
-validate Prometheus, Grafana, Fluentd, OpenSearch, and OpenSearch Dashboards.
-
-Octavia Amphora guest images and Manila Generic share-server guest images live
-in Glance. They require architecture-compatible variants and explicit
-scheduling for mixed compute, and they are not Kolla container artifacts.
-Their build pipelines, Glance storage, and scheduling policy remain external
-and are owned by `openstack-infra-ops`.
-
-## Evidence ownership
-
-This repository owns native build and image-smoke evidence keyed by
-`stream × architecture × build unit`: runner identity, parent ancestry,
-immutable child digest, disk measurements, and recorded image platform. Leaf
-evidence also records `/bin/true` execution, exact multi-architecture manifest
-membership, publish-summary coverage, and generic-lock consistency.
-
-Matching-OS Kolla-Ansible deployment-smoke evidence is keyed by
-`stream × architecture` and remains external. `openstack-infra-ops` or a
-dedicated deployment harness owns service-level checks for Keystone, Nova,
-Cinder, Manila, Octavia, and observability. Compatibility evidence does not
-imply a standing compatibility cluster.
-
-## Image and lock outputs
-
-For a `2025.1-rocky-9` build pinned to Kolla-Ansible `20.4.0`, one selected leaf
-is published under these final native child tags:
+For stream `2025.1-rocky-10.2-20.5.0` and candidate ID `123456789-1`:
 
 ```text
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-amd64
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0-arm64
+semantic alias
+2025.1-rocky-10.2-20.5.0
+
+immutable run revision
+2025.1-rocky-10.2-20.5.0-rev-123456789-1
+
+native revision children
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-10.2-20.5.0-rev-123456789-1-amd64
+ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-10.2-20.5.0-rev-123456789-1-arm64
 ```
 
-After both child digests pass validation, the workflow creates the final
-multi-architecture reference used by the lock:
+The semantic tag contract is
+`{release}-{distro}-{os_version}-{kolla_ansible_version}`. Legacy
+`-candidate-...` image tags are removed. Candidate ID remains an internal
+identity joining the plan, evidence, summary, and lock, while `-rev-...` names
+the immutable published revision.
 
-```text
-ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0
-```
+The workflow builds and pushes native revision tags, creates and verifies the
+revision multi-architecture manifest, validates and uploads the publish
+summary and eligible lock, and only then moves the semantic alias to the
+revision digest. A semantic-alias failure cannot invalidate the already
+uploaded revision lock. Existing major/codename GHCR tags are not deleted, but
+they are no longer updated and are not aliases for the exact-version streams.
 
-The tag contract is
-`{release}-{distro}-{tag_token}-{kolla_ansible_version}` with `-{arch}` added
-only to native child tags. Candidate-qualified image tags and an unversioned
-stream alias are not published. Candidate ID still identifies one workflow run
-and its plan, evidence, summary, terminal artifact, and generic lock; it is not
-part of an image tag.
-
-The candidate lock supplies tag-only Kolla-Ansible variables and records the
-digest binding separately:
+Lock schema v3 records both `semantic_ref` and `revision_ref`, the manifest
+digest and immutable digest ref, architecture child refs/digests, exact
+Kolla/Kolla-Ansible commits, the full OpenStack source-set provenance, and the
+resolved base index/child digests. Root-level Kolla-Ansible `*_image_full`
+variables use the revision ref, never the mutable semantic alias:
 
 ```yaml
 _kolla_candidate_lock:
-  schema_version: 2
-  stream: "2025.1-rocky-9"
-  release: "2025.1"
-  release_series: "epoxy"
-  release_branch: "2025-1"
-  release_metadata:
-    repository: "https://opendev.org/openstack/releases"
-    commit: "b52dca944f47a401baa8f93a6994217d2a93ea56"
-  kolla:
-    repository: "https://opendev.org/openstack/kolla"
-    version: "20.4.0"
-    commit: "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5"
-  kolla_ansible:
-    repository: "https://opendev.org/openstack/kolla-ansible"
-    version: "20.4.0"
-    commit: "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696"
-  scope:
-    profile: "deployment"
-    image: "all"
-    image_count: 63
+  schema_version: 3
+  stream: "2025.1-rocky-10.2-20.5.0"
+  base:
+    requested_ref: "quay.io/rockylinux/rockylinux:10.2"
+    index_digest: "sha256:<base-index-digest>"
+  openstack_sources:
+    source_set: {id: "epoxy-20260813-r1", projects: "<full pinned mapping>"}
+    canonical_digest: "sha256:<source-set-digest>"
   images:
-    "nova-compute":
-      deploy_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
-      manifest_digest: "sha256:<multi-arch-manifest-digest>"
-      immutable_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute@sha256:<multi-arch-manifest-digest>"
-      kolla_ansible_variables:
-        - "nova_compute_image_full"
-nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-9-20.4.0"
+    nova-compute:
+      semantic_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-10.2-20.5.0"
+      revision_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-10.2-20.5.0-rev-123456789-1"
+      manifest_digest: "sha256:<manifest-digest>"
+      immutable_ref: "ghcr.io/supergate-hub/kolla-container-images/nova-compute@sha256:<manifest-digest>"
+nova_compute_image_full: "ghcr.io/supergate-hub/kolla-container-images/nova-compute:2025.1-rocky-10.2-20.5.0-rev-123456789-1"
 ```
 
-Kolla-Ansible consumes the root-level tag-only variables. Before deployment,
-openstack-infra-ops must verify that each deploy_ref resolves to the recorded
-manifest_digest and that immutable_ref returns the same manifest bytes. The
-lock selects neither an architecture nor an environment.
+Before deployment, `openstack-infra-ops` verifies the revision ref and
+immutable ref against the recorded manifest bytes and digest. Kolla-Ansible
+selects the correct native child from the multi-architecture manifest; root
+variables never carry `-amd64`, `-arm64`, or `@sha256`.
+
+## GitHub Actions
+
+`.github/workflows/publish.yml` exposes exactly three inputs:
+
+| Input | Contract |
+| --- | --- |
+| `operation` | `plan` (default) or `publish` |
+| `stream` | Exact schema-v4 stream ID |
+| `scope` | `keystone`, `core`, or `deployment` |
+
+Scopes map to local planner arguments as `keystone -> core/keystone`,
+`core -> core/all`, and `deployment -> deployment/all`. The old `profile`,
+`image`, `dry_run`, `approval`, and typed approval phrase are not workflow
+inputs. Arbitrary profile or single-image planning remains available only in
+the local planner CLI.
+
+`operation=plan` creates a frozen plan and Actions summary without registry
+mutation, publish summary, or lock. `operation=publish` is rejected from
+`main`, tags, feature branches, the wrong release branch, or a disabled stream.
+It requires a protected `YYYY-N` branch, the `ghcr-publish` environment
+reviewer, and the scope-specific kill switch. See
+[docs/publish.md](docs/publish.md) for the operator contract and
+[docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
 
 ## Repository layout
 
 ```text
-config/build-matrix.json         Release toolchains, seven streams, architectures, and registry
-config/profiles/                 Stream-aware image catalogs and Kolla-Ansible mappings
-scripts/release_policy.py        Canonical OpenStack release and branch ownership rules
-scripts/validate-config.py       Configuration validator
-scripts/plan-publish.py          Read-only frozen-plan renderer
-scripts/run-build-unit.py        One-target native build, push, disk check, and smoke
-scripts/aggregate-native-evidence.py  Exact all-unit evidence aggregator
-scripts/validate-kolla-build-summary.py  One-target Kolla summary validator
-scripts/validate-publish-approval.py  Non-dry-run approval gate
-scripts/validate-publish-summary.py   Publish-summary validator
-scripts/generate-lock.py         Generic candidate-lock renderer
-.github/workflows/validate.yml   Push and pull-request validation
-.github/workflows/publish.yml    Dispatch-only manual and CI publish path
-.github/workflows/build-unit.yml Reusable standard hosted one-target build job
-docs/build-readiness.md          Native runner and evidence readiness
-docs/publish.md                  Publish, consumption, manual setup, and handoff contract
+config/build-matrix.json              Aggregate or branch-local schema-v4 catalog
+config/openstack-sources/             Immutable OpenStack source-set revisions
+config/profiles/                      Reviewed image catalogs and variable mapping
+scripts/base_resolution.py            OCI index/child digest resolver and validator
+scripts/openstack_source_set.py       Source-set validation and Kolla overrides
+scripts/plan-publish.py               Frozen-plan renderer
+scripts/run-build-unit.py             One native target build, push, and evidence
+scripts/aggregate-native-evidence.py  Exact native closure aggregation
+scripts/validate-publish-summary.py   Publish-summary schema-v3 validator
+scripts/generate-lock.py              Generic candidate-lock schema-v3 renderer
+.github/workflows/validate.yml        Repository validation
+.github/workflows/publish.yml         Dispatch-only plan/publish workflow
+.github/workflows/build-unit.yml      Reusable one-target native build job
 ```
 
 ## Local validation
 
 ```bash
-python3 -m json.tool config/build-matrix.json >/dev/null
-python3 -m json.tool config/profiles/core.json >/dev/null
-python3 -m json.tool config/profiles/deployment.json >/dev/null
-python3 scripts/validate-config.py
-# On a release branch, use its own branch name (this intentionally fails on aggregate main):
-python3 scripts/validate-release-context.py matrix --matrix config/build-matrix.json --branch 2025-1
-python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile deployment --candidate-id local-dry-run --dry-run
+python3 scripts/validate-config.py --branch main
+python3 scripts/plan-publish.py \
+  --stream 2025.1-rocky-10.2-20.5.0 \
+  --profile deployment \
+  --candidate-id local-dry-run \
+  --dry-run
 python3 -m unittest discover -s tests -v
 ```
 
-The planner requires `--dry-run` and performs no registry mutation. Manual
-operators and CI each start a separate `workflow_dispatch` run; candidate
-identity is derived inside that run, never supplied as an input. Real
-publication remains disabled unless it runs from the matching protected release
-branch and every scope-specific approval control passes. See
-[docs/publish.md](docs/publish.md) for the exact inputs, artifacts, manual
-prerequisites, Kolla-Ansible consumption example, and handoff.
+On a release-local tree, replace the first command and add the ownership gate:
+
+```bash
+python3 scripts/validate-config.py --branch 2025-1
+python3 scripts/validate-release-context.py matrix \
+  --matrix config/build-matrix.json --branch 2025-1
+```
+
+The planner is read-only but resolves the configured base tag over the network.
+Tests inject a checked OCI manifest fixture so they remain deterministic.

@@ -10,11 +10,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.base_resolution import resolve_base
+from scripts.openstack_source_set import render_frozen_configs
 from scripts.profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
     render_tag,
+    render_revision_tag,
     resolve_profile,
 )
 
@@ -26,14 +29,18 @@ PARSER_CONTRACT_PATH = (
 )
 PINNED_KOLLA_PARSER_MODULE_SHA256 = {
     "20.4.0": "3a22d2f70e8e3f3eea47be1b755ec5c37ed11d282e96db3094cd63846b01549f",
+    "20.5.0": "3a22d2f70e8e3f3eea47be1b755ec5c37ed11d282e96db3094cd63846b01549f",
     "21.1.0": "1c4251075d6ee4987b8fc7bd0429064ef42c905a141f9c863c57d1a0b822d7a0",
     "22.0.0": "0cc53ffa96081cf6744bbe705652df381b3c4b4547728d01a471fbc0956ddfac",
 }
+PARSER_CONTRACT_ALIASES = {"20.5.0": "20.4.0"}
 ROOT_ASSIGNMENT_RE = re.compile(r'^([a-z0-9_]+): "([^"]+)"$')
 MATRIX = load_matrix()
 TEST_CANDIDATE_ID = "123456789-1"
 STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
 DEFAULT_STREAM = STREAM_IDS[0]
+SOURCE_SET_DIR = ROOT / "config" / "openstack-sources"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 NEW_NEUTRON_ALIASES = {
     "neutron_rpc_server_image_full",
     "neutron_periodic_worker_image_full",
@@ -53,26 +60,61 @@ def resolved_profile(stream_id: str, profile_name: str) -> tuple[dict, dict]:
     return stream, profile
 
 
+def openstack_sources(stream: dict) -> dict:
+    document = json.loads(
+        (SOURCE_SET_DIR / f"{stream['source_set_id']}.json").read_text(encoding="utf-8")
+    )
+    canonical = json.dumps(
+        document,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    rendered = render_frozen_configs(document)
+    return {
+        "source_set": document,
+        "canonical_digest": f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+        "kolla_build_config_sha256": rendered.config_sha256,
+        "template_override_sha256": rendered.template_override_sha256,
+    }
+
+
+def frozen_base(stream: dict) -> dict:
+    return resolve_base(
+        {
+            "id": stream["base_id"],
+            "distro": stream["distro"],
+            "os_version": stream["os_version"],
+            "image": stream["base_image"],
+            "tag": stream["base_tag"],
+        },
+        BASE_INDEX_FIXTURE.read_bytes(),
+    )
+
+
 def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
     image = profile_image["name"]
-    deploy_tag = render_tag(MATRIX, stream)
+    semantic_tag = render_tag(MATRIX, stream)
+    revision_tag = render_revision_tag(MATRIX, stream, TEST_CANDIDATE_ID)
     repository = (
         f"{MATRIX['registry']}/{MATRIX['owner']}/{MATRIX['repository']}/{image}"
     )
+    manifest_digest = digest(index * 10 + 9)
     return {
         "image": image,
         "kolla_ansible_variables": profile_image["kolla_ansible_variables"],
-        "deploy_tag": deploy_tag,
-        "deploy_ref": f"{repository}:{deploy_tag}",
-        "manifest_digest": digest(index * 10 + 9),
+        "semantic_tag": semantic_tag,
+        "semantic_ref": f"{repository}:{semantic_tag}",
+        "revision_tag": revision_tag,
+        "revision_ref": f"{repository}:{revision_tag}",
+        "manifest_digest": manifest_digest,
+        "immutable_ref": f"{repository}@{manifest_digest}",
         "architectures": [
             {
                 "arch": arch,
                 "platform": f"linux/{arch}",
-                "arch_ref": (
-                    f"{repository}:"
-                    f"{render_tag(MATRIX, stream, arch)}"
-                ),
+                "revision_arch_ref": f"{repository}:"
+                f"{render_revision_tag(MATRIX, stream, TEST_CANDIDATE_ID, arch)}",
                 "digest": digest(index * 10 + arch_index + 1),
             }
             for arch_index, arch in enumerate(MATRIX["architectures"])
@@ -96,6 +138,7 @@ def publish_summary(
                 f"image does not exist in profile {profile_name}: {image_filter}"
             )
     return {
+        "schema_version": 3,
         "candidate_id": TEST_CANDIDATE_ID,
         "stream": stream["id"],
         "release": stream["release"],
@@ -103,6 +146,8 @@ def publish_summary(
         "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
+        "base": frozen_base(stream),
+        "openstack_sources": openstack_sources(stream),
         "release_metadata": copy.deepcopy(MATRIX["release_metadata"]),
         "kolla": {
             "repository": stream["kolla_repository"],
@@ -138,8 +183,8 @@ def duplicate_key_summary_json() -> dict[str, str]:
     raw = json.dumps(publish_summary())
     return {
         "root": raw.replace(
-            '{"candidate_id": ',
-            '{"candidate_id": "ignored", "candidate_id": ',
+            '"candidate_id": ',
+            '"candidate_id": "ignored", "candidate_id": ',
             1,
         ),
         "scope": raw.replace(
@@ -223,6 +268,10 @@ def parser_contract() -> dict:
     return json.loads(PARSER_CONTRACT_PATH.read_text(encoding="utf-8"))
 
 
+def parser_contract_for(contracts: dict, version: str) -> dict:
+    return contracts[PARSER_CONTRACT_ALIASES.get(version, version)]
+
+
 def execute_pinned_parse_image(
     sources: dict[str, str], contract: dict[str, str], full_image: str
 ) -> list[str] | tuple[str, str]:
@@ -262,7 +311,7 @@ def parse_lock_yaml(lock: str) -> dict:
         return value
 
     require("_kolla_candidate_lock:")
-    require("  schema_version: 2")
+    require("  schema_version: 3")
     candidate_id = read_json("  candidate_id: ")
     stream = read_json("  stream: ")
     release = read_json("  release: ")
@@ -285,6 +334,25 @@ def parse_lock_yaml(lock: str) -> dict:
         "version": read_json("    version: "),
         "commit": read_json("    commit: "),
     }
+    require("  base:")
+    base = {
+        "id": read_json("    id: "),
+        "requested_ref": read_json("    requested_ref: "),
+        "index_digest": read_json("    index_digest: "),
+        "index_manifest_b64": read_json("    index_manifest_b64: "),
+        "platforms": read_json("    platforms: "),
+    }
+    require("  openstack_sources:")
+    openstack_sources = {
+        "source_set": read_json("    source_set: "),
+        "canonical_digest": read_json("    canonical_digest: "),
+        "kolla_build_config_sha256": read_json(
+            "    kolla_build_config_sha256: "
+        ),
+        "template_override_sha256": read_json(
+            "    template_override_sha256: "
+        ),
+    }
     require("  scope:")
     require('    profile: "deployment"')
     require('    image: "all"')
@@ -297,24 +365,28 @@ def parse_lock_yaml(lock: str) -> dict:
         if image in images:
             raise AssertionError(f"duplicate metadata image: {image}")
         index += 1
-        deploy_ref = read_json("      deploy_ref: ")
+        semantic_ref = read_json("      semantic_ref: ")
+        revision_ref = read_json("      revision_ref: ")
         manifest_digest = read_json("      manifest_digest: ")
         immutable_ref = read_json("      immutable_ref: ")
+        architectures = read_json("      architectures: ")
         require("      kolla_ansible_variables:")
         variables = []
         while index < len(lines) and lines[index].startswith("        - "):
             variables.append(json.loads(lines[index][10:]))
             index += 1
         images[image] = {
-            "deploy_ref": deploy_ref,
+            "semantic_ref": semantic_ref,
+            "revision_ref": revision_ref,
             "manifest_digest": manifest_digest,
             "immutable_ref": immutable_ref,
+            "architectures": architectures,
             "kolla_ansible_variables": variables,
         }
 
     parsed = {
         "_kolla_candidate_lock": {
-            "schema_version": 2,
+            "schema_version": 3,
             "candidate_id": candidate_id,
             "stream": stream,
             "release": release,
@@ -323,6 +395,8 @@ def parse_lock_yaml(lock: str) -> dict:
             "release_metadata": release_metadata,
             "kolla": kolla,
             "kolla_ansible": kolla_ansible,
+            "base": base,
+            "openstack_sources": openstack_sources,
             "scope": {
                 "profile": "deployment",
                 "image": "all",
@@ -347,19 +421,20 @@ def expected_lock_data(stream_id: str, summary: dict) -> dict:
     assignments = {}
     for profile_image in profile["images"]:
         entry = summaries[profile_image["name"]]
-        repository, _deploy_tag = entry["deploy_ref"].rsplit(":", 1)
         variables = profile_image["kolla_ansible_variables"]
         metadata_images[profile_image["name"]] = {
-            "deploy_ref": entry["deploy_ref"],
+            "semantic_ref": entry["semantic_ref"],
+            "revision_ref": entry["revision_ref"],
             "manifest_digest": entry["manifest_digest"],
-            "immutable_ref": f'{repository}@{entry["manifest_digest"]}',
+            "immutable_ref": entry["immutable_ref"],
+            "architectures": entry["architectures"],
             "kolla_ansible_variables": variables,
         }
         for variable in variables:
-            assignments[variable] = entry["deploy_ref"]
+            assignments[variable] = entry["revision_ref"]
     return {
         "_kolla_candidate_lock": {
-            "schema_version": 2,
+            "schema_version": 3,
             "candidate_id": summary["candidate_id"],
             "stream": stream["id"],
             "release": summary["release"],
@@ -368,6 +443,8 @@ def expected_lock_data(stream_id: str, summary: dict) -> dict:
             "release_metadata": summary["release_metadata"],
             "kolla": summary["kolla"],
             "kolla_ansible": summary["kolla_ansible"],
+            "base": summary["base"],
+            "openstack_sources": summary["openstack_sources"],
             "scope": {
                 "profile": "deployment",
                 "image": "all",
@@ -389,14 +466,14 @@ def expected_assignments(stream_id: str, summary: dict) -> dict[str, str]:
 
 
 class LockGenerationTest(unittest.TestCase):
-    def test_candidate_lock_root_and_metadata_use_final_deploy_ref(self) -> None:
+    def test_candidate_lock_root_uses_revision_ref_and_preserves_semantic_ref(self) -> None:
         summary = publish_summary()
         result, lock = generate_lock(summary)
         self.assertEqual(result.returncode, 0, result.stderr)
         assert lock is not None
         parsed = parse_lock_yaml(lock)
         metadata = parsed["_kolla_candidate_lock"]
-        self.assertEqual(metadata["schema_version"], 2)
+        self.assertEqual(metadata["schema_version"], 3)
         self.assertEqual(metadata["candidate_id"], TEST_CANDIDATE_ID)
         self.assertEqual(metadata["release"], summary["release"])
         self.assertEqual(metadata["release_series"], summary["release_series"])
@@ -404,17 +481,22 @@ class LockGenerationTest(unittest.TestCase):
         self.assertEqual(metadata["release_metadata"], summary["release_metadata"])
         self.assertEqual(metadata["kolla"], summary["kolla"])
         self.assertEqual(metadata["kolla_ansible"], summary["kolla_ansible"])
+        self.assertEqual(metadata["base"], summary["base"])
+        self.assertEqual(metadata["openstack_sources"], summary["openstack_sources"])
         entry = metadata["images"]["keystone"]
         summary_entry = image_entry(summary, "keystone")
-        deploy_ref = summary_entry["deploy_ref"]
-        self.assertEqual(entry["deploy_ref"], deploy_ref)
-        self.assertEqual(parsed["keystone_image_full"], deploy_ref)
+        semantic_ref = summary_entry["semantic_ref"]
+        revision_ref = summary_entry["revision_ref"]
+        self.assertEqual(entry["semantic_ref"], semantic_ref)
+        self.assertEqual(entry["revision_ref"], revision_ref)
+        self.assertNotEqual(semantic_ref, revision_ref)
+        self.assertEqual(parsed["keystone_image_full"], revision_ref)
         self.assertEqual(
             [
-                architecture["arch_ref"]
+                architecture["revision_arch_ref"]
                 for architecture in summary_entry["architectures"]
             ],
-            [f"{deploy_ref}-amd64", f"{deploy_ref}-arm64"],
+            [f"{revision_ref}-amd64", f"{revision_ref}-arm64"],
         )
         self.assertEqual(
             entry["immutable_ref"],
@@ -477,25 +559,27 @@ class LockGenerationTest(unittest.TestCase):
             find_stream(MATRIX, stream["id"])["kolla_ansible_version"]
             for stream in MATRIX["streams"]
         }
-        self.assertEqual(set(contracts), set(PINNED_KOLLA_PARSER_MODULE_SHA256))
-        self.assertTrue(versions <= set(contracts))
+        self.assertTrue(versions <= set(PINNED_KOLLA_PARSER_MODULE_SHA256))
         self.assertEqual(
             {
-                version: contract["module_sha256"]
-                for version, contract in contracts.items()
+                version: parser_contract_for(contracts, version)["module_sha256"]
+                for version in versions
             },
-            PINNED_KOLLA_PARSER_MODULE_SHA256,
+            {
+                version: PINNED_KOLLA_PARSER_MODULE_SHA256[version]
+                for version in versions
+            },
         )
 
         entry = publish_summary()["images"][0]
-        legacy_ref = f'{entry["deploy_ref"]}@{entry["manifest_digest"]}'
+        legacy_ref = f'{entry["revision_ref"]}@{entry["manifest_digest"]}'
         expected_digest_hex = entry["manifest_digest"].removeprefix("sha256:")
         for version, contract in contracts.items():
             with self.subTest(kolla_ansible_version=version):
                 image, tag = execute_pinned_parse_image(
                     fixture["sources"], contract, legacy_ref
                 )
-                self.assertEqual(image, f'{entry["deploy_ref"]}@sha256')
+                self.assertEqual(image, f'{entry["revision_ref"]}@sha256')
                 self.assertEqual(tag, expected_digest_hex)
 
     def test_generated_lock_structurally_matches_summary_and_pinned_parser(self) -> None:
@@ -512,9 +596,11 @@ class LockGenerationTest(unittest.TestCase):
                 parsed = parse_lock_yaml(lock)
                 self.assertEqual(parsed, expected_lock_data(stream_id, summary))
 
-                contract = contracts[stream["kolla_ansible_version"]]
+                contract = parser_contract_for(
+                    contracts, stream["kolla_ansible_version"]
+                )
                 for entry in summary["images"]:
-                    expected_image, expected_tag = entry["deploy_ref"].rsplit(":", 1)
+                    expected_image, expected_tag = entry["revision_ref"].rsplit(":", 1)
                     for variable in entry["kolla_ansible_variables"]:
                         value = parsed[variable]
                         self.assertNotIn("@", value)
@@ -527,35 +613,35 @@ class LockGenerationTest(unittest.TestCase):
 
     def test_resolved_conditional_aliases_are_stream_specific(self) -> None:
         cases = {
-            "2025.1-rocky-9": (
+            "2025.1-rocky-9.8-20.4.0": (
                 set(),
                 NEW_NEUTRON_ALIASES
                 | NEW_EXPORTER_ALIASES
                 | {"tgtd_image_full"},
             ),
-            "2025.1-rocky-10": (
+            "2025.1-rocky-10.2-20.4.0": (
                 set(),
                 NEW_NEUTRON_ALIASES
                 | NEW_EXPORTER_ALIASES
                 | {"tgtd_image_full"},
             ),
-            "2025.1-ubuntu-noble": (
+            "2025.1-ubuntu-24.04-20.4.0": (
                 {"tgtd_image_full"},
                 NEW_NEUTRON_ALIASES | NEW_EXPORTER_ALIASES,
             ),
-            "2025.2-rocky-10": (
+            "2025.2-rocky-10.2-21.1.0": (
                 NEW_NEUTRON_ALIASES,
                 NEW_EXPORTER_ALIASES | {"tgtd_image_full"},
             ),
-            "2025.2-ubuntu-noble": (
+            "2025.2-ubuntu-24.04-21.1.0": (
                 NEW_NEUTRON_ALIASES | {"tgtd_image_full"},
                 NEW_EXPORTER_ALIASES,
             ),
-            "2026.1-rocky-10": (
+            "2026.1-rocky-10.2-22.0.0": (
                 NEW_NEUTRON_ALIASES | NEW_EXPORTER_ALIASES,
                 {"tgtd_image_full"},
             ),
-            "2026.1-ubuntu-noble": (
+            "2026.1-ubuntu-24.04-22.0.0": (
                 NEW_NEUTRON_ALIASES
                 | NEW_EXPORTER_ALIASES
                 | {"tgtd_image_full"},
@@ -689,15 +775,27 @@ class LockGenerationTest(unittest.TestCase):
                 ),
                 "kolla_ansible",
             ),
-            "missing deploy_ref": (
-                lambda summary: summary["images"][0].pop("deploy_ref"),
-                "deploy_ref",
-            ),
-            "deploy_ref": (
-                lambda summary: summary["images"][0].__setitem__(
-                    "deploy_ref", "ghcr.io/wrong/image:wrong"
+            "base": (
+                lambda summary: summary["base"].__setitem__(
+                    "requested_ref", "registry.invalid/base:wrong"
                 ),
-                "deploy_ref",
+                "base",
+            ),
+            "openstack source set": (
+                lambda summary: summary["openstack_sources"]["source_set"].__setitem__(
+                    "id", "wrong-source-set"
+                ),
+                "source_set",
+            ),
+            "missing revision_ref": (
+                lambda summary: summary["images"][0].pop("revision_ref"),
+                "revision_ref",
+            ),
+            "revision_ref": (
+                lambda summary: summary["images"][0].__setitem__(
+                    "revision_ref", "ghcr.io/wrong/image:wrong"
+                ),
+                "revision_ref",
             ),
             "variables": (
                 lambda summary: summary["images"][0].pop(
@@ -751,9 +849,9 @@ class LockGenerationTest(unittest.TestCase):
         missing_release_metadata.pop("release_metadata")
         cases["missing release_metadata"] = missing_release_metadata
 
-        missing_deploy_tag = publish_summary()
-        missing_deploy_tag["images"][0].pop("deploy_tag")
-        cases["missing required deploy_tag"] = missing_deploy_tag
+        missing_revision_tag = publish_summary()
+        missing_revision_tag["images"][0].pop("revision_tag")
+        cases["missing required revision_tag"] = missing_revision_tag
 
         unexpected_image_key = publish_summary()
         unexpected_image_key["images"][0]["promotion_state"] = "candidate"

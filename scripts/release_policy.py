@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+try:
+    from scripts.base_resolution import validate_resolved_base
+    from scripts.openstack_source_set import validate_frozen_source_contract
+except ModuleNotFoundError:
+    from base_resolution import validate_resolved_base
+    from openstack_source_set import validate_frozen_source_contract
+
 
 RELEASE_RE = re.compile(r"^(?P<year>[1-9][0-9]{3})\.(?P<cycle>[1-9][0-9]*)$")
 RELEASE_BRANCH_RE = re.compile(
@@ -71,24 +78,44 @@ def validate_matrix_branch(
                     f"but matrix stream {stream_id!r} uses release {release!r}"
                 )
 
+    releases = matrix.get("releases") if isinstance(matrix, dict) else None
+    if not isinstance(releases, dict):
+        errors.append("matrix releases must be an object")
+    elif set(releases) != {expected_release}:
+        errors.append(
+            f"branch {branch_name!r} must contain exactly the "
+            f"{expected_release!r} release; got "
+            f"{sorted(map(str, releases))!r}"
+        )
+
+    referenced_toolchains = {
+        stream.get("toolchain")
+        for stream in streams or []
+        if isinstance(stream, dict) and isinstance(stream.get("toolchain"), str)
+    }
     toolchains = matrix.get("toolchains") if isinstance(matrix, dict) else None
     if not isinstance(toolchains, dict):
         errors.append("matrix toolchains must be an object")
-    elif set(toolchains) != {expected_release}:
+    elif set(toolchains) != referenced_toolchains:
         errors.append(
-            f"branch {branch_name!r} must contain exactly the "
-            f"{expected_release!r} toolchain; got "
+            f"branch {branch_name!r} toolchains must exactly match stream "
+            f"references; expected {sorted(referenced_toolchains)!r}, got "
             f"{sorted(map(str, toolchains))!r}"
         )
-    else:
-        toolchain = toolchains[expected_release]
-        if not isinstance(toolchain, dict):
-            errors.append(f"matrix toolchain {expected_release!r} must be an object")
-        elif toolchain.get("release_branch") != branch_name:
-            errors.append(
-                f"matrix toolchain {expected_release!r} release_branch must be "
-                f"{branch_name!r}, got {toolchain.get('release_branch')!r}"
-            )
+
+    referenced_bases = {
+        stream.get("base")
+        for stream in streams or []
+        if isinstance(stream, dict) and isinstance(stream.get("base"), str)
+    }
+    bases = matrix.get("bases") if isinstance(matrix, dict) else None
+    if not isinstance(bases, dict):
+        errors.append("matrix bases must be an object")
+    elif set(bases) != referenced_bases:
+        errors.append(
+            f"branch {branch_name!r} bases must exactly match stream references; "
+            f"expected {sorted(referenced_bases)!r}, got {sorted(map(str, bases))!r}"
+        )
 
     return errors
 
@@ -138,25 +165,69 @@ def validate_plan_matrix(
             f"{expected_release!r}"
         )
 
-    toolchains = matrix.get("toolchains") if isinstance(matrix, dict) else None
-    toolchain = (
-        toolchains.get(expected_release) if isinstance(toolchains, dict) else None
-    )
-    if isinstance(toolchain, dict):
-        if plan.get("release_series") != toolchain.get("series"):
-            errors.append(
-                "publish plan release_series must match the branch matrix toolchain"
-            )
-        expected_provenance = {
-            "release_metadata": matrix.get("release_metadata"),
-            "kolla": toolchain.get("kolla"),
-            "kolla_ansible": toolchain.get("kolla_ansible"),
-        }
-        for key, expected in expected_provenance.items():
-            actual = plan.get(key)
-            if type(actual) is not dict or actual != expected:
+    if len(matching_streams) == 1:
+        try:
+            try:
+                from scripts.profile_resolver import resolve_stream
+            except ModuleNotFoundError:
+                from profile_resolver import resolve_stream
+            resolved = resolve_stream(matrix, matching_streams[0])
+        except (KeyError, TypeError, ValueError) as error:
+            errors.append(f"cannot resolve branch matrix stream: {error}")
+        else:
+            if plan.get("release_series") != resolved["release_series"]:
                 errors.append(
-                    f"publish plan {key} must exactly match the branch matrix pin"
+                    "publish plan release_series must match the branch matrix release"
+                )
+            expected_provenance = {
+                "release_metadata": matrix.get("release_metadata"),
+                "kolla": {
+                    "repository": resolved["kolla_repository"],
+                    "version": resolved["kolla_version"],
+                    "commit": resolved["kolla_commit"],
+                },
+                "kolla_ansible": {
+                    "repository": resolved["kolla_ansible_repository"],
+                    "version": resolved["kolla_ansible_version"],
+                    "commit": resolved["kolla_ansible_commit"],
+                },
+            }
+            for key, expected in expected_provenance.items():
+                actual = plan.get(key)
+                if type(actual) is not dict or actual != expected:
+                    errors.append(
+                        f"publish plan {key} must exactly match the branch matrix pin"
+                    )
+            try:
+                configured_base = {
+                    "id": resolved["base_id"],
+                    "distro": resolved["distro"],
+                    "os_version": resolved["os_version"],
+                    "image": resolved["base_image"],
+                    "tag": resolved["base_tag"],
+                }
+                validate_resolved_base(configured_base, plan.get("base"))
+            except (KeyError, TypeError, ValueError) as error:
+                errors.append(
+                    "publish plan base must be a valid frozen resolution of the "
+                    f"branch matrix base: {error}"
+                )
+            try:
+                source_contract = validate_frozen_source_contract(
+                    plan.get("openstack_sources")
+                )
+                if (
+                    source_contract["source_set"] != resolved["source_set"]
+                    or source_contract["canonical_digest"]
+                    != resolved["source_set_sha256"]
+                ):
+                    raise ValueError(
+                        "source-set does not match the branch matrix stream"
+                    )
+            except (KeyError, TypeError, ValueError) as error:
+                errors.append(
+                    "publish plan OpenStack sources must exactly match the branch "
+                    f"matrix source-set: {error}"
                 )
 
     return errors

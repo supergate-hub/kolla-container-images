@@ -2,13 +2,14 @@
     "schema_version": 3,
     "name": "deployment",
     "reviewed_streams": [
-        "2025.1-rocky-9",
-        "2025.1-rocky-10",
-        "2025.1-ubuntu-noble",
-        "2025.2-rocky-10",
-        "2025.2-ubuntu-noble",
-        "2026.1-rocky-10",
-        "2026.1-ubuntu-noble"
+        "2025.1-rocky-9.8-20.4.0",
+        "2025.1-rocky-10.2-20.4.0",
+        "2025.1-ubuntu-24.04-20.4.0",
+        "2025.1-rocky-10.2-20.5.0",
+        "2025.2-rocky-10.2-21.1.0",
+        "2025.2-ubuntu-24.04-21.1.0",
+        "2026.1-rocky-10.2-22.0.0",
+        "2026.1-ubuntu-24.04-22.0.0"
     ],
     "description": "Digest-lockable Kolla image closure for a Kolla-Ansible deployment.",
     "build_groups": [

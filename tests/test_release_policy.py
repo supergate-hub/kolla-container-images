@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -8,7 +9,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.profile_resolver import load_matrix
+from scripts.base_resolution import resolve_base
+from scripts.openstack_source_set import render_frozen_configs
+from scripts.profile_resolver import Matrix, find_stream, load_matrix
 from scripts.release_policy import (
     branch_for_ref,
     release_branch_for,
@@ -22,47 +25,184 @@ from scripts.release_policy import (
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts" / "validate-release-context.py"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 
 
 class ReleasePolicyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        source_sets = tempfile.TemporaryDirectory()
+        self.addCleanup(source_sets.cleanup)
+        self.source_sets_dir = Path(source_sets.name)
+
+    def write_synthetic_source_set(
+        self,
+        source_set_id: str,
+        release: str,
+        series: str,
+        toolchains: dict[str, dict[str, dict[str, str]]],
+    ) -> None:
+        projects = {
+            "openstack/requirements": {
+                "repository": "https://opendev.org/openstack/requirements",
+                "track_ref": f"stable/{release}",
+                "build_commit": "1" * 40,
+                "kolla_sections": ["openstack-base"],
+                "nearest_release": None,
+                "upper_constraints_sha256": "2" * 64,
+            }
+        }
+        closure_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    name: {
+                        "repository": project["repository"],
+                        "track_ref": project["track_ref"],
+                        "kolla_sections": project["kolla_sections"],
+                    }
+                    for name, project in projects.items()
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        document = {
+            "schema_version": 3,
+            "id": source_set_id,
+            "release": release,
+            "series": series,
+            "policy": "stable-head-snapshot",
+            "generated_at": "2026-08-13T00:00:00Z",
+            "kolla_source_inputs": {
+                version: {
+                    "kolla": {
+                        **toolchain["kolla"],
+                        "sources_sha256": "8" * 64,
+                        "closure_sha256": closure_sha256,
+                    },
+                    "kolla_ansible": toolchain["kolla_ansible"],
+                }
+                for version, toolchain in toolchains.items()
+            },
+            "direct_artifacts": {
+                "ovn-ctl": {
+                    "repository": "https://github.com/ovn-org/ovn",
+                    "commit": "20b9f0b9a771e07f15d2db270464965663d15f56",
+                    "path": "utilities/ovn-ctl",
+                    "url": (
+                        "https://raw.githubusercontent.com/ovn-org/ovn/"
+                        "20b9f0b9a771e07f15d2db270464965663d15f56/"
+                        "utilities/ovn-ctl"
+                    ),
+                    "sha256": "9" * 64,
+                    "kolla_sections": ["ovn-sb-db-relay"],
+                }
+            },
+            "projects": projects,
+        }
+        (self.source_sets_dir / f"{source_set_id}.json").write_text(
+            json.dumps(document),
+            encoding="utf-8",
+        )
+
     def branch_matrix(self, release: str) -> dict:
         matrix = load_matrix()
         branch_matrix = copy.deepcopy(matrix)
         matching_streams = [
             stream for stream in matrix["streams"] if stream["release"] == release
         ]
-        if matching_streams and release in matrix["toolchains"]:
+        if matching_streams and release in matrix["releases"]:
             branch_matrix["streams"] = copy.deepcopy(matching_streams)
-            branch_matrix["toolchains"] = {
-                release: copy.deepcopy(matrix["toolchains"][release])
+            branch_matrix["releases"] = {
+                release: copy.deepcopy(matrix["releases"][release])
             }
-            return branch_matrix
+            toolchain_versions = {stream["toolchain"] for stream in matching_streams}
+            branch_matrix["toolchains"] = {
+                version: copy.deepcopy(matrix["toolchains"][version])
+                for version in toolchain_versions
+            }
+            base_ids = {stream["base"] for stream in matching_streams}
+            branch_matrix["bases"] = {
+                base_id: copy.deepcopy(matrix["bases"][base_id])
+                for base_id in base_ids
+            }
+            return Matrix(
+                branch_matrix,
+                source_sets_dir=matrix.source_sets_dir,
+            )
 
-        # Cross-release policy tests must not depend on another release being
-        # present in the branch-local production matrix. Retarget the current
-        # release's valid shapes while preserving the provenance object schema.
+        # Synthetic releases retain the v4 reference shape.
         stream = copy.deepcopy(matrix["streams"][0])
-        stream["id"] = f"{release}-synthetic-stream"
         stream["release"] = release
-        toolchain = copy.deepcopy(next(iter(matrix["toolchains"].values())))
-        toolchain["series"] = f"synthetic-{release}"
-        toolchain["release_branch"] = release_branch_for(release)
+        version = stream["toolchain"]
+        base_id = stream["base"]
+        base = matrix["bases"][base_id]
+        stream["id"] = (
+            f"{release}-{base['distro']}-{base['os_version']}-{version}"
+        )
         branch_matrix["streams"] = [stream]
-        branch_matrix["toolchains"] = {
-            release: toolchain
+        branch_matrix["releases"] = {
+            release: {
+                "series": f"synthetic-{release.replace('.', '-')}",
+                "source_set": f"synthetic-{release.replace('.', '-')}-r1",
+            }
         }
-        return branch_matrix
+        branch_matrix["toolchains"] = {
+            version: copy.deepcopy(matrix["toolchains"][version])
+        }
+        branch_matrix["bases"] = {base_id: copy.deepcopy(base)}
+        source_set_id = branch_matrix["releases"][release]["source_set"]
+        self.write_synthetic_source_set(
+            source_set_id,
+            release,
+            branch_matrix["releases"][release]["series"],
+            branch_matrix["toolchains"],
+        )
+        return Matrix(
+            branch_matrix,
+            source_sets_dir=self.source_sets_dir,
+        )
 
     def branch_plan(self, matrix: dict, release: str) -> dict:
-        toolchain = matrix["toolchains"][release]
+        stream = find_stream(matrix, matrix["streams"][0]["id"])
+        frozen_sources = render_frozen_configs(stream["source_set"])
         return {
-            "stream": matrix["streams"][0]["id"],
+            "stream": stream["id"],
             "release": release,
-            "release_series": toolchain["series"],
+            "release_series": stream["release_series"],
             "release_branch": release_branch_for(release),
             "release_metadata": copy.deepcopy(matrix["release_metadata"]),
-            "kolla": copy.deepcopy(toolchain["kolla"]),
-            "kolla_ansible": copy.deepcopy(toolchain["kolla_ansible"]),
+            "kolla": {
+                "repository": stream["kolla_repository"],
+                "version": stream["kolla_version"],
+                "commit": stream["kolla_commit"],
+            },
+            "kolla_ansible": {
+                "repository": stream["kolla_ansible_repository"],
+                "version": stream["kolla_ansible_version"],
+                "commit": stream["kolla_ansible_commit"],
+            },
+            "base": resolve_base(
+                {
+                    "id": stream["base_id"],
+                    "distro": stream["distro"],
+                    "os_version": stream["os_version"],
+                    "image": stream["base_image"],
+                    "tag": stream["base_tag"],
+                },
+                BASE_INDEX_FIXTURE.read_bytes(),
+            ),
+            "openstack_sources": {
+                "source_set": copy.deepcopy(stream["source_set"]),
+                "canonical_digest": stream["source_set_sha256"],
+                "kolla_build_config": {
+                    "sha256": frozen_sources.config_sha256,
+                    "content": frozen_sources.config_content,
+                },
+                "template_override": {
+                    "sha256": frozen_sources.template_override_sha256,
+                    "content": frozen_sources.template_override_content,
+                },
+            },
         }
 
     def test_release_and_branch_names_have_one_canonical_mapping(self) -> None:
@@ -121,21 +261,23 @@ class ReleasePolicyTest(unittest.TestCase):
             errors,
         )
 
-    def test_branch_local_matrix_requires_one_matching_toolchain(self) -> None:
+    def test_branch_local_matrix_requires_exact_referenced_toolchains(self) -> None:
         branch_matrix = self.branch_matrix("2025.2")
         branch_matrix["toolchains"] = {}
 
         errors = validate_matrix_branch(branch_matrix, "2025-2")
 
-        self.assertTrue(any("exactly the '2025.2' toolchain" in error for error in errors))
+        self.assertTrue(any("toolchains must exactly match" in error for error in errors))
 
-    def test_branch_matrix_rejects_toolchain_branch_mismatch(self) -> None:
+    def test_branch_matrix_rejects_release_ownership_mismatch(self) -> None:
         matrix = self.branch_matrix("2025.1")
-        matrix["toolchains"]["2025.1"]["release_branch"] = "2025-2"
+        matrix["releases"]["2025.2"] = copy.deepcopy(
+            self.branch_matrix("2025.2")["releases"]["2025.2"]
+        )
 
         errors = validate_matrix_branch(matrix, "2025-1")
 
-        self.assertTrue(any("release_branch must be '2025-1'" in error for error in errors))
+        self.assertTrue(any("must contain exactly the '2025.1' release" in error for error in errors))
 
     def test_frozen_plan_is_bound_to_branch_stream_and_source_pins(self) -> None:
         matrix = self.branch_matrix("2025.1")
@@ -163,6 +305,12 @@ class ReleasePolicyTest(unittest.TestCase):
             ),
             "Kolla-Ansible": lambda value: value["kolla_ansible"].__setitem__(
                 "commit", "0" * 40
+            ),
+            "base identity": lambda value: value["base"].__setitem__(
+                "requested_ref", "quay.io/rockylinux/rockylinux:wrong"
+            ),
+            "OpenStack source": lambda value: value["openstack_sources"].__setitem__(
+                "canonical_digest", "sha256:" + "0" * 64
             ),
         }
         for name, mutate in mutations.items():
@@ -202,8 +350,11 @@ class ReleasePolicyTest(unittest.TestCase):
                 )
 
     def test_cli_fails_closed_for_matrix_plan_and_protection(self) -> None:
-        matrix = self.branch_matrix("2025.1")
-        plan = self.branch_plan(matrix, "2025.1")
+        repository_matrix = load_matrix()
+        release = repository_matrix["streams"][0]["release"]
+        branch = release_branch_for(release)
+        matrix = self.branch_matrix(release)
+        plan = self.branch_plan(matrix, release)
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             matrix_path = temp_path / "matrix.json"
@@ -219,7 +370,7 @@ class ReleasePolicyTest(unittest.TestCase):
                     "--matrix",
                     str(matrix_path),
                     "--branch",
-                    "2025-1",
+                    branch,
                 ],
                 text=True,
                 capture_output=True,
@@ -235,7 +386,7 @@ class ReleasePolicyTest(unittest.TestCase):
                 "--publish-plan",
                 str(plan_path),
                 "--git-ref",
-                "refs/heads/2025-1",
+                f"refs/heads/{branch}",
             ]
             self.assertEqual(subprocess.run(base_command).returncode, 0)
             missing_protection = subprocess.run(

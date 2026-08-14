@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import runpy
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.profile_resolver import (
+    Matrix,
     find_stream,
     render_tag,
     resolve_profile,
@@ -21,33 +24,34 @@ MATRIX_PATH = ROOT / "config" / "build-matrix.json"
 PROFILES_DIR = ROOT / "config" / "profiles"
 
 EXPECTED_STREAMS = {
-    "2025.1-rocky-9": ("2025.1", "20.4.0", "20.4.0", "rocky", "9", "9"),
-    "2025.1-rocky-10": ("2025.1", "20.4.0", "20.4.0", "rocky", "10", "10"),
-    "2025.1-ubuntu-noble": (
+    "2025.1-rocky-9.8-20.4.0": ("2025.1", "20.4.0", "20.4.0", "rocky", "9.8", "9.8"),
+    "2025.1-rocky-10.2-20.4.0": ("2025.1", "20.4.0", "20.4.0", "rocky", "10.2", "10.2"),
+    "2025.1-ubuntu-24.04-20.4.0": (
         "2025.1",
         "20.4.0",
         "20.4.0",
         "ubuntu",
         "24.04",
-        "noble",
+        "24.04",
     ),
-    "2025.2-rocky-10": ("2025.2", "21.1.0", "21.1.0", "rocky", "10", "10"),
-    "2025.2-ubuntu-noble": (
+    "2025.1-rocky-10.2-20.5.0": ("2025.1", "20.5.0", "20.5.0", "rocky", "10.2", "10.2"),
+    "2025.2-rocky-10.2-21.1.0": ("2025.2", "21.1.0", "21.1.0", "rocky", "10.2", "10.2"),
+    "2025.2-ubuntu-24.04-21.1.0": (
         "2025.2",
         "21.1.0",
         "21.1.0",
         "ubuntu",
         "24.04",
-        "noble",
+        "24.04",
     ),
-    "2026.1-rocky-10": ("2026.1", "22.0.0", "22.0.0", "rocky", "10", "10"),
-    "2026.1-ubuntu-noble": (
+    "2026.1-rocky-10.2-22.0.0": ("2026.1", "22.0.0", "22.0.0", "rocky", "10.2", "10.2"),
+    "2026.1-ubuntu-24.04-22.0.0": (
         "2026.1",
         "22.0.0",
         "22.0.0",
         "ubuntu",
         "24.04",
-        "noble",
+        "24.04",
     ),
 }
 EXPECTED_RELEASE_METADATA = {
@@ -55,47 +59,70 @@ EXPECTED_RELEASE_METADATA = {
     "commit": "b52dca944f47a401baa8f93a6994217d2a93ea56",
 }
 EXPECTED_TOOLCHAINS = {
-    "2025.1": {
-        "series": "epoxy",
-        "release_branch": "2025-1",
+    "20.4.0": {
         "kolla": {
             "repository": "https://opendev.org/openstack/kolla",
-            "version": "20.4.0",
             "commit": "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5",
         },
         "kolla_ansible": {
             "repository": "https://opendev.org/openstack/kolla-ansible",
-            "version": "20.4.0",
             "commit": "0786e1d6bd9a6da2d8ae15cc16a891bef0d32696",
         },
     },
-    "2025.2": {
-        "series": "flamingo",
-        "release_branch": "2025-2",
+    "20.5.0": {
         "kolla": {
             "repository": "https://opendev.org/openstack/kolla",
-            "version": "21.1.0",
+            "commit": "d1c4dd49b92e68509a413c33667bbe87cc3d3a9e",
+        },
+        "kolla_ansible": {
+            "repository": "https://opendev.org/openstack/kolla-ansible",
+            "commit": "18f731b2ef55a7dfb43182682458b1c8053c9cc2",
+        },
+    },
+    "21.1.0": {
+        "kolla": {
+            "repository": "https://opendev.org/openstack/kolla",
             "commit": "436395ae3523ee925abac3338e63fc5822208744",
         },
         "kolla_ansible": {
             "repository": "https://opendev.org/openstack/kolla-ansible",
-            "version": "21.1.0",
             "commit": "ea3326dd085369383b5b02edc4ddd192e29aed52",
         },
     },
-    "2026.1": {
-        "series": "gazpacho",
-        "release_branch": "2026-1",
+    "22.0.0": {
         "kolla": {
             "repository": "https://opendev.org/openstack/kolla",
-            "version": "22.0.0",
             "commit": "dcc077f50eafc5849c7de3fdb800353684fe1210",
         },
         "kolla_ansible": {
             "repository": "https://opendev.org/openstack/kolla-ansible",
-            "version": "22.0.0",
             "commit": "e9e3c092a7b3c308581e7597404c72fcfd4dd485",
         },
+    },
+}
+EXPECTED_RELEASES = {
+    "2025.1": {"series": "epoxy", "source_set": "epoxy-20260813-r1"},
+    "2025.2": {"series": "flamingo", "source_set": "flamingo-20260813-r1"},
+    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20260813-r1"},
+}
+EXPECTED_BASES = {
+    "rocky-9.8": {
+        "distro": "rocky",
+        "os_version": "9.8",
+        "image": "quay.io/rockylinux/rockylinux",
+        "tag": "9.8",
+    },
+    "rocky-10.2": {
+        "distro": "rocky",
+        "os_version": "10.2",
+        "image": "quay.io/rockylinux/rockylinux",
+        "tag": "10.2",
+    },
+    "ubuntu-24.04": {
+        "distro": "ubuntu",
+        "os_version": "24.04",
+        "image": "docker.io/library/ubuntu",
+        "tag": "24.04",
     },
 }
 
@@ -116,13 +143,14 @@ NEUTRON_VARIABLES = [
 ]
 
 DEPLOYMENT_EXPECTED_COUNTS = {
-    "2025.1-rocky-9": 63,
-    "2025.1-rocky-10": 63,
-    "2025.1-ubuntu-noble": 64,
-    "2025.2-rocky-10": 63,
-    "2025.2-ubuntu-noble": 64,
-    "2026.1-rocky-10": 65,
-    "2026.1-ubuntu-noble": 66,
+    "2025.1-rocky-9.8-20.4.0": 63,
+    "2025.1-rocky-10.2-20.4.0": 63,
+    "2025.1-ubuntu-24.04-20.4.0": 64,
+    "2025.1-rocky-10.2-20.5.0": 63,
+    "2025.2-rocky-10.2-21.1.0": 63,
+    "2025.2-ubuntu-24.04-21.1.0": 64,
+    "2026.1-rocky-10.2-22.0.0": 65,
+    "2026.1-ubuntu-24.04-22.0.0": 66,
 }
 REQUIRED_CINDER = {
     "cinder-api",
@@ -176,15 +204,186 @@ def load_json(path: Path) -> dict[str, object]:
         return json.load(file_obj)
 
 
+def synthetic_source_set(
+    release: str,
+    toolchains: dict[str, dict[str, dict[str, str]]] | None = None,
+) -> dict[str, object]:
+    release_config = EXPECTED_RELEASES[release]
+    if toolchains is None:
+        versions = {
+            expected[1]
+            for expected in EXPECTED_STREAMS.values()
+            if expected[0] == release
+        }
+        toolchains = {
+            version: EXPECTED_TOOLCHAINS[version] for version in versions
+        }
+    ovn_commit = "3" * 40
+    direct_artifacts = {
+        "ovn-ctl": {
+            "repository": "https://github.com/ovn-org/ovn",
+            "commit": ovn_commit,
+            "path": "utilities/ovn-ctl",
+            "url": (
+                "https://raw.githubusercontent.com/ovn-org/ovn/"
+                f"{ovn_commit}/utilities/ovn-ctl"
+            ),
+            "sha256": "4" * 64,
+            "kolla_sections": ["ovn-sb-db-relay"],
+        }
+    }
+    if release_config["series"] == "epoxy":
+        mariadb_commit = "5" * 40
+        direct_artifacts["mariadb-clustercheck"] = {
+            "repository": "https://src.fedoraproject.org/rpms/mariadb",
+            "commit": mariadb_commit,
+            "path": "f/clustercheck.sh",
+            "url": (
+                "https://src.fedoraproject.org/rpms/mariadb/raw/"
+                f"{mariadb_commit}/f/clustercheck.sh"
+            ),
+            "sha256": "6" * 64,
+            "kolla_sections": ["mariadb-base"],
+        }
+    projects = {
+        "openstack/requirements": {
+            "repository": "https://opendev.org/openstack/requirements",
+            "track_ref": f"stable/{release}",
+            "build_commit": "1" * 40,
+            "kolla_sections": ["openstack-base"],
+            "nearest_release": None,
+            "upper_constraints_sha256": "2" * 64,
+        }
+    }
+    closure_sha256 = hashlib.sha256(
+        json.dumps(
+            {
+                name: {
+                    "repository": project["repository"],
+                    "track_ref": project["track_ref"],
+                    "kolla_sections": project["kolla_sections"],
+                }
+                for name, project in projects.items()
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    return {
+        "schema_version": 3,
+        "id": release_config["source_set"],
+        "release": release,
+        "series": release_config["series"],
+        "policy": "stable-head-snapshot",
+        "generated_at": "2026-08-13T00:00:00Z",
+        "kolla_source_inputs": {
+            version: {
+                "kolla": {
+                    **toolchain["kolla"],
+                    "sources_sha256": "7" * 64,
+                    "closure_sha256": closure_sha256,
+                },
+                "kolla_ansible": toolchain["kolla_ansible"],
+            }
+            for version, toolchain in toolchains.items()
+        },
+        "projects": projects,
+        "direct_artifacts": direct_artifacts,
+    }
+
+
 class ConfigValidationTest(unittest.TestCase):
+    def test_v4_matrix_accepts_multiple_toolchains_for_one_release(self) -> None:
+        matrix = {
+            "schema_version": 4,
+            "owner": "supergate-hub",
+            "repository": "kolla-container-images",
+            "registry": "ghcr.io",
+            "profiles": ["core", "deployment"],
+            "release_metadata": copy.deepcopy(EXPECTED_RELEASE_METADATA),
+            "releases": {
+                "2025.1": {
+                    "series": "epoxy",
+                    "source_set": "epoxy-20260813-r1",
+                }
+            },
+            "toolchains": {
+                version: {
+                    "kolla": {
+                        "repository": "https://opendev.org/openstack/kolla",
+                        "commit": commit,
+                    },
+                    "kolla_ansible": {
+                        "repository": (
+                            "https://opendev.org/openstack/kolla-ansible"
+                        ),
+                        "commit": ansible_commit,
+                    },
+                }
+                for version, commit, ansible_commit in (
+                    ("20.4.0", "a" * 40, "b" * 40),
+                    ("20.5.0", "c" * 40, "d" * 40),
+                )
+            },
+            "bases": {
+                "rocky-10.2": {
+                    "distro": "rocky",
+                    "os_version": "10.2",
+                    "image": "quay.io/rockylinux/rockylinux",
+                    "tag": "10.2",
+                }
+            },
+            "streams": [
+                {
+                    "id": f"2025.1-rocky-10.2-{version}",
+                    "release": "2025.1",
+                    "toolchain": version,
+                    "base": "rocky-10.2",
+                    "publish_enabled": True,
+                }
+                for version in ("20.4.0", "20.5.0")
+            ],
+            "architectures": ["amd64", "arm64"],
+            "tag_policy": {
+                "deploy_tag_template": (
+                    "{release}-{distro}-{os_version}-{kolla_ansible_version}"
+                )
+            },
+        }
+        errors: list[str] = []
+        validator = runpy.run_path(str(ROOT / "scripts" / "validate-config.py"))
+        source_set_id = matrix["releases"]["2025.1"]["source_set"]
+        (self.synthetic_source_sets_dir / f"{source_set_id}.json").write_text(
+            json.dumps(synthetic_source_set("2025.1", matrix["toolchains"])),
+            encoding="utf-8",
+        )
+
+        validator["validate_matrix"](
+            Matrix(matrix, source_sets_dir=self.synthetic_source_sets_dir),
+            errors,
+            branch_name="2025-1",
+        )
+
+        self.assertEqual(errors, [])
+
     def setUp(self) -> None:
         self.matrix = load_json(MATRIX_PATH)
+        source_sets = tempfile.TemporaryDirectory()
+        self.addCleanup(source_sets.cleanup)
+        self.synthetic_source_sets_dir = Path(source_sets.name)
+        for release, release_config in EXPECTED_RELEASES.items():
+            source_set_id = release_config["source_set"]
+            (self.synthetic_source_sets_dir / f"{source_set_id}.json").write_text(
+                json.dumps(synthetic_source_set(release)),
+                encoding="utf-8",
+            )
         matrix_releases = {
             stream["release"] for stream in self.matrix["streams"]
         }
         self.active_releases = [
             release
-            for release in EXPECTED_TOOLCHAINS
+            for release in EXPECTED_RELEASES
             if release in matrix_releases
         ]
         self.active_expected_streams = {
@@ -193,8 +392,19 @@ class ConfigValidationTest(unittest.TestCase):
             if expected[0] in matrix_releases
         }
         self.active_expected_toolchains = {
-            release: copy.deepcopy(EXPECTED_TOOLCHAINS[release])
-            for release in self.active_releases
+            version: copy.deepcopy(EXPECTED_TOOLCHAINS[version])
+            for version in {
+                stream["toolchain"] for stream in self.matrix["streams"]
+            }
+        }
+        self.active_expected_releases = {
+            release: copy.deepcopy(EXPECTED_RELEASES[release])
+            for release in matrix_releases
+        }
+        referenced_bases = {stream["base"] for stream in self.matrix["streams"]}
+        self.active_expected_bases = {
+            base_id: copy.deepcopy(EXPECTED_BASES[base_id])
+            for base_id in referenced_bases
         }
         self.validator = runpy.run_path(
             str(ROOT / "scripts" / "validate-config.py")
@@ -230,24 +440,46 @@ class ConfigValidationTest(unittest.TestCase):
         )
         return errors
 
-    def branch_matrix(self, release: str) -> dict[str, object]:
+    def branch_matrix(self, release: str) -> Matrix:
         matrix = copy.deepcopy(self.matrix)
-        matrix["streams"] = [
-            {
-                "id": stream_id,
-                "release": expected[0],
-                "distro": expected[3],
-                "base_tag": expected[4],
-                "tag_token": expected[5],
-                "publish_enabled": True,
-            }
-            for stream_id, expected in EXPECTED_STREAMS.items()
-            if expected[0] == release
+        matching_streams = [
+            copy.deepcopy(stream)
+            for stream in self.matrix["streams"]
+            if stream["release"] == release
         ]
+        if matching_streams:
+            release_config = copy.deepcopy(self.matrix["releases"][release])
+            toolchains = self.matrix["toolchains"]
+            bases = self.matrix["bases"]
+        else:
+            matching_streams = [
+                {
+                    "id": stream_id,
+                    "release": expected[0],
+                    "toolchain": expected[1],
+                    "base": f"{expected[3]}-{expected[4]}",
+                    "publish_enabled": True,
+                }
+                for stream_id, expected in EXPECTED_STREAMS.items()
+                if expected[0] == release
+            ]
+            release_config = copy.deepcopy(EXPECTED_RELEASES[release])
+            toolchains = EXPECTED_TOOLCHAINS
+            bases = EXPECTED_BASES
+
+        matrix["streams"] = matching_streams
+        matrix["releases"] = {release: release_config}
+        versions = {stream["toolchain"] for stream in matching_streams}
         matrix["toolchains"] = {
-            release: copy.deepcopy(EXPECTED_TOOLCHAINS[release])
+            version: copy.deepcopy(toolchains[version])
+            for version in versions
         }
-        return matrix
+        base_ids = {stream["base"] for stream in matching_streams}
+        matrix["bases"] = {
+            base_id: copy.deepcopy(bases[base_id])
+            for base_id in base_ids
+        }
+        return Matrix(matrix, source_sets_dir=self.synthetic_source_sets_dir)
 
     @staticmethod
     def remove_image(profile: dict[str, object], image_name: str) -> None:
@@ -260,21 +492,23 @@ class ConfigValidationTest(unittest.TestCase):
             ]
 
     def test_matrix_declares_exact_active_release_toolchains_and_streams(self) -> None:
-        self.assertEqual(self.matrix["schema_version"], 3)
+        self.assertEqual(self.matrix["schema_version"], 4)
         self.assertEqual(self.matrix["owner"], "supergate-hub")
         self.assertEqual(self.matrix["repository"], "kolla-container-images")
         self.assertEqual(self.matrix["registry"], "ghcr.io")
         self.assertEqual(self.matrix["profiles"], ["core", "deployment"])
         self.assertEqual(self.matrix["release_metadata"], EXPECTED_RELEASE_METADATA)
+        self.assertEqual(self.matrix["releases"], self.active_expected_releases)
         self.assertEqual(
             self.matrix["toolchains"], self.active_expected_toolchains
         )
+        self.assertEqual(self.matrix["bases"], self.active_expected_bases)
         self.assertEqual(self.matrix["architectures"], ["amd64", "arm64"])
         self.assertEqual(
             self.matrix["tag_policy"],
             {
                 "deploy_tag_template": (
-                    "{release}-{distro}-{tag_token}-{kolla_ansible_version}"
+                    "{release}-{distro}-{os_version}-{kolla_ansible_version}"
                 ),
             },
         )
@@ -294,9 +528,8 @@ class ConfigValidationTest(unittest.TestCase):
                     {
                         "id",
                         "release",
-                        "distro",
-                        "base_tag",
-                        "tag_token",
+                        "toolchain",
+                        "base",
                         "publish_enabled",
                     },
                 )
@@ -315,10 +548,11 @@ class ConfigValidationTest(unittest.TestCase):
                 self.assertEqual(
                     stream["kolla_version"], stream["kolla_ansible_version"]
                 )
-                toolchain = EXPECTED_TOOLCHAINS[stream["release"]]
-                self.assertEqual(stream["release_series"], toolchain["series"])
+                toolchain = EXPECTED_TOOLCHAINS[stream["toolchain_version"]]
+                release_config = EXPECTED_RELEASES[stream["release"]]
+                self.assertEqual(stream["release_series"], release_config["series"])
                 self.assertEqual(
-                    stream["release_branch"], toolchain["release_branch"]
+                    stream["release_branch"], stream["release"].replace(".", "-")
                 )
                 self.assertEqual(stream["kolla_commit"], toolchain["kolla"]["commit"])
                 self.assertEqual(
@@ -328,7 +562,7 @@ class ConfigValidationTest(unittest.TestCase):
                 self.assertIs(stream["publish_enabled"], True)
                 self.assertEqual(
                     render_tag(self.matrix, stream),
-                    f"{stream_id}-{stream['kolla_ansible_version']}",
+                    stream_id,
                 )
 
     def test_profiles_review_every_stream_and_resolve_neutron_aliases(self) -> None:
@@ -339,7 +573,7 @@ class ConfigValidationTest(unittest.TestCase):
                 self.assertEqual(
                     set(profile["reviewed_streams"]), set(EXPECTED_STREAMS)
                 )
-                self.assertEqual(len(profile["reviewed_streams"]), 7)
+                self.assertEqual(len(profile["reviewed_streams"]), 8)
 
                 neutron = next(
                     image
@@ -447,7 +681,7 @@ class ConfigValidationTest(unittest.TestCase):
         self.assertEqual(completed.stderr, "")
 
     def test_validator_accepts_each_complete_release_branch_subset(self) -> None:
-        for release in EXPECTED_TOOLCHAINS:
+        for release in self.active_releases:
             branch_name = release.replace(".", "-")
             with self.subTest(release=release, branch=branch_name):
                 matrix = self.branch_matrix(release)
@@ -458,52 +692,142 @@ class ConfigValidationTest(unittest.TestCase):
                 self.validator["validate_profiles"](matrix, errors)
                 self.assertEqual(errors, [])
 
-    def test_main_context_requires_complete_aggregate_catalog(self) -> None:
-        aggregate = self.branch_matrix("2025.1")
-
-        errors = self.validate_matrix(aggregate, branch_name="main")
-
-        self.assertTrue(
-            any("complete reviewed stream catalog" in error for error in errors),
-            errors,
-        )
-        self.assertTrue(
-            any("every reviewed release toolchain" in error for error in errors),
-            errors,
-        )
-
-        if set(self.matrix["toolchains"]) == set(EXPECTED_TOOLCHAINS):
-            self.assertEqual(
-                self.validate_matrix(self.matrix, branch_name="main"),
-                [],
+    def test_release_branch_keeps_owned_revisions_and_rejects_foreign_files(self) -> None:
+        release = self.active_releases[0]
+        branch_name = release.replace(".", "-")
+        source_set_id = self.matrix["releases"][release]["source_set"]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_sets_dir = Path(temp_dir) / "openstack-sources"
+            source_sets_dir.mkdir()
+            source_path = ROOT / "config" / "openstack-sources" / f"{source_set_id}.json"
+            (source_sets_dir / source_path.name).write_bytes(source_path.read_bytes())
+            matrix = Matrix(
+                self.branch_matrix(release),
+                source_sets_dir=source_sets_dir,
             )
+
+            errors: list[str] = []
+            self.validator["validate_matrix"](
+                matrix,
+                errors,
+                branch_name=branch_name,
+                require_exact_source_files=True,
+            )
+            self.assertEqual(errors, [])
+
+            historical = json.loads(source_path.read_text(encoding="utf-8"))
+            historical["id"] = f"{historical['series']}-20260812-r1"
+            (source_sets_dir / f"{historical['id']}.json").write_text(
+                json.dumps(historical),
+                encoding="utf-8",
+            )
+            errors = []
+            self.validator["validate_matrix"](
+                matrix,
+                errors,
+                branch_name=branch_name,
+                require_exact_source_files=True,
+            )
+            self.assertEqual(errors, [])
+
+            foreign_release = next(
+                candidate for candidate in EXPECTED_RELEASES if candidate != release
+            )
+            foreign_id = EXPECTED_RELEASES[foreign_release]["source_set"]
+            foreign_path = self.synthetic_source_sets_dir / f"{foreign_id}.json"
+            (source_sets_dir / foreign_path.name).write_bytes(foreign_path.read_bytes())
+            errors = []
+            self.validator["validate_matrix"](
+                matrix,
+                errors,
+                branch_name=branch_name,
+                require_exact_source_files=True,
+            )
+            self.assertTrue(
+                any("is not owned by this matrix" in error for error in errors),
+                errors,
+            )
+
+    def test_matrix_rejects_a_legacy_active_source_set(self) -> None:
+        release = self.active_releases[0]
+        source_set_id = self.matrix["releases"][release]["source_set"]
+        source_path = (
+            ROOT / "config" / "openstack-sources" / f"{source_set_id}.json"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_sets_dir = Path(temp_dir) / "openstack-sources"
+            source_sets_dir.mkdir()
+            document = json.loads(source_path.read_text(encoding="utf-8"))
+            document["schema_version"] = 1
+            del document["direct_artifacts"]
+            del document["kolla_source_inputs"]
+            (source_sets_dir / source_path.name).write_text(
+                json.dumps(document),
+                encoding="utf-8",
+            )
+            matrix = Matrix(
+                self.branch_matrix(release),
+                source_sets_dir=source_sets_dir,
+            )
+            errors: list[str] = []
+
+            self.validator["validate_matrix"](
+                matrix,
+                errors,
+                branch_name=release.replace(".", "-"),
+            )
+
+        self.assertTrue(
+            any("active source-set schema_version must be 3" in error for error in errors),
+            errors,
+        )
+
+    def test_main_context_accepts_dynamic_aggregate_catalog(self) -> None:
+        self.assertEqual(self.validate_matrix(self.matrix, branch_name="main"), [])
 
     def test_matrix_rejects_incomplete_or_mixed_release_branch_subsets(self) -> None:
         release = self.active_releases[0]
         branch_name = release.replace(".", "-")
-        incomplete = self.branch_matrix(release)
-        incomplete["streams"].pop()
-        incomplete_errors = self.validate_matrix(
-            incomplete,
-            branch_name=branch_name,
-        )
-        self.assertTrue(
-            any(
-                "reviewed streams for active releases" in error
-                for error in incomplete_errors
-            ),
-            incomplete_errors,
-        )
-
         other_release = next(
             candidate
-            for candidate in EXPECTED_TOOLCHAINS
+            for candidate in EXPECTED_RELEASES
             if candidate != release
         )
-        other_matrix = self.branch_matrix(other_release)
+        if other_release in self.matrix["releases"]:
+            other_matrix = self.branch_matrix(other_release)
+        else:
+            other_stream_id, other_expected = next(
+                (stream_id, expected)
+                for stream_id, expected in EXPECTED_STREAMS.items()
+                if expected[0] == other_release
+            )
+            _, toolchain_version, _, distro, os_version, _ = other_expected
+            base_id = f"{distro}-{os_version}"
+            other_matrix = {
+                "streams": [
+                    {
+                        "id": other_stream_id,
+                        "release": other_release,
+                        "toolchain": toolchain_version,
+                        "base": base_id,
+                        "publish_enabled": True,
+                    }
+                ],
+                "releases": {
+                    other_release: copy.deepcopy(EXPECTED_RELEASES[other_release])
+                },
+                "toolchains": {
+                    toolchain_version: copy.deepcopy(
+                        EXPECTED_TOOLCHAINS[toolchain_version]
+                    )
+                },
+                "bases": {base_id: copy.deepcopy(EXPECTED_BASES[base_id])},
+            }
         mixed = self.branch_matrix(release)
         mixed["streams"].extend(copy.deepcopy(other_matrix["streams"]))
+        mixed["releases"].update(copy.deepcopy(other_matrix["releases"]))
         mixed["toolchains"].update(copy.deepcopy(other_matrix["toolchains"]))
+        mixed["bases"].update(copy.deepcopy(other_matrix["bases"]))
         mixed_errors = self.validate_matrix(mixed, branch_name=branch_name)
         self.assertTrue(
             any(
@@ -526,44 +850,38 @@ class ConfigValidationTest(unittest.TestCase):
         )
 
     def test_matrix_rejects_missing_unused_and_malformed_toolchains(self) -> None:
-        release = self.active_releases[0]
+        version = next(iter(self.matrix["toolchains"]))
         missing = copy.deepcopy(self.matrix)
-        del missing["toolchains"][release]
+        del missing["toolchains"][version]
         missing_errors = self.validate_matrix(missing)
         self.assertTrue(
             any(
                 "toolchains must be a non-empty object" in error
-                or "toolchain releases must exactly match" in error
+                or "toolchain keys must exactly match" in error
                 for error in missing_errors
             ),
             missing_errors,
         )
 
         unused = copy.deepcopy(self.matrix)
-        unused["toolchains"]["2027.1"] = copy.deepcopy(
-            unused["toolchains"][release]
+        unused["toolchains"]["99.0.0"] = copy.deepcopy(
+            unused["toolchains"][version]
         )
         unused_errors = self.validate_matrix(unused)
         self.assertTrue(
-            any("toolchain releases must exactly match" in error for error in unused_errors),
+            any("toolchain keys must exactly match" in error for error in unused_errors),
             unused_errors,
         )
 
         malformed = copy.deepcopy(self.matrix)
-        malformed["toolchains"][release]["kolla"]["commit"] = "99b84ab"
-        malformed["toolchains"][release]["release_branch"] = "main"
+        malformed["toolchains"][version]["kolla"]["commit"] = "99b84ab"
+        malformed["toolchains"][version]["kolla"]["version"] = version
         malformed_errors = self.validate_matrix(malformed)
         self.assertTrue(
             any("lowercase 40-character SHA" in error for error in malformed_errors),
             malformed_errors,
         )
-        self.assertTrue(
-            any(
-                f"release_branch must be '{release.replace('.', '-')}'" in error
-                for error in malformed_errors
-            ),
-            malformed_errors,
-        )
+        self.assertTrue(any("keys must be exactly" in error for error in malformed_errors))
 
     def test_runtime_validator_rejects_coherent_core_leaf_removal(self) -> None:
         profile = copy.deepcopy(load_json(PROFILES_DIR / "core.json"))
@@ -677,8 +995,13 @@ class ConfigValidationTest(unittest.TestCase):
             for group in profile["build_groups"]
             if "mariadb-server" in group["images"]
         )
+        rocky_stream = next(
+            stream
+            for stream in self.matrix["streams"]
+            if self.matrix["bases"][stream["base"]]["distro"] == "rocky"
+        )
         group["applies_to"] = {
-            "streams": ["2025.1-rocky-9"],
+            "streams": [rocky_stream["id"]],
             "distros": ["ubuntu"],
         }
 
@@ -740,7 +1063,7 @@ class ConfigValidationTest(unittest.TestCase):
 
         for template in (
             "{}",
-            "{release.missing}-{distro}-{tag_token}",
+            "{release.missing}-{distro}-{os_version}",
         ):
             with self.subTest(template=template):
                 matrix = copy.deepcopy(self.matrix)

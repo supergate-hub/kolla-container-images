@@ -14,6 +14,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 PLANNER = ROOT / "scripts" / "plan-publish.py"
 RUN_BUILD_UNIT = ROOT / "scripts" / "run-build-unit.py"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 CANDIDATE_ID = "123456789-1"
 TEN_GIB = 10 * 1024**3
 THREE_GIB = 3 * 1024**3
@@ -48,6 +49,8 @@ def candidate_plan(*, profile: str = "core", image: str | None = "keystone") -> 
         profile,
         "--candidate-id",
         CANDIDATE_ID,
+        "--base-manifest",
+        str(BASE_INDEX_FIXTURE),
         "--dry-run",
     ]
     if image is not None:
@@ -83,10 +86,12 @@ def unit_record(plan: dict, unit: dict) -> dict:
     digest = digest_for(unit["id"])
     repository = unit["arch_ref"].rpartition(":")[0]
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "candidate_id": plan["candidate_id"],
         "stream": plan["stream"],
         "kolla": plan["kolla"],
+        "base": plan["base"],
+        "openstack_sources": plan["openstack_sources"],
         "unit_id": unit["id"],
         "kind": unit["kind"],
         "tier": unit["tier"],
@@ -117,10 +122,16 @@ class FakeRunner:
         unit: dict,
         *,
         bad_summary: bool = False,
+        docker_hub_familiar_repo_digest: bool = False,
+        repo_digest_override: str | None = None,
+        target_present: bool = False,
         unbuildable: tuple[str, ...] = (),
     ) -> None:
         self.unit = unit
         self.bad_summary = bad_summary
+        self.docker_hub_familiar_repo_digest = docker_hub_familiar_repo_digest
+        self.repo_digest_override = repo_digest_override
+        self.target_present = target_present
         self.unbuildable = unbuildable
         self.commands: list[list[str]] = []
         self.target_digest = "sha256:" + "f" * 64
@@ -135,7 +146,17 @@ class FakeRunner:
                 stdout = self.unit["platform"] + "\n"
             elif command[-1] == "{{json .RepoDigests}}":
                 ref = command[3]
+                if self.repo_digest_override is not None:
+                    ref = self.repo_digest_override
+                elif (
+                    self.docker_hub_familiar_repo_digest
+                    and ref.startswith("docker.io/library/")
+                ):
+                    ref = ref.removeprefix("docker.io/library/")
                 stdout = json.dumps([ref])
+        elif command[:5] == ["docker", "image", "ls", "--quiet", "--no-trunc"]:
+            if self.target_present and command[5] == self.unit["arch_ref"]:
+                stdout = "sha256:" + "e" * 64 + "\n"
         elif command[:4] == ["docker", "buildx", "imagetools", "inspect"]:
             stdout = json.dumps(
                 {
@@ -226,7 +247,7 @@ class BuildUnitTest(unittest.TestCase):
                 "built": ["keystone"],
                 "skipped": ["base", "openstack-base", "keystone-base"],
             })
-            self.assertEqual(evidence["schema_version"], 2)
+            self.assertEqual(evidence["schema_version"], 3)
             self.assertEqual(evidence["kolla"], plan["kolla"])
             self.assertNotIn("kolla_version", evidence)
             self.assertEqual(
@@ -257,6 +278,170 @@ class BuildUnitTest(unittest.TestCase):
                 command for command in runner.commands if command[:2] == ["docker", "run"]
             )
             self.assertEqual(smoke_command[-1], evidence["immutable_ref"])
+
+    def test_base_unit_pulls_the_frozen_child_digest_before_no_pull_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            plan, unit, plan_path, evidence_dir = self.prepare_unit(
+                temp_path,
+                self.plan,
+                "amd64-parent-base",
+            )
+            runner = FakeRunner(unit)
+
+            evidence = BUILD_UNIT.execute_build_unit(
+                plan_path,
+                unit["id"],
+                evidence_dir,
+                temp_path / "unit.json",
+                runner=runner,
+                disk_sampler=lambda: TEN_GIB,
+                machine="x86_64",
+            )
+
+            base = plan["base"]
+            child_digest = base["platforms"]["amd64"]["digest"]
+            immutable_base = f"{base['requested_ref'].rsplit(':', 1)[0]}@{child_digest}"
+            pull = ["docker", "pull", "--platform", "linux/amd64", immutable_base]
+            tag = ["docker", "tag", immutable_base, base["requested_ref"]]
+            self.assertLess(runner.commands.index(pull), runner.commands.index(tag))
+            self.assertLess(runner.commands.index(tag), runner.commands.index(unit["command"]))
+            self.assertIn("--no-pull", unit["command"])
+            self.assertEqual(evidence["base"], base)
+
+    def test_local_digest_accepts_docker_hub_familiar_repo_digest(self) -> None:
+        digest = "sha256:" + "a" * 64
+        immutable_ref = f"docker.io/library/ubuntu@{digest}"
+        unit = planned_unit(self.plan, "amd64-parent-base")
+        runner = FakeRunner(unit, docker_hub_familiar_repo_digest=True)
+
+        BUILD_UNIT.verify_local_digest(runner, immutable_ref, immutable_ref)
+
+    def test_local_digest_rejects_same_digest_from_different_repository(self) -> None:
+        digest = "sha256:" + "a" * 64
+        immutable_ref = f"docker.io/library/ubuntu@{digest}"
+        unit = planned_unit(self.plan, "amd64-parent-base")
+        runner = FakeRunner(
+            unit,
+            repo_digest_override=f"docker.io/someone-else/ubuntu@{digest}",
+        )
+
+        with self.assertRaisesRegex(
+            BUILD_UNIT.BuildUnitError,
+            "does not contain expected digest",
+        ):
+            BUILD_UNIT.verify_local_digest(runner, immutable_ref, immutable_ref)
+
+    def test_target_revision_ref_is_absent_immediately_before_kolla_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            _, unit, plan_path, evidence_dir = self.prepare_leaf(temp_path)
+            runner = FakeRunner(unit)
+
+            BUILD_UNIT.execute_build_unit(
+                plan_path,
+                unit["id"],
+                evidence_dir,
+                temp_path / "unit.json",
+                runner=runner,
+                disk_sampler=lambda: TEN_GIB,
+                machine="x86_64",
+            )
+
+            build_index = runner.commands.index(unit["command"])
+            self.assertEqual(
+                runner.commands[build_index - 1],
+                [
+                    "docker",
+                    "image",
+                    "ls",
+                    "--quiet",
+                    "--no-trunc",
+                    unit["arch_ref"],
+                ],
+            )
+
+    def test_existing_target_revision_ref_is_rejected_before_kolla_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            _, unit, plan_path, evidence_dir = self.prepare_leaf(temp_path)
+            runner = FakeRunner(unit, target_present=True)
+
+            with self.assertRaisesRegex(
+                BUILD_UNIT.BuildUnitError,
+                "target architecture ref already exists locally before build",
+            ):
+                BUILD_UNIT.execute_build_unit(
+                    plan_path,
+                    unit["id"],
+                    evidence_dir,
+                    temp_path / "unit.json",
+                    runner=runner,
+                    disk_sampler=lambda: TEN_GIB,
+                    machine="x86_64",
+                )
+
+            self.assertNotIn(unit["command"], runner.commands)
+
+    def test_build_command_is_bound_to_frozen_base_and_source_inputs(self) -> None:
+        plan = copy.deepcopy(self.plan)
+        unit = planned_unit(plan, "amd64-leaf-keystone")
+        command = unit["command"]
+        self.assertEqual(
+            command[command.index("--config-file") + 1],
+            "artifacts/config/kolla-build.conf",
+        )
+        self.assertEqual(command.count("--locals-base"), 1)
+        self.assertEqual(command[command.index("--locals-base") + 1], ".")
+        self.assertEqual(command.count("--no-pull"), 1)
+        self.assertEqual(command.count("--skip-existing"), 1)
+        self.assertNotIn("--skip-parents", command)
+
+        mutations = {
+            "base image": ("--base-image", "example.invalid/moving-base"),
+            "base tag": ("--base-tag", "latest"),
+            "OpenStack release": ("--openstack-release", "master"),
+            "source config": ("--config-file", "/tmp/unfrozen.conf"),
+            "source archive base": ("--locals-base", "/tmp/unfrozen"),
+        }
+        for name, (option, replacement) in mutations.items():
+            with self.subTest(name=name):
+                malformed = copy.deepcopy(plan)
+                malformed_unit = planned_unit(
+                    malformed, "amd64-leaf-keystone"
+                )
+                position = malformed_unit["command"].index(option) + 1
+                malformed_unit["command"][position] = replacement
+                with self.assertRaisesRegex(
+                    BUILD_UNIT.BuildUnitError, "frozen command"
+                ):
+                    BUILD_UNIT.validate_plan_identity(malformed)
+
+        missing_no_pull = copy.deepcopy(plan)
+        planned_unit(missing_no_pull, "amd64-leaf-keystone")["command"].remove(
+            "--no-pull"
+        )
+        with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "--no-pull"):
+            BUILD_UNIT.validate_plan_identity(missing_no_pull)
+
+    def test_frozen_command_requires_skip_existing_without_skip_parents(self) -> None:
+        unit = copy.deepcopy(planned_unit(self.plan, "amd64-leaf-keystone"))
+
+        BUILD_UNIT.validate_unit(unit)
+
+        for name, mutation in (
+            ("missing", lambda command: command.remove("--skip-existing")),
+            ("duplicate", lambda command: command.insert(-1, "--skip-existing")),
+            ("skip parents", lambda command: command.insert(-1, "--skip-parents")),
+        ):
+            with self.subTest(name=name):
+                malformed = copy.deepcopy(unit)
+                mutation(malformed["command"])
+                with self.assertRaisesRegex(
+                    BUILD_UNIT.BuildUnitError,
+                    "--skip-existing" if name != "skip parents" else "--skip-parents",
+                ):
+                    BUILD_UNIT.validate_unit(malformed)
 
     def test_summary_must_build_only_target_and_skip_exact_ancestors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

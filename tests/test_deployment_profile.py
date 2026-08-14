@@ -12,13 +12,14 @@ MATRIX_PATH = ROOT / "config" / "build-matrix.json"
 PROFILE_PATH = ROOT / "config" / "profiles" / "deployment.json"
 
 EXPECTED_COUNTS = {
-    "2025.1-rocky-9": 63,
-    "2025.1-rocky-10": 63,
-    "2025.1-ubuntu-noble": 64,
-    "2025.2-rocky-10": 63,
-    "2025.2-ubuntu-noble": 64,
-    "2026.1-rocky-10": 65,
-    "2026.1-ubuntu-noble": 66,
+    "2025.1-rocky-9.8-20.4.0": 63,
+    "2025.1-rocky-10.2-20.4.0": 63,
+    "2025.1-ubuntu-24.04-20.4.0": 64,
+    "2025.1-rocky-10.2-20.5.0": 63,
+    "2025.2-rocky-10.2-21.1.0": 63,
+    "2025.2-ubuntu-24.04-21.1.0": 64,
+    "2026.1-rocky-10.2-22.0.0": 65,
+    "2026.1-ubuntu-24.04-22.0.0": 66,
 }
 
 BASE_LEAVES = {

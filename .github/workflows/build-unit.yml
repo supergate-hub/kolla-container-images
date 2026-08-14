@@ -16,12 +16,8 @@ on:
         required: false
         default: ""
         type: string
-      candidate_id:
-        description: Candidate identity derived from the caller run context
-        required: true
-        type: string
-      approval:
-        description: Exact approval phrase for the frozen plan
+      publish_scope:
+        description: Trusted Actions scope used to render the frozen plan
         required: true
         type: string
 
@@ -83,17 +79,18 @@ jobs:
           path: artifacts/input-evidence
           merge-multiple: true
 
-      - name: Revalidate publish approval
+      - name: Revalidate publish authorization
         env:
           ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
           ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
           ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
-          APPROVAL: ${{ inputs.approval }}
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLISH_SCOPE: ${{ inputs.publish_scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --expected-scope "$PUBLISH_SCOPE"
 
       - name: Verify native hosted runner and Docker storage
         env:
@@ -149,7 +146,9 @@ jobs:
           python3 scripts/frozen_sources.py prepare \
             --matrix config/build-matrix.json \
             --publish-plan artifacts/plan/publish-plan.json \
-            --checkout-root "$source_root"
+            --checkout-root "$source_root" \
+            --build-config-dir artifacts/config \
+            --build-engine-lock config/build-engine-requirements.lock
           KOLLA_VERSION="$(
             python3 - <<'PY'
           import json
@@ -163,17 +162,30 @@ jobs:
           )"
           KOLLA_SOURCE_DIR="$source_root/kolla"
           python3 -m venv .venv
-          .venv/bin/python -m pip install --no-cache-dir --upgrade pip
           .venv/bin/python -m pip install --no-cache-dir \
-            -r "$KOLLA_SOURCE_DIR/requirements.txt" "docker==7.1.0"
+            --require-hashes --only-binary=:all: \
+            -r config/build-engine-requirements.lock
           PBR_VERSION="$KOLLA_VERSION" \
-            .venv/bin/python -m pip install --no-cache-dir --no-deps \
+            .venv/bin/python -m pip install --no-cache-dir --no-index \
+            --no-build-isolation --no-deps \
             "$KOLLA_SOURCE_DIR"
           .venv/bin/python -m pip check
+          .venv/bin/python scripts/frozen_sources.py prepare-unit-sources \
+            --matrix config/build-matrix.json \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --checkout-root "$source_root" \
+            --build-config-dir artifacts/config \
+            --build-engine-lock config/build-engine-requirements.lock \
+            --unit-id "$UNIT_ID" \
+            --source-archive-dir artifacts/source-archives
           .venv/bin/python scripts/frozen_sources.py verify-install \
             --matrix config/build-matrix.json \
             --publish-plan artifacts/plan/publish-plan.json \
-            --checkout-root "$source_root"
+            --checkout-root "$source_root" \
+            --build-config-dir artifacts/config \
+            --build-engine-lock config/build-engine-requirements.lock \
+            --unit-id "$UNIT_ID" \
+            --source-archive-dir artifacts/source-archives
           .venv/bin/python - <<'PY'
           import docker
 
@@ -219,7 +231,7 @@ jobs:
       - name: Upload unit evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
+          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/unit-evidence/${{ fromJSON(inputs.unit).id }}.json
           if-no-files-found: error
           retention-days: 7
@@ -242,7 +254,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: unit-diagnostics-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
+          name: unit-diagnostics-${{ fromJSON(inputs.unit).id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/unit-diagnostics/${{ fromJSON(inputs.unit).id }}.txt
           if-no-files-found: warn
           retention-days: 1

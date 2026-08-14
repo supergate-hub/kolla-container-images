@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLANNER = ROOT / "scripts" / "plan-publish.py"
 AGGREGATOR_PATH = ROOT / "scripts" / "aggregate-native-evidence.py"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 CANDIDATE_ID = "123456789-1"
 TEN_GIB = 10 * 1024**3
 THREE_GIB = 3 * 1024**3
@@ -50,6 +51,8 @@ def candidate_plan(*, profile: str = "core", image: str | None = "keystone") -> 
         profile,
         "--candidate-id",
         CANDIDATE_ID,
+        "--base-manifest",
+        str(BASE_INDEX_FIXTURE),
         "--dry-run",
     ]
     if image is not None:
@@ -96,10 +99,12 @@ def records_for(plan: dict) -> dict[str, dict]:
                 "passed": True,
             }
         records[unit["id"]] = {
-            "schema_version": 2,
+            "schema_version": 3,
             "candidate_id": plan["candidate_id"],
             "stream": plan["stream"],
             "kolla": plan["kolla"],
+            "base": plan["base"],
+            "openstack_sources": plan["openstack_sources"],
             "unit_id": unit["id"],
             "kind": unit["kind"],
             "tier": unit["tier"],
@@ -155,7 +160,7 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
         )
         return unit_dir
 
-    def test_exact_closure_aggregates_legacy_native_schema(self) -> None:
+    def test_exact_closure_aggregates_unit_evidence_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             unit_dir = self.prepare_unit_dir(temp_path)
@@ -175,8 +180,12 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                 self.assertEqual(evidence["arch"], arch)
                 self.assertEqual(evidence["platform"], f"linux/{arch}")
                 self.assertEqual(evidence["stream"], self.plan["stream"])
-                self.assertEqual(evidence["schema_version"], 2)
+                self.assertEqual(evidence["schema_version"], 3)
                 self.assertEqual(evidence["kolla"], self.plan["kolla"])
+                self.assertEqual(evidence["base"], self.plan["base"])
+                self.assertEqual(
+                    evidence["openstack_sources"], self.plan["openstack_sources"]
+                )
                 self.assertNotIn("kolla_version", evidence)
                 self.assertEqual(
                     set(evidence),
@@ -187,6 +196,8 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                         "platform",
                         "runner_machine",
                         "kolla",
+                        "base",
+                        "openstack_sources",
                         "parents",
                         "images",
                     },
