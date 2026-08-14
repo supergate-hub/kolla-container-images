@@ -1,5 +1,11 @@
 # Kolla Publish Hardening Implementation Plan
 
+> **Supersession note (2026-08-13):** Conflicting catalog, source/base pinning,
+> tag, lock, and dispatch contracts below are superseded by schema v4 and the
+> current [publish contract](../../publish.md): eight exact-version streams,
+> OpenStack source sets, plan-frozen base digests, semantic plus revision tags,
+> lock schema v3, and the three `operation`/`stream`/`scope` inputs.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the organization GHCR pipeline publish run-unique AMD64/ARM64 candidate images, prove the current Kolla invocation built the complete frozen scope, emit a candidate-bound generic lock, and defer mutable stream aliases until after the validated candidate artifact is safely uploaded.

@@ -1,5 +1,11 @@
 # Kolla-Ansible-Compatible Candidate Lock Design
 
+> **Supersession note (2026-08-13):** Conflicting catalog, source/base pinning,
+> tag, lock, and dispatch contracts below are superseded by schema v4 and the
+> current [publish contract](../../publish.md): eight exact-version streams,
+> OpenStack source sets, plan-frozen base digests, semantic plus revision tags,
+> lock schema v3, and the three `operation`/`stream`/`scope` inputs.
+
 > **Supersession note (2026-07-14):** The current execution contract is
 > [Kolla Publish Hardening Design](2026-07-14-publish-hardening-design.md).
 > This document's dual-contract shape remains valid, but candidate-qualified
