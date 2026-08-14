@@ -169,7 +169,7 @@ def kolla_build_command(
         summary_file,
         "--logs-dir",
         logs_dir,
-        "--no-pull",
+        "--nopull",
         "--skip-existing",
         "--push",
     ]

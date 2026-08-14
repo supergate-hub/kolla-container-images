@@ -190,7 +190,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
                     "index digest",
                     "linux/amd64",
                     "linux/arm64",
-                    "--no-pull",
+                    "--nopull",
                     "DNF/APT repository snapshots",
                 )
         matrix = json.loads(read_text(MATRIX_PATH))
