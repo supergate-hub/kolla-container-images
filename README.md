@@ -139,7 +139,9 @@ digests. A missing platform fails before any image build.
 
 Each native unit pulls its frozen child digest, verifies the platform and
 digest, retags it to the configured local base tag, and invokes Kolla with
-`--no-pull`. The same run therefore cannot re-resolve the mutable upstream tag.
+Kolla's upstream `--nopull` option. The same run therefore cannot re-resolve the
+mutable upstream tag. Before registry login, the installed exact Kolla parser
+must accept the complete frozen command with `pull=False`.
 A later run may resolve a different digest and will produce a different
 revision image with that provenance.
 

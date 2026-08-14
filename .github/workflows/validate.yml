@@ -19,6 +19,11 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
       - name: Parse every JSON file
         run: |
           set -euo pipefail
@@ -145,6 +150,23 @@ jobs:
             validation_args+=(--branch "$VALIDATION_BRANCH")
           fi
           python3 scripts/validate-config.py "${validation_args[@]}"
+
+      - name: Validate every pinned Kolla CLI contract
+        env:
+          CONTRACT_VENV: ${{ runner.temp }}/kolla-cli-contract-venv
+          CONTRACT_CHECKOUT_ROOT: ${{ runner.temp }}/kolla-cli-contract-checkouts
+        run: |
+          set -euo pipefail
+          python3 -m venv "$CONTRACT_VENV"
+          "$CONTRACT_VENV/bin/python" -m pip install --no-cache-dir \
+            --require-hashes --only-binary=:all: \
+            -r config/build-engine-requirements.lock
+          "$CONTRACT_VENV/bin/python" scripts/validate-kolla-cli-contract.py \
+            --matrix config/build-matrix.json \
+            --profile core \
+            --image keystone \
+            --base-manifest tests/fixtures/oci-base-index.json \
+            --checkout-root "$CONTRACT_CHECKOUT_ROOT"
 
       - name: Validate every active stream dry-run plan
         run: |

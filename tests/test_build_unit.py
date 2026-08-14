@@ -279,7 +279,7 @@ class BuildUnitTest(unittest.TestCase):
             )
             self.assertEqual(smoke_command[-1], evidence["immutable_ref"])
 
-    def test_base_unit_pulls_the_frozen_child_digest_before_no_pull_build(self) -> None:
+    def test_base_unit_pulls_the_frozen_child_digest_before_nopull_build(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             plan, unit, plan_path, evidence_dir = self.prepare_unit(
@@ -306,7 +306,8 @@ class BuildUnitTest(unittest.TestCase):
             tag = ["docker", "tag", immutable_base, base["requested_ref"]]
             self.assertLess(runner.commands.index(pull), runner.commands.index(tag))
             self.assertLess(runner.commands.index(tag), runner.commands.index(unit["command"]))
-            self.assertIn("--no-pull", unit["command"])
+            self.assertIn("--nopull", unit["command"])
+            self.assertNotIn("--no-pull", unit["command"])
             self.assertEqual(evidence["base"], base)
 
     def test_local_digest_accepts_docker_hub_familiar_repo_digest(self) -> None:
@@ -393,7 +394,8 @@ class BuildUnitTest(unittest.TestCase):
         )
         self.assertEqual(command.count("--locals-base"), 1)
         self.assertEqual(command[command.index("--locals-base") + 1], ".")
-        self.assertEqual(command.count("--no-pull"), 1)
+        self.assertEqual(command.count("--nopull"), 1)
+        self.assertNotIn("--no-pull", command)
         self.assertEqual(command.count("--skip-existing"), 1)
         self.assertNotIn("--skip-parents", command)
 
@@ -417,12 +419,12 @@ class BuildUnitTest(unittest.TestCase):
                 ):
                     BUILD_UNIT.validate_plan_identity(malformed)
 
-        missing_no_pull = copy.deepcopy(plan)
-        planned_unit(missing_no_pull, "amd64-leaf-keystone")["command"].remove(
-            "--no-pull"
+        missing_nopull = copy.deepcopy(plan)
+        planned_unit(missing_nopull, "amd64-leaf-keystone")["command"].remove(
+            "--nopull"
         )
-        with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "--no-pull"):
-            BUILD_UNIT.validate_plan_identity(missing_no_pull)
+        with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "--nopull"):
+            BUILD_UNIT.validate_plan_identity(missing_nopull)
 
     def test_frozen_command_requires_skip_existing_without_skip_parents(self) -> None:
         unit = copy.deepcopy(planned_unit(self.plan, "amd64-leaf-keystone"))

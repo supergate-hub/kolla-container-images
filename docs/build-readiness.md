@@ -97,8 +97,8 @@ bytes are regenerated and compared before registry login.
 The matrix stores a base tag, not a digest. Plan generation resolves it exactly
 once. Each native unit pulls the frozen platform child digest, verifies the
 digest/platform, retags it locally to the configured base reference, and runs
-Kolla with `--no-pull`. A tag move after plan generation cannot alter that
-run. A later plan may intentionally create a new revision from a newly
+Kolla with Kolla's upstream `--nopull` option. A tag move after plan generation
+cannot alter that run. A later plan may intentionally create a new revision from a newly
 resolved base. DNF/APT repository snapshots are excluded, so package-level
 bit-for-bit rebuild reproducibility is not claimed.
 
@@ -107,7 +107,9 @@ bit-for-bit rebuild reproducibility is not claimed.
 The plan creates parent dependency tiers 0, 1, and 2, leaf stage 0, and
 optional leaf stage 1. Each unit has one anchored target and its exact ancestor
 chain. The frozen Kolla command uses `--threads 1`, `--push-threads 1`,
-`--no-pull`, the frozen config files, and exactly one `--skip-existing`.
+`--nopull`, the frozen config files, and exactly one `--skip-existing`. The
+installed exact Kolla parser must accept the full argv with `pull=False` before
+registry login.
 Before invoking Kolla, the unit pulls each ancestor by its immutable evidence
 digest, verifies and retags it locally, and proves that the selected target's
 revision tag is absent. This makes `--skip-existing` skip only proven

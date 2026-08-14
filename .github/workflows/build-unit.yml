@@ -220,6 +220,8 @@ jobs:
           UNIT_ID: ${{ fromJSON(inputs.unit).id }}
         run: |
           set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          test "$(command -v kolla-build)" = "$PWD/.venv/bin/kolla-build"
           mkdir -p artifacts/input-evidence artifacts/unit-evidence artifacts/unit-diagnostics
           python3 scripts/run-build-unit.py \
             --publish-plan artifacts/plan/publish-plan.json \
