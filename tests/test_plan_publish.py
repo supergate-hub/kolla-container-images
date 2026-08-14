@@ -665,7 +665,8 @@ class PlanPublishTest(unittest.TestCase):
                     )
                     self.assertIn("--push", command)
                     self.assertEqual(command.count("--push"), 1)
-                    self.assertEqual(command.count("--no-pull"), 1)
+                    self.assertEqual(command.count("--nopull"), 1)
+                    self.assertNotIn("--no-pull", command)
                     self.assertEqual(command.count("--skip-existing"), 1)
                     self.assertNotIn("--skip-parents", command)
                     self.assertEqual(
