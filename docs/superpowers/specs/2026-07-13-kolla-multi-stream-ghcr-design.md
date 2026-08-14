@@ -1,5 +1,11 @@
 # Kolla Multi-Stream GHCR Image Supply Design
 
+> **Supersession note (2026-08-13):** Conflicting catalog, source/base pinning,
+> tag, lock, and dispatch contracts below are superseded by schema v4 and the
+> current [publish contract](../../publish.md): eight exact-version streams,
+> OpenStack source sets, plan-frozen base digests, semantic plus revision tags,
+> lock schema v3, and the three `operation`/`stream`/`scope` inputs.
+
 Date: 2026-07-13
 Status: approved by the user on 2026-07-13
 

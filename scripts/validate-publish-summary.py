@@ -10,11 +10,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from base_resolution import BaseResolutionError, validate_resolved_base
+from openstack_source_set import (
+    OpenStackSourceSetError,
+    render_frozen_configs,
+    validate_source_set_document,
+)
 from profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
+    render_tag,
+    render_revision_tag,
     resolve_profile,
     validate_candidate_id,
 )
@@ -25,10 +32,18 @@ DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 SUMMARY_KEYS = frozenset(
     {
         "candidate_id",
+        "schema_version",
         "stream",
         "release",
+        "release_series",
+        "release_branch",
         "distro",
         "distro_version",
+        "base",
+        "openstack_sources",
+        "release_metadata",
+        "kolla",
+        "kolla_ansible",
         "profile",
         "scope",
         "registry",
@@ -41,13 +56,26 @@ IMAGE_KEYS = frozenset(
     {
         "image",
         "kolla_ansible_variables",
-        "deploy_tag",
-        "deploy_ref",
+        "semantic_tag",
+        "semantic_ref",
+        "revision_tag",
+        "revision_ref",
         "manifest_digest",
+        "immutable_ref",
         "architectures",
     }
 )
-ARCHITECTURE_KEYS = frozenset({"arch", "platform", "arch_ref", "digest"})
+ARCHITECTURE_KEYS = frozenset(
+    {"arch", "platform", "revision_arch_ref", "digest"}
+)
+OPENSTACK_SOURCE_KEYS = frozenset(
+    {
+        "source_set",
+        "canonical_digest",
+        "kolla_build_config_sha256",
+        "template_override_sha256",
+    }
+)
 
 
 def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -124,11 +152,28 @@ def validate_scope(
     candidate_id: str,
 ) -> list[str]:
     expected_identity = {
+        "schema_version": 3,
         "candidate_id": candidate_id,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
+        "release_metadata": {
+            "repository": matrix["release_metadata"]["repository"],
+            "commit": matrix["release_metadata"]["commit"],
+        },
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "registry": matrix["registry"],
         "owner": matrix["owner"],
@@ -139,6 +184,61 @@ def validate_scope(
         actual = summary.get(key)
         if type(actual) is not type(expected_value) or actual != expected_value:
             errors.append(f"publish summary {key} must be {expected_value!r}, got {actual!r}")
+
+    configured_base = {
+        "id": stream["base_id"],
+        "distro": stream["distro"],
+        "os_version": stream["os_version"],
+        "image": stream["base_image"],
+        "tag": stream["base_tag"],
+    }
+    try:
+        validate_resolved_base(configured_base, summary.get("base"))
+    except BaseResolutionError as exc:
+        errors.append(f"publish summary base is invalid: {exc}")
+
+    openstack_sources = summary.get("openstack_sources")
+    if type(openstack_sources) is not dict:
+        errors.append("publish summary openstack_sources must be an object")
+    else:
+        errors.extend(
+            validate_exact_keys(
+                openstack_sources,
+                OPENSTACK_SOURCE_KEYS,
+                "publish summary openstack_sources",
+            )
+        )
+        source_set_document = openstack_sources.get("source_set")
+        if source_set_document != stream["source_set"]:
+            errors.append(
+                "publish summary openstack_sources source_set does not match stream"
+            )
+        if openstack_sources.get("canonical_digest") != stream["source_set_sha256"]:
+            errors.append(
+                "publish summary openstack_sources canonical_digest does not match stream"
+            )
+        try:
+            source_set = validate_source_set_document(
+                source_set_document,
+                expected_id=stream["source_set_id"],
+                expected_release=stream["release"],
+                expected_series=stream["release_series"],
+            )
+            rendered = render_frozen_configs(source_set.document)
+        except OpenStackSourceSetError as exc:
+            errors.append(f"publish summary openstack_sources is invalid: {exc}")
+        else:
+            expected_digests = {
+                "canonical_digest": source_set.sha256,
+                "kolla_build_config_sha256": rendered.config_sha256,
+                "template_override_sha256": rendered.template_override_sha256,
+            }
+            for field, expected in expected_digests.items():
+                if openstack_sources.get(field) != expected:
+                    errors.append(
+                        f"publish summary openstack_sources {field} must be "
+                        f"{expected!r}"
+                    )
 
     expected_scope = {
         "profile": profile["name"],
@@ -217,21 +317,32 @@ def validate_image(
     candidate_id: str,
 ) -> list[str]:
     errors: list[str] = []
-    deploy_tag = render_candidate_tag(matrix, stream, candidate_id)
-    expected_ref = image_ref(
+    semantic_tag = render_tag(matrix, stream)
+    revision_tag = render_revision_tag(matrix, stream, candidate_id)
+    expected_semantic_ref = image_ref(
         matrix["registry"],
         matrix["owner"],
         matrix["repository"],
         image,
-        deploy_tag,
+        semantic_tag,
     )
-    deploy_ref = image_summary.get("deploy_ref")
-    if type(deploy_ref) is not str or deploy_ref != expected_ref:
-        errors.append(f"{image} deploy_ref must be {expected_ref!r}")
-
-    actual_deploy_tag = image_summary.get("deploy_tag")
-    if type(actual_deploy_tag) is not str or actual_deploy_tag != deploy_tag:
-        errors.append(f"{image} deploy_tag must be {deploy_tag!r}")
+    expected_revision_ref = image_ref(
+        matrix["registry"],
+        matrix["owner"],
+        matrix["repository"],
+        image,
+        revision_tag,
+    )
+    expected_values = {
+        "semantic_tag": semantic_tag,
+        "semantic_ref": expected_semantic_ref,
+        "revision_tag": revision_tag,
+        "revision_ref": expected_revision_ref,
+    }
+    for field, expected in expected_values.items():
+        actual = image_summary.get(field)
+        if type(actual) is not str or actual != expected:
+            errors.append(f"{image} {field} must be {expected!r}")
 
     variables = image_summary.get("kolla_ansible_variables")
     if (
@@ -243,6 +354,13 @@ def validate_image(
     manifest_digest = image_summary.get("manifest_digest")
     if type(manifest_digest) is not str or not DIGEST_RE.fullmatch(manifest_digest):
         errors.append(f"{image} manifest_digest must be sha256:<64 hex chars>")
+    else:
+        repository = expected_revision_ref.rsplit(":", 1)[0]
+        expected_immutable_ref = f"{repository}@{manifest_digest}"
+        if image_summary.get("immutable_ref") != expected_immutable_ref:
+            errors.append(
+                f"{image} immutable_ref must be {expected_immutable_ref!r}"
+            )
 
     architectures = image_summary.get("architectures")
     expected_arches = matrix["architectures"]
@@ -283,11 +401,13 @@ def validate_image(
             matrix["owner"],
             matrix["repository"],
             image,
-            render_candidate_tag(matrix, stream, candidate_id, arch),
+            render_revision_tag(matrix, stream, candidate_id, arch),
         )
-        arch_ref = architecture.get("arch_ref")
+        arch_ref = architecture.get("revision_arch_ref")
         if type(arch_ref) is not str or arch_ref != expected_arch_ref:
-            errors.append(f"{image} {arch} arch_ref must be {expected_arch_ref!r}")
+            errors.append(
+                f"{image} {arch} revision_arch_ref must be {expected_arch_ref!r}"
+            )
         expected_platform = f"linux/{arch}"
         platform = architecture.get("platform")
         if type(platform) is not str or platform != expected_platform:

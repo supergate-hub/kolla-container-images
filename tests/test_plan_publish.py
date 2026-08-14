@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import runpy
 import subprocess
@@ -7,28 +9,32 @@ import sys
 import unittest
 from pathlib import Path
 
+from scripts.profile_resolver import find_stream
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN_PUBLISH = ROOT / "scripts" / "plan-publish.py"
 PARENT_FIXTURE = ROOT / "tests" / "fixtures" / "kolla-parent-dependencies.json"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 ENVIRONMENT_LOCK_FIELD = "environment_" + "lock_files"
-STREAM_IDS = [
-    "2025.1-rocky-9",
-    "2025.1-rocky-10",
-    "2025.1-ubuntu-noble",
-    "2025.2-rocky-10",
-    "2025.2-ubuntu-noble",
-    "2026.1-rocky-10",
-    "2026.1-ubuntu-noble",
-]
+MATRIX = json.loads(
+    (ROOT / "config" / "build-matrix.json").read_text(encoding="utf-8")
+)
+STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
+DEFAULT_STREAM_ID = STREAM_IDS[0]
+CATALOG_STREAM_EXPECTATIONS = {
+    "2025.1-rocky-9.8-20.4.0": ("2025.1", "rocky", "9.8", "20.4.0", 63, 16),
+    "2025.1-rocky-10.2-20.4.0": ("2025.1", "rocky", "10.2", "20.4.0", 63, 16),
+    "2025.1-ubuntu-24.04-20.4.0": ("2025.1", "ubuntu", "24.04", "20.4.0", 64, 16),
+    "2025.1-rocky-10.2-20.5.0": ("2025.1", "rocky", "10.2", "20.5.0", 63, 16),
+    "2025.2-rocky-10.2-21.1.0": ("2025.2", "rocky", "10.2", "21.1.0", 63, 15),
+    "2025.2-ubuntu-24.04-21.1.0": ("2025.2", "ubuntu", "24.04", "21.1.0", 64, 15),
+    "2026.1-rocky-10.2-22.0.0": ("2026.1", "rocky", "10.2", "22.0.0", 65, 15),
+    "2026.1-ubuntu-24.04-22.0.0": ("2026.1", "ubuntu", "24.04", "22.0.0", 66, 15),
+}
 STREAM_EXPECTATIONS = {
-    "2025.1-rocky-9": ("2025.1", "rocky", "9", "20.4.0", 63, 16),
-    "2025.1-rocky-10": ("2025.1", "rocky", "10", "20.4.0", 63, 16),
-    "2025.1-ubuntu-noble": ("2025.1", "ubuntu", "24.04", "20.4.0", 64, 16),
-    "2025.2-rocky-10": ("2025.2", "rocky", "10", "21.1.0", 63, 15),
-    "2025.2-ubuntu-noble": ("2025.2", "ubuntu", "24.04", "21.1.0", 64, 15),
-    "2026.1-rocky-10": ("2026.1", "rocky", "10", "22.0.0", 65, 15),
-    "2026.1-ubuntu-noble": ("2026.1", "ubuntu", "24.04", "22.0.0", 66, 15),
+    stream_id: CATALOG_STREAM_EXPECTATIONS[stream_id]
+    for stream_id in STREAM_IDS
 }
 ARCHITECTURES = {
     "amd64": {
@@ -49,21 +55,52 @@ ARCHITECTURES = {
 TEST_CANDIDATE_ID = "123456789-1"
 
 
-def expected_candidate_tag(stream: str, arch: str | None = None) -> str:
-    tag = f"{stream}-candidate-{TEST_CANDIDATE_ID}"
+def expected_deploy_tag(stream: str, arch: str | None = None) -> str:
+    resolved = find_stream(MATRIX, stream)
+    tag = MATRIX["tag_policy"]["deploy_tag_template"].format(
+        release=resolved["release"],
+        distro=resolved["distro"],
+        os_version=resolved.get("os_version", resolved.get("tag_token")),
+        tag_token=resolved.get("tag_token", resolved.get("os_version")),
+        kolla_ansible_version=resolved["kolla_ansible_version"],
+    )
     return f"{tag}-{arch}" if arch else tag
 
 
-def expected_ref(image: str, stream: str, arch: str | None = None) -> str:
+def expected_ref(
+    image: str,
+    stream: str,
+    arch: str | None = None,
+    candidate_id: str | None = None,
+) -> str:
+    tag = expected_deploy_tag(stream)
+    if candidate_id is not None:
+        tag = f"{tag}-rev-{candidate_id}"
+    if arch is not None:
+        tag = f"{tag}-{arch}"
     return (
         "ghcr.io/supergate-hub/kolla-container-images/"
-        f"{image}:{expected_candidate_tag(stream, arch)}"
+        f"{image}:{tag}"
+    )
+
+
+def expected_revision_tag(stream: str, arch: str | None = None) -> str:
+    tag = f"{expected_deploy_tag(stream)}-rev-{TEST_CANDIDATE_ID}"
+    return f"{tag}-{arch}" if arch else tag
+
+
+def expected_revision_ref(image: str, stream: str, arch: str | None = None) -> str:
+    return expected_ref(
+        image,
+        stream,
+        arch,
+        candidate_id=TEST_CANDIDATE_ID,
     )
 
 
 def plan_command(
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM_ID,
     profile: str = "core",
     image: str | None = None,
     candidate_id: str | None = TEST_CANDIDATE_ID,
@@ -76,6 +113,8 @@ def plan_command(
         stream,
         "--profile",
         profile,
+        "--base-manifest",
+        str(BASE_INDEX_FIXTURE),
     ]
     if image is not None:
         command.extend(["--image", image])
@@ -88,7 +127,7 @@ def plan_command(
 
 def run_plan(
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM_ID,
     profile: str = "core",
     image: str | None = None,
     candidate_id: str | None = TEST_CANDIDATE_ID,
@@ -154,34 +193,71 @@ def planner_symbols() -> dict:
 
 
 class PlanPublishTest(unittest.TestCase):
-    def test_local_default_and_explicit_workflow_candidate_refs(self) -> None:
+    def test_plan_freezes_one_base_index_and_both_native_descriptors(self) -> None:
+        plan = run_plan(image="keystone")
+        resolved = find_stream(MATRIX, DEFAULT_STREAM_ID)
+
+        self.assertEqual(
+            plan["base"],
+            {
+                "id": resolved["base_id"],
+                "requested_ref": f"{resolved['base_image']}:{resolved['base_tag']}",
+                "index_digest": (
+                    "sha256:"
+                    + hashlib.sha256(BASE_INDEX_FIXTURE.read_bytes()).hexdigest()
+                ),
+                "index_manifest_b64": base64.b64encode(
+                    BASE_INDEX_FIXTURE.read_bytes()
+                ).decode("ascii"),
+                "platforms": {
+                    "amd64": {
+                        "platform": "linux/amd64",
+                        "digest": "sha256:" + "1" * 64,
+                    },
+                    "arm64": {
+                        "platform": "linux/arm64",
+                        "digest": "sha256:" + "2" * 64,
+                    },
+                },
+            },
+        )
+
+    def test_candidate_id_selects_an_immutable_revision_beneath_one_semantic_ref(
+        self,
+    ) -> None:
         local = run_plan(image="keystone", candidate_id=None)
         live = run_plan(image="keystone", candidate_id=TEST_CANDIDATE_ID)
+        semantic_ref = expected_ref("keystone", DEFAULT_STREAM_ID)
+        local_revision_ref = expected_ref(
+            "keystone", DEFAULT_STREAM_ID, candidate_id="local-dry-run"
+        )
+        live_revision_ref = expected_ref(
+            "keystone", DEFAULT_STREAM_ID, candidate_id=TEST_CANDIDATE_ID
+        )
 
         self.assertEqual(local["candidate_id"], "local-dry-run")
-        self.assertEqual(
-            local["images"][0]["deploy_ref"],
-            "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-            "2025.1-rocky-9-candidate-local-dry-run",
-        )
+        self.assertEqual(local["images"][0]["semantic_ref"], semantic_ref)
+        self.assertEqual(local["images"][0]["revision_ref"], local_revision_ref)
         self.assertEqual(live["candidate_id"], TEST_CANDIDATE_ID)
         image = live["images"][0]
+        self.assertEqual(image["semantic_ref"], semantic_ref)
+        self.assertEqual(image["revision_ref"], live_revision_ref)
+        self.assertNotEqual(local_revision_ref, live_revision_ref)
         self.assertEqual(
-            image["deploy_ref"],
-            "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-            "2025.1-rocky-9-candidate-123456789-1",
-        )
-        self.assertEqual(
-            image["stream_ref"],
-            "ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9",
-        )
-        self.assertEqual(
-            [entry["arch_ref"] for entry in image["architectures"]],
+            [entry["revision_arch_ref"] for entry in image["architectures"]],
             [
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1-amd64",
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1-arm64",
+                expected_ref(
+                    "keystone",
+                    DEFAULT_STREAM_ID,
+                    "amd64",
+                    candidate_id=TEST_CANDIDATE_ID,
+                ),
+                expected_ref(
+                    "keystone",
+                    DEFAULT_STREAM_ID,
+                    "arm64",
+                    candidate_id=TEST_CANDIDATE_ID,
+                ),
             ],
         )
 
@@ -195,44 +271,44 @@ class PlanPublishTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("candidate ID", result.stderr)
 
-    def test_all_streams_use_candidate_build_and_deploy_tags(self) -> None:
+    def test_all_streams_use_semantic_and_revision_tags(self) -> None:
         for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 plan = run_plan(stream=stream_id, image="keystone")
                 image = plan["images"][0]
-                candidate_tag = f"{stream_id}-candidate-{TEST_CANDIDATE_ID}"
+                semantic_tag = expected_deploy_tag(stream_id)
+                revision = expected_revision_tag(stream_id)
                 self.assertEqual(plan["candidate_id"], TEST_CANDIDATE_ID)
-                self.assertEqual(image["deploy_tag"], candidate_tag)
-                self.assertTrue(image["deploy_ref"].endswith(f":{candidate_tag}"))
-                self.assertTrue(image["stream_ref"].endswith(f":{stream_id}"))
+                self.assertEqual(image["semantic_tag"], semantic_tag)
+                self.assertEqual(image["semantic_ref"], expected_ref("keystone", stream_id))
+                self.assertEqual(image["revision_tag"], revision)
+                self.assertEqual(image["revision_ref"], expected_revision_ref("keystone", stream_id))
                 for architecture in plan["build"]["architectures"]:
                     arch = architecture["arch"]
-                    arch_tag = f"{candidate_tag}-{arch}"
-                    self.assertEqual(architecture["arch_tag"], arch_tag)
+                    arch_tag = expected_revision_tag(stream_id, arch)
+                    self.assertEqual(architecture["revision_arch_tag"], arch_tag)
                     self.assertTrue(
                         all(
-                            entry["arch_ref"].endswith(f":{arch_tag}")
+                            entry["revision_arch_ref"].endswith(f":{arch_tag}")
                             for entry in architecture["parents"]
                         )
                     )
                     self.assertTrue(
                         all(
-                            entry["arch_ref"].endswith(f":{arch_tag}")
+                            entry["revision_arch_ref"].endswith(f":{arch_tag}")
                             for entry in architecture["images"]
                         )
                     )
                 for unit in plan["build"]["all_units"]:
-                    arch_tag = f"{candidate_tag}-{unit['arch']}"
+                    arch_tag = expected_revision_tag(stream_id, unit["arch"])
                     self.assertEqual(option_value(unit["command"], "--tag"), arch_tag)
                     self.assertTrue(unit["arch_ref"].endswith(f":{arch_tag}"))
 
     def test_parent_sets_match_checked_in_kolla_dependency_fixture(self) -> None:
         fixture = json.loads(PARENT_FIXTURE.read_text(encoding="utf-8"))
-        matrix = json.loads(
-            (ROOT / "config" / "build-matrix.json").read_text(encoding="utf-8")
-        )
         matrix_pins = {
-            stream["id"]: stream["kolla_version"] for stream in matrix["streams"]
+            stream["id"]: find_stream(MATRIX, stream["id"])["kolla_version"]
+            for stream in MATRIX["streams"]
         }
 
         self.assertEqual(fixture["schema_version"], 1)
@@ -249,8 +325,11 @@ class PlanPublishTest(unittest.TestCase):
         self.assertIn("^<image>$", fixture["source"]["leaf_arguments"])
         self.assertIn("Kolla dependency graph", fixture["source"]["normalization"])
         self.assertIn("first occurrence", fixture["source"]["normalization"])
+        active_fixture_streams = [
+            stream for stream in fixture["streams"] if stream["id"] in STREAM_IDS
+        ]
         self.assertEqual(
-            [stream["id"] for stream in fixture["streams"]], STREAM_IDS
+            [stream["id"] for stream in active_fixture_streams], STREAM_IDS
         )
 
         scope_inputs = {
@@ -258,7 +337,7 @@ class PlanPublishTest(unittest.TestCase):
             "core/all": {"profile": "core", "image": None},
             "deployment/all": {"profile": "deployment", "image": None},
         }
-        for expected in fixture["streams"]:
+        for expected in active_fixture_streams:
             stream_id = expected["id"]
             with self.subTest(stream=stream_id, check="kolla-pin"):
                 self.assertEqual(
@@ -268,7 +347,7 @@ class PlanPublishTest(unittest.TestCase):
                 with self.subTest(stream=stream_id, scope=scope):
                     plan = run_plan(stream=stream_id, **inputs)
                     self.assertEqual(
-                        plan["kolla_version"], expected["kolla_version"]
+                        plan["kolla"]["version"], expected["kolla_version"]
                     )
                     for architecture in plan["build"]["architectures"]:
                         self.assertEqual(
@@ -277,7 +356,12 @@ class PlanPublishTest(unittest.TestCase):
                         )
 
     def test_core_profile_images_and_resolved_variables_are_included(self) -> None:
-        plan = run_plan(stream="2025.2-rocky-10")
+        stream_id = (
+            "2025.2-rocky-10"
+            if "2025.2-rocky-10" in STREAM_IDS
+            else DEFAULT_STREAM_ID
+        )
+        plan = run_plan(stream=stream_id)
         image_names = {image["image"] for image in plan["images"]}
         variables_by_image = {
             image["image"]: image["kolla_ansible_variables"]
@@ -315,14 +399,17 @@ class PlanPublishTest(unittest.TestCase):
             variables_by_image["nova-conductor"],
             ["nova_super_conductor_image_full", "nova_conductor_image_full"],
         )
+        expected_neutron_variables = ["neutron_server_image_full"]
+        if plan["release"] in {"2025.2", "2026.1"}:
+            expected_neutron_variables.extend(
+                [
+                    "neutron_rpc_server_image_full",
+                    "neutron_periodic_worker_image_full",
+                    "neutron_ovn_maintenance_worker_image_full",
+                ]
+            )
         self.assertEqual(
-            variables_by_image["neutron-server"],
-            [
-                "neutron_server_image_full",
-                "neutron_rpc_server_image_full",
-                "neutron_periodic_worker_image_full",
-                "neutron_ovn_maintenance_worker_image_full",
-            ],
+            variables_by_image["neutron-server"], expected_neutron_variables
         )
 
     def test_all_streams_emit_exact_pins_native_units_and_deployment_counts(self) -> None:
@@ -335,8 +422,30 @@ class PlanPublishTest(unittest.TestCase):
                 self.assertEqual(plan["release"], release)
                 self.assertEqual(plan["distro"], distro)
                 self.assertEqual(plan["distro_version"], base_tag)
-                self.assertEqual(plan["kolla_version"], kolla_version)
-                self.assertEqual(plan["kolla_ansible_version"], kolla_version)
+                self.assertEqual(plan["kolla"]["version"], kolla_version)
+                self.assertEqual(plan["kolla_ansible"]["version"], kolla_version)
+                resolved_stream = find_stream(MATRIX, stream_id)
+                self.assertEqual(
+                    plan["release_metadata"], MATRIX["release_metadata"]
+                )
+                self.assertEqual(plan["release_series"], resolved_stream["release_series"])
+                self.assertEqual(plan["release_branch"], resolved_stream["release_branch"])
+                self.assertEqual(
+                    plan["kolla"],
+                    {
+                        "repository": resolved_stream["kolla_repository"],
+                        "version": resolved_stream["kolla_version"],
+                        "commit": resolved_stream["kolla_commit"],
+                    },
+                )
+                self.assertEqual(
+                    plan["kolla_ansible"],
+                    {
+                        "repository": resolved_stream["kolla_ansible_repository"],
+                        "version": resolved_stream["kolla_ansible_version"],
+                        "commit": resolved_stream["kolla_ansible_commit"],
+                    },
+                )
                 self.assertEqual(
                     plan["scope"],
                     {
@@ -422,42 +531,33 @@ class PlanPublishTest(unittest.TestCase):
                 for image in plan["images"]:
                     image_name = image["image"]
                     self.assertEqual(
-                        image["deploy_tag"], expected_candidate_tag(stream_id)
+                        image["semantic_tag"], expected_deploy_tag(stream_id)
                     )
                     self.assertEqual(
-                        image["deploy_ref"],
-                        "ghcr.io/supergate-hub/kolla-container-images/"
-                        f"{image_name}:{expected_candidate_tag(stream_id)}",
+                        image["semantic_ref"], expected_ref(image_name, stream_id)
                     )
                     self.assertEqual(
-                        image["stream_ref"],
-                        "ghcr.io/supergate-hub/kolla-container-images/"
-                        f"{image_name}:{stream_id}",
-                    )
-                    self.assertEqual(
-                        image["expected_ghcr_ref"],
-                        expected_ref(image_name, stream_id),
+                        image["revision_ref"],
+                        expected_revision_ref(image_name, stream_id),
                     )
                     self.assertEqual(
                         image["manifest_metadata_file"],
                         f"artifacts/manifests/{image_name}-"
-                        f"{expected_candidate_tag(stream_id)}.json",
+                        f"{expected_revision_tag(stream_id)}.json",
                     )
                     self.assertEqual(
                         [
                             (
-                                architecture["arch_tag"],
-                                architecture["arch_ref"],
+                                architecture["revision_arch_tag"],
+                                architecture["revision_arch_ref"],
                                 architecture["platform"],
                             )
                             for architecture in image["architectures"]
                         ],
                         [
                             (
-                                expected_candidate_tag(stream_id, arch),
-                                "ghcr.io/supergate-hub/kolla-container-images/"
-                                f"{image_name}:"
-                                f"{expected_candidate_tag(stream_id, arch)}",
+                                expected_revision_tag(stream_id, arch),
+                                expected_revision_ref(image_name, stream_id, arch),
                                 ARCHITECTURES[arch]["platform"],
                             )
                             for arch in ("amd64", "arm64")
@@ -551,7 +651,7 @@ class PlanPublishTest(unittest.TestCase):
                     )
                     self.assertEqual(
                         option_value(command, "--tag"),
-                        expected_candidate_tag(stream_id, unit["arch"]),
+                        expected_revision_tag(stream_id, unit["arch"]),
                     )
                     self.assertEqual(option_value(command, "--threads"), "1")
                     self.assertEqual(option_value(command, "--push-threads"), "1")
@@ -565,7 +665,8 @@ class PlanPublishTest(unittest.TestCase):
                     )
                     self.assertIn("--push", command)
                     self.assertEqual(command.count("--push"), 1)
-                    self.assertIn("--skip-existing", command)
+                    self.assertEqual(command.count("--no-pull"), 1)
+                    self.assertEqual(command.count("--skip-existing"), 1)
                     self.assertNotIn("--skip-parents", command)
                     self.assertEqual(
                         command[-1], f"^{unit['target']}$"
@@ -580,7 +681,7 @@ class PlanPublishTest(unittest.TestCase):
                     self.assertTrue(
                         all(
                             ancestor["arch_ref"].endswith(
-                                f":{expected_candidate_tag(stream_id, unit['arch'])}"
+                                f":{expected_revision_tag(stream_id, unit['arch'])}"
                             )
                             for ancestor in unit["ancestors"]
                         )
@@ -654,8 +755,8 @@ class PlanPublishTest(unittest.TestCase):
                 [
                     {
                         "image": parent,
-                        "arch_ref": (
-                            expected_ref(parent, "2025.1-rocky-9", arch)
+                        "revision_arch_ref": (
+                            expected_revision_ref(parent, DEFAULT_STREAM_ID, arch)
                         ),
                     }
                     for parent in ("base", "openstack-base", "keystone-base")
@@ -666,8 +767,8 @@ class PlanPublishTest(unittest.TestCase):
                 [
                     {
                         "image": "keystone",
-                        "arch_ref": (
-                            expected_ref("keystone", "2025.1-rocky-9", arch)
+                        "revision_arch_ref": (
+                            expected_revision_ref("keystone", DEFAULT_STREAM_ID, arch)
                         ),
                         "smoke": {
                             "ref_source": "recorded_child_digest",
@@ -719,30 +820,23 @@ class PlanPublishTest(unittest.TestCase):
     def test_organization_arch_and_neutral_refs_are_exact(self) -> None:
         plan = run_plan(image="keystone")
         image = plan["images"][0]
+        semantic_tag = expected_deploy_tag(DEFAULT_STREAM_ID)
+        semantic_ref = expected_ref("keystone", DEFAULT_STREAM_ID)
+        revision = expected_revision_tag(DEFAULT_STREAM_ID)
+        revision_ref = expected_revision_ref("keystone", DEFAULT_STREAM_ID)
 
         self.assertEqual(plan["registry"], "ghcr.io")
         self.assertEqual(plan["owner"], "supergate-hub")
         self.assertEqual(plan["repository"], "kolla-container-images")
+        self.assertEqual(image["semantic_tag"], semantic_tag)
+        self.assertEqual(image["semantic_ref"], semantic_ref)
+        self.assertEqual(image["revision_tag"], revision)
+        self.assertEqual(image["revision_ref"], revision_ref)
         self.assertEqual(
-            image["deploy_tag"],
-            "2025.1-rocky-9-candidate-123456789-1",
-        )
-        self.assertEqual(
-            image["deploy_ref"],
-            "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-            "2025.1-rocky-9-candidate-123456789-1",
-        )
-        self.assertEqual(
-            image["stream_ref"],
-            "ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9",
-        )
-        self.assertEqual(
-            [architecture["arch_ref"] for architecture in image["architectures"]],
+            [architecture["revision_arch_ref"] for architecture in image["architectures"]],
             [
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1-amd64",
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1-arm64",
+                expected_revision_ref("keystone", DEFAULT_STREAM_ID, "amd64"),
+                expected_revision_ref("keystone", DEFAULT_STREAM_ID, "arm64"),
             ],
         )
         self.assertEqual(
@@ -757,15 +851,11 @@ class PlanPublishTest(unittest.TestCase):
                 "imagetools",
                 "create",
                 "--tag",
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1",
+                revision_ref,
                 "--metadata-file",
-                "artifacts/manifests/keystone-2025.1-rocky-9-"
-                "candidate-123456789-1.json",
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1-amd64",
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1-arm64",
+                f"artifacts/manifests/keystone-{revision}.json",
+                expected_revision_ref("keystone", DEFAULT_STREAM_ID, "amd64"),
+                expected_revision_ref("keystone", DEFAULT_STREAM_ID, "arm64"),
             ],
         )
         self.assertEqual(
@@ -775,27 +865,28 @@ class PlanPublishTest(unittest.TestCase):
                 "buildx",
                 "imagetools",
                 "inspect",
-                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-                "2025.1-rocky-9-candidate-123456789-1",
+                revision_ref,
             ],
         )
 
-    def test_ubuntu_base_tag_and_noble_publish_tags_stay_distinct(self) -> None:
-        plan = run_plan(stream="2025.1-ubuntu-noble", image="keystone")
+    def test_ubuntu_base_and_semantic_tag_use_exact_os_version(self) -> None:
+        ubuntu_stream_id = next(
+            stream["id"]
+            for stream in MATRIX["streams"]
+            if find_stream(MATRIX, stream["id"])["distro"] == "ubuntu"
+        )
+        resolved = find_stream(MATRIX, ubuntu_stream_id)
+        plan = run_plan(stream=ubuntu_stream_id, image="keystone")
         command = plan["build"]["all_units"][0]["command"]
         image = plan["images"][0]
 
-        self.assertEqual(plan["distro_version"], "24.04")
-        self.assertEqual(option_value(command, "--base-tag"), "24.04")
+        self.assertEqual(plan["distro_version"], resolved["base_tag"])
+        self.assertEqual(option_value(command, "--base-tag"), resolved["base_tag"])
         self.assertEqual(
             option_value(command, "--tag"),
-            "2025.1-ubuntu-noble-candidate-123456789-1-amd64",
+            expected_revision_tag(ubuntu_stream_id, "amd64"),
         )
-        self.assertEqual(
-            image["deploy_tag"],
-            "2025.1-ubuntu-noble-candidate-123456789-1",
-        )
-        self.assertNotIn("24.04", image["deploy_ref"])
+        self.assertEqual(image["semantic_tag"], expected_deploy_tag(ubuntu_stream_id))
 
     def test_image_filter_limits_scope_build_and_manifest_to_one_leaf(self) -> None:
         plan = run_plan(image="glance-api")
@@ -907,60 +998,17 @@ class PlanPublishTest(unittest.TestCase):
             [["base"], ["base"]],
         )
         self.assertEqual(
-            [parent["image"] for parent in plan["build"]["architectures"][0]["parents"]],
+                [parent["image"] for parent in plan["build"]["architectures"][0]["parents"]],
             ["base"],
         )
 
-    def test_approval_metadata_is_bound_to_the_frozen_scope(self) -> None:
-        cases = (
-            (
-                run_plan(image="keystone"),
-                {
-                    "allowed": True,
-                    "required_variable": "ALLOW_GHCR_PUBLISH",
-                    "phrase": (
-                        "PUBLISH ghcr.io/supergate-hub/kolla-container-images "
-                        "2025.1-rocky-9 core/keystone (1 image, amd64/arm64)"
-                    ),
-                },
-            ),
-            (
-                run_plan(profile="core"),
-                {
-                    "allowed": True,
-                    "required_variable": "ALLOW_GHCR_FULL_CORE_PUBLISH",
-                    "phrase": (
-                        "PUBLISH ghcr.io/supergate-hub/kolla-container-images "
-                        "2025.1-rocky-9 core/all (21 images, amd64/arm64)"
-                    ),
-                },
-            ),
-            (
-                run_plan(profile="deployment"),
-                {
-                    "allowed": True,
-                    "required_variable": "ALLOW_GHCR_DEPLOYMENT_PUBLISH",
-                    "phrase": (
-                        "PUBLISH ghcr.io/supergate-hub/kolla-container-images "
-                        "2025.1-rocky-9 deployment/all (63 images, amd64/arm64)"
-                    ),
-                },
-            ),
-            (
-                run_plan(image="glance-api"),
-                {"allowed": False, "required_variable": None, "phrase": None},
-            ),
-            (
-                run_plan(profile="deployment", image="keystone"),
-                {"allowed": False, "required_variable": None, "phrase": None},
-            ),
-        )
-
-        for plan, expected in cases:
-            with self.subTest(
-                profile=plan["profile"], image=plan["scope"]["image"]
-            ):
-                self.assertEqual(plan.get("approval"), expected)
+    def test_typed_approval_metadata_is_absent_from_frozen_plans(self) -> None:
+        for plan in (
+            run_plan(image="keystone"),
+            run_plan(profile="core"),
+            run_plan(profile="deployment"),
+        ):
+            self.assertNotIn("approval", plan)
 
     def test_unknown_image_filter_fails(self) -> None:
         result = subprocess.run(
@@ -999,11 +1047,11 @@ class PlanPublishTest(unittest.TestCase):
             self.assertNotIn(ENVIRONMENT_LOCK_FIELD, plan)
         self.assertEqual(
             deployment["publish_summary_file"],
-            "artifacts/publish-summary-2025.1-rocky-9.json",
+            f"artifacts/publish-summary-{DEFAULT_STREAM_ID}.json",
         )
         self.assertEqual(
             deployment["kolla_ansible_lock_file"],
-            "artifacts/kolla-ansible-image-lock-2025.1-rocky-9.yml",
+            f"artifacts/kolla-ansible-image-lock-{DEFAULT_STREAM_ID}.yml",
         )
         self.assertNotIn(ENVIRONMENT_LOCK_FIELD, deployment)
 
@@ -1020,16 +1068,17 @@ class PlanPublishTest(unittest.TestCase):
                 self.assertFalse(any(f"/{parent}:" in item for item in manifest_command))
 
     def test_legacy_release_and_distro_arguments_are_rejected(self) -> None:
+        release = find_stream(MATRIX, DEFAULT_STREAM_ID)["release"]
         result = subprocess.run(
             [
                 sys.executable,
                 str(PLAN_PUBLISH),
                 "--stream",
-                "2025.1-rocky-9",
+                DEFAULT_STREAM_ID,
                 "--profile",
                 "core",
                 "--release",
-                "2025.1",
+                release,
                 "--dry-run",
             ],
             cwd=ROOT,
@@ -1038,7 +1087,7 @@ class PlanPublishTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 2)
-        self.assertIn("unrecognized arguments: --release 2025.1", result.stderr)
+        self.assertIn(f"unrecognized arguments: --release {release}", result.stderr)
 
     def test_refuses_without_dry_run(self) -> None:
         result = subprocess.run(

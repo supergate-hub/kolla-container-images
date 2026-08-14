@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -8,11 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.base_resolution import resolve_base
+from scripts.openstack_source_set import render_frozen_configs
 from scripts.profile_resolver import (
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
+    render_tag,
+    render_revision_tag,
     resolve_profile,
 )
 
@@ -21,25 +25,21 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATE_SUMMARY = ROOT / "scripts" / "validate-publish-summary.py"
 MATRIX = load_matrix()
 TEST_CANDIDATE_ID = "123456789-1"
-candidate_tag = "2025.1-rocky-9-candidate-123456789-1"
-candidate_ref = (
-    "ghcr.io/supergate-hub/kolla-container-images/keystone:"
-    + candidate_tag
+STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
+DEFAULT_STREAM = STREAM_IDS[0]
+OTHER_STREAM = STREAM_IDS[1]
+ROCKY_STREAM = next(
+    stream["id"]
+    for stream in MATRIX["streams"]
+    if find_stream(MATRIX, stream["id"])["distro"] == "rocky"
 )
-amd64_ref = candidate_ref + "-amd64"
-arm64_ref = candidate_ref + "-arm64"
-stream_ref = (
-    "ghcr.io/supergate-hub/kolla-container-images/keystone:2025.1-rocky-9"
+UBUNTU_STREAM = next(
+    stream["id"]
+    for stream in MATRIX["streams"]
+    if find_stream(MATRIX, stream["id"])["distro"] == "ubuntu"
 )
-STREAM_COUNTS = {
-    "2025.1-rocky-9": 63,
-    "2025.1-rocky-10": 63,
-    "2025.1-ubuntu-noble": 64,
-    "2025.2-rocky-10": 63,
-    "2025.2-ubuntu-noble": 64,
-    "2026.1-rocky-10": 65,
-    "2026.1-ubuntu-noble": 66,
-}
+SOURCE_SET_DIR = ROOT / "config" / "openstack-sources"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 
 
 def digest(index: int) -> str:
@@ -52,26 +52,61 @@ def resolved_profile(stream_id: str, profile_name: str) -> tuple[dict, dict]:
     return stream, profile
 
 
+def openstack_sources(stream: dict) -> dict:
+    document = json.loads(
+        (SOURCE_SET_DIR / f"{stream['source_set_id']}.json").read_text(encoding="utf-8")
+    )
+    canonical = json.dumps(
+        document,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    rendered = render_frozen_configs(document)
+    return {
+        "source_set": document,
+        "canonical_digest": f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+        "kolla_build_config_sha256": rendered.config_sha256,
+        "template_override_sha256": rendered.template_override_sha256,
+    }
+
+
+def frozen_base(stream: dict) -> dict:
+    return resolve_base(
+        {
+            "id": stream["base_id"],
+            "distro": stream["distro"],
+            "os_version": stream["os_version"],
+            "image": stream["base_image"],
+            "tag": stream["base_tag"],
+        },
+        BASE_INDEX_FIXTURE.read_bytes(),
+    )
+
+
 def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
     image = profile_image["name"]
-    deploy_tag = render_candidate_tag(MATRIX, stream, TEST_CANDIDATE_ID)
+    semantic_tag = render_tag(MATRIX, stream)
+    revision_tag = render_revision_tag(MATRIX, stream, TEST_CANDIDATE_ID)
     repository = (
         f"{MATRIX['registry']}/{MATRIX['owner']}/{MATRIX['repository']}/{image}"
     )
+    manifest_digest = digest(index * 10 + 9)
     return {
         "image": image,
         "kolla_ansible_variables": profile_image["kolla_ansible_variables"],
-        "deploy_tag": deploy_tag,
-        "deploy_ref": f"{repository}:{deploy_tag}",
-        "manifest_digest": digest(index * 10 + 9),
+        "semantic_tag": semantic_tag,
+        "semantic_ref": f"{repository}:{semantic_tag}",
+        "revision_tag": revision_tag,
+        "revision_ref": f"{repository}:{revision_tag}",
+        "manifest_digest": manifest_digest,
+        "immutable_ref": f"{repository}@{manifest_digest}",
         "architectures": [
             {
                 "arch": arch,
                 "platform": f"linux/{arch}",
-                "arch_ref": (
-                    f"{repository}:"
-                    f"{render_candidate_tag(MATRIX, stream, TEST_CANDIDATE_ID, arch)}"
-                ),
+                "revision_arch_ref": f"{repository}:"
+                f"{render_revision_tag(MATRIX, stream, TEST_CANDIDATE_ID, arch)}",
                 "digest": digest(index * 10 + arch_index + 1),
             }
             for arch_index, arch in enumerate(MATRIX["architectures"])
@@ -80,7 +115,7 @@ def summary_image(stream: dict, profile_image: dict, index: int) -> dict:
 
 
 def publish_summary(
-    stream_id: str = "2025.1-rocky-9",
+    stream_id: str = DEFAULT_STREAM,
     profile_name: str = "deployment",
     image_filter: str | None = None,
 ) -> dict:
@@ -95,11 +130,27 @@ def publish_summary(
                 f"image does not exist in profile {profile_name}: {image_filter}"
             )
     return {
+        "schema_version": 3,
         "candidate_id": TEST_CANDIDATE_ID,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
+        "base": frozen_base(stream),
+        "openstack_sources": openstack_sources(stream),
+        "release_metadata": copy.deepcopy(MATRIX["release_metadata"]),
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "scope": {
             "profile": profile["name"],
@@ -124,8 +175,8 @@ def duplicate_key_summary_json() -> dict[str, str]:
     raw = json.dumps(publish_summary())
     return {
         "root": raw.replace(
-            '{"candidate_id": ',
-            '{"candidate_id": "ignored", "candidate_id": ',
+            '"candidate_id": ',
+            '"candidate_id": "ignored", "candidate_id": ',
             1,
         ),
         "scope": raw.replace(
@@ -149,7 +200,7 @@ def duplicate_key_summary_json() -> dict[str, str]:
 def run_validator_json(
     summary_json: str,
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "deployment",
     candidate_id: str = TEST_CANDIDATE_ID,
     allow_partial: bool = False,
@@ -185,7 +236,7 @@ def run_validator_json(
 def run_validator(
     summary: dict,
     *,
-    stream: str = "2025.1-rocky-9",
+    stream: str = DEFAULT_STREAM,
     profile: str = "deployment",
     candidate_id: str = TEST_CANDIDATE_ID,
     allow_partial: bool = False,
@@ -202,14 +253,15 @@ def run_validator(
 
 
 class PublishSummaryValidationTest(unittest.TestCase):
-    def test_stable_stream_ref_is_rejected_as_candidate_deploy_ref(self) -> None:
+    def test_legacy_major_only_alias_is_rejected_as_semantic_ref(self) -> None:
         summary = publish_summary()
         entry = image_entry(summary, "keystone")
-        entry["deploy_tag"] = "2025.1-rocky-9"
-        entry["deploy_ref"] = stream_ref
+        entry["semantic_tag"] = "2025.1-rocky-9"
+        repository, _tag = entry["semantic_ref"].rsplit(":", 1)
+        entry["semantic_ref"] = f"{repository}:2025.1-rocky-9"
         result = run_validator(summary)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("candidate-123456789-1", result.stderr)
+        self.assertIn(render_tag(MATRIX, find_stream(MATRIX, DEFAULT_STREAM)), result.stderr)
 
     def test_summary_candidate_id_must_match_expected_id(self) -> None:
         summary = publish_summary()
@@ -223,12 +275,8 @@ class PublishSummaryValidationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("candidate ID", result.stderr)
 
-    def test_full_deployment_summaries_pass_representative_streams(self) -> None:
-        for stream_id in (
-            "2025.1-rocky-9",
-            "2025.1-ubuntu-noble",
-            "2026.1-ubuntu-noble",
-        ):
+    def test_full_deployment_summaries_pass_active_streams(self) -> None:
+        for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 result = run_validator(publish_summary(stream_id), stream=stream_id)
 
@@ -236,9 +284,11 @@ class PublishSummaryValidationTest(unittest.TestCase):
                 self.assertIn("Publish summary validation passed.", result.stdout)
 
     def test_all_streams_enforce_exact_resolved_image_count(self) -> None:
-        for stream_id, expected_count in STREAM_COUNTS.items():
+        for stream_id in STREAM_IDS:
             with self.subTest(stream=stream_id):
                 summary = publish_summary(stream_id)
+                _stream, profile = resolved_profile(stream_id, "deployment")
+                expected_count = len(profile["images"])
                 self.assertEqual(len(summary["images"]), expected_count)
                 self.assertEqual(summary["scope"]["image_count"], expected_count)
 
@@ -249,30 +299,30 @@ class PublishSummaryValidationTest(unittest.TestCase):
                 self.assertIn("publish summary scope must be", result.stderr)
 
     def test_missing_and_extra_conditional_leaves_fail(self) -> None:
-        ubuntu_summary = publish_summary("2025.1-ubuntu-noble")
+        ubuntu_summary = publish_summary(UBUNTU_STREAM)
         ubuntu_summary["images"] = [
             image for image in ubuntu_summary["images"] if image["image"] != "tgtd"
         ]
         missing_result = run_validator(
             ubuntu_summary,
-            stream="2025.1-ubuntu-noble",
+            stream=UBUNTU_STREAM,
         )
 
         self.assertEqual(missing_result.returncode, 1)
         self.assertIn("publish summary is missing image: tgtd", missing_result.stderr)
 
-        rocky_stream, _ = resolved_profile("2025.1-rocky-9", "deployment")
-        _, ubuntu_profile = resolved_profile("2025.1-ubuntu-noble", "deployment")
+        rocky_stream, _ = resolved_profile(ROCKY_STREAM, "deployment")
+        _, ubuntu_profile = resolved_profile(UBUNTU_STREAM, "deployment")
         tgtd = next(image for image in ubuntu_profile["images"] if image["name"] == "tgtd")
-        rocky_summary = publish_summary("2025.1-rocky-9")
+        rocky_summary = publish_summary(ROCKY_STREAM)
         rocky_summary["images"].append(summary_image(rocky_stream, tgtd, 100))
-        extra_result = run_validator(rocky_summary)
+        extra_result = run_validator(rocky_summary, stream=ROCKY_STREAM)
 
         self.assertEqual(extra_result.returncode, 1)
         self.assertIn("publish summary contains unexpected image: tgtd", extra_result.stderr)
 
     def test_parent_and_duplicate_leaves_are_rejected(self) -> None:
-        stream, _ = resolved_profile("2025.1-rocky-9", "deployment")
+        stream, _ = resolved_profile(DEFAULT_STREAM, "deployment")
         cases = []
 
         parent_summary = publish_summary()
@@ -300,18 +350,48 @@ class PublishSummaryValidationTest(unittest.TestCase):
 
     def test_top_level_and_scope_mismatches_are_rejected(self) -> None:
         mutations = {
-            "stream": lambda summary: summary.__setitem__("stream", "2025.1-rocky-10"),
-            "release": lambda summary: summary.__setitem__("release", "2025.2"),
-            "distro": lambda summary: summary.__setitem__("distro", "ubuntu"),
-            "distro_version": lambda summary: summary.__setitem__(
-                "distro_version", "10"
+            "stream": lambda summary: summary.__setitem__("stream", OTHER_STREAM),
+            "release": lambda summary: summary.__setitem__("release", "wrong-release"),
+            "release_series": lambda summary: summary.__setitem__(
+                "release_series", "wrong-series"
             ),
+            "release_branch": lambda summary: summary.__setitem__(
+                "release_branch", "wrong-branch"
+            ),
+            "distro": lambda summary: summary.__setitem__("distro", "wrong-distro"),
+            "distro_version": lambda summary: summary.__setitem__(
+                "distro_version", "wrong-version"
+            ),
+            "base": lambda summary: summary["base"].__setitem__(
+                "requested_ref", "registry.invalid/base:wrong"
+            ),
+            "source_set": lambda summary: summary["openstack_sources"][
+                "source_set"
+            ].__setitem__("id", "wrong-source-set"),
+            "source_set_digest": lambda summary: summary["openstack_sources"].__setitem__(
+                "canonical_digest", digest(7998)
+            ),
+            "kolla config digest": lambda summary: summary[
+                "openstack_sources"
+            ].__setitem__("kolla_build_config_sha256", digest(7997)),
+            "template digest": lambda summary: summary[
+                "openstack_sources"
+            ].__setitem__("template_override_sha256", digest(7996)),
             "registry": lambda summary: summary.__setitem__(
                 "registry", "registry.example.invalid"
             ),
             "owner": lambda summary: summary.__setitem__("owner", "wrong-owner"),
             "repository": lambda summary: summary.__setitem__(
                 "repository", "wrong-repository"
+            ),
+            "release_metadata": lambda summary: summary["release_metadata"].__setitem__(
+                "commit", "0" * 40
+            ),
+            "kolla": lambda summary: summary["kolla"].__setitem__(
+                "commit", "0" * 40
+            ),
+            "kolla_ansible": lambda summary: summary["kolla_ansible"].__setitem__(
+                "commit", "0" * 40
             ),
             "profile": lambda summary: summary.__setitem__("profile", "core"),
             "scope_profile": lambda summary: summary["scope"].__setitem__(
@@ -343,6 +423,18 @@ class PublishSummaryValidationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("publish summary registry must be", result.stderr)
 
+    def test_summary_rejects_a_base_child_unrelated_to_the_proven_index(self) -> None:
+        summary = publish_summary()
+        summary["base"]["platforms"]["amd64"]["digest"] = digest(9999)
+
+        result = run_validator(summary)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "base platforms do not match index descriptors",
+            result.stderr,
+        )
+
     def test_summary_schema_rejects_missing_and_unexpected_keys(self) -> None:
         cases = {}
 
@@ -350,9 +442,9 @@ class PublishSummaryValidationTest(unittest.TestCase):
         unexpected_top_level["environment"] = "dev"
         cases["unexpected top-level environment"] = unexpected_top_level
 
-        missing_deploy_tag = publish_summary()
-        missing_deploy_tag["images"][0].pop("deploy_tag")
-        cases["missing required deploy_tag"] = missing_deploy_tag
+        missing_revision_tag = publish_summary()
+        missing_revision_tag["images"][0].pop("revision_tag")
+        cases["missing required revision_tag"] = missing_revision_tag
 
         unexpected_image_key = publish_summary()
         unexpected_image_key["images"][0]["promotion_state"] = "candidate"
@@ -381,15 +473,21 @@ class PublishSummaryValidationTest(unittest.TestCase):
 
     def test_leaf_evidence_mismatches_are_rejected(self) -> None:
         mutations = {
-            "missing deploy_ref": lambda image: image.pop("deploy_ref"),
-            "deploy_ref": lambda image: image.__setitem__(
-                "deploy_ref", "ghcr.io/wrong/image:wrong"
+            "missing revision_ref": lambda image: image.pop("revision_ref"),
+            "revision_ref": lambda image: image.__setitem__(
+                "revision_ref", "ghcr.io/wrong/image:wrong"
             ),
-            "deploy_tag": lambda image: image.__setitem__(
-                "deploy_tag", "2025.1-rocky-9-amd64"
+            "revision_tag": lambda image: image.__setitem__(
+                "revision_tag", f"{DEFAULT_STREAM}-amd64"
             ),
-            "arch_ref": lambda image: image["architectures"][0].__setitem__(
-                "arch_ref", "ghcr.io/wrong/image:wrong"
+            "semantic_ref": lambda image: image.__setitem__(
+                "semantic_ref", "ghcr.io/wrong/image:wrong"
+            ),
+            "revision_arch_ref": lambda image: image["architectures"][0].__setitem__(
+                "revision_arch_ref", "ghcr.io/wrong/image:wrong"
+            ),
+            "immutable_ref": lambda image: image.__setitem__(
+                "immutable_ref", "ghcr.io/wrong/image@sha256:bad"
             ),
             "platform": lambda image: image["architectures"][0].__setitem__(
                 "platform", "linux/arm64"
@@ -439,10 +537,10 @@ class PublishSummaryValidationTest(unittest.TestCase):
         }
         for name, mutate in mutations.items():
             with self.subTest(case=name):
-                summary = publish_summary("2025.2-rocky-10")
+                summary = publish_summary(DEFAULT_STREAM)
                 mutate(image_entry(summary, "neutron-server"))
 
-                result = run_validator(summary, stream="2025.2-rocky-10")
+                result = run_validator(summary, stream=DEFAULT_STREAM)
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("kolla_ansible_variables do not match profile", result.stderr)
@@ -522,7 +620,7 @@ class PublishSummaryValidationTest(unittest.TestCase):
 
     def test_partial_core_keystone_requires_explicit_allow_and_image(self) -> None:
         summary = publish_summary(
-            "2025.1-rocky-9",
+            DEFAULT_STREAM,
             profile_name="core",
             image_filter="keystone",
         )

@@ -9,13 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.profile_resolver import load_matrix
+from scripts.profile_resolver import find_stream, load_matrix
 
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts" / "validate-kolla-build-summary.py"
 PLANNER = ROOT / "scripts" / "plan-publish.py"
 CONTRACT = ROOT / "tests" / "fixtures" / "kolla-build-summary-contract.json"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 TEST_CANDIDATE_ID = "123456789-1"
 EXPECTED_METHOD_SHA256 = (
     "02c656c628dc9f127ada22d993e0693fe"
@@ -26,6 +27,12 @@ EXPECTED_VERSION_PROVENANCE = {
         "distribution": "kolla==20.4.0",
         "source_path": "kolla/image/kolla_worker.py",
         "module_sha256": "6a035d50858519474d9b60bf7e502621603c151375ca1bbfc9d06abb7fdf658a",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+    "20.5.0": {
+        "distribution": "kolla==20.5.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "de2428c30f3030c17855103cbc491203d6025fa7427093e41e9cbfe091b6325d",
         "summary_method_sha256": EXPECTED_METHOD_SHA256,
     },
     "21.1.0": {
@@ -44,14 +51,17 @@ EXPECTED_VERSION_PROVENANCE = {
 
 
 def candidate_plan() -> dict:
+    matrix = load_matrix()
+    stream_id = matrix["streams"][0]["id"]
     result = subprocess.run(
         [
             sys.executable,
             str(PLANNER),
-            "--stream", "2025.1-rocky-9",
+            "--stream", stream_id,
             "--profile", "core",
             "--image", "keystone",
             "--candidate-id", TEST_CANDIDATE_ID,
+            "--base-manifest", str(BASE_INDEX_FIXTURE),
             "--dry-run",
         ],
         cwd=ROOT,
@@ -144,10 +154,16 @@ class KollaBuildSummaryValidationTest(unittest.TestCase):
             fixture["source_extraction"],
             "ast.get_source_segment for KollaWorker.summary",
         )
+        matrix = load_matrix()
         matrix_versions = {
-            stream["kolla_version"] for stream in load_matrix()["streams"]
+            find_stream(matrix, stream["id"])["kolla_version"]
+            for stream in matrix["streams"]
         }
-        self.assertEqual(set(fixture["versions"]), matrix_versions)
+        self.assertTrue(
+            matrix_versions.issubset(fixture["versions"]),
+            f"active matrix Kolla versions missing from fixture: "
+            f"{sorted(matrix_versions - set(fixture['versions']))!r}",
+        )
         self.assertEqual(fixture["versions"], EXPECTED_VERSION_PROVENANCE)
         source_text = fixture["summary_method_source"]
         self.assertIs(type(source_text), str)

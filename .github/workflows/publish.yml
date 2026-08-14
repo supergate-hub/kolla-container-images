@@ -1,36 +1,34 @@
 name: Publish Kolla images
+run-name: Kolla ${{ inputs.operation }} · ${{ github.ref_name }} · ${{ inputs.stream }} · ${{ inputs.scope }}
 
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Render a plan or publish it after environment approval
+        required: true
+        type: choice
+        options:
+          - plan
+          - publish
+        default: plan
       stream:
         description: Exact build stream ID from config/build-matrix.json
         required: true
         type: string
-      profile:
-        description: Image profile to publish
+      scope:
+        description: Reviewed image scope
         required: true
-        type: string
-        default: core
-      image:
-        description: Image to publish, or all for a full profile
-        required: true
-        type: string
+        type: choice
+        options:
+          - keystone
+          - core
+          - deployment
         default: keystone
-      dry_run:
-        description: Render the frozen publish plan without registry mutation
-        required: true
-        type: boolean
-        default: true
-      approval:
-        description: Exact approval phrase required when dry_run is false
-        required: false
-        type: string
-        default: ""
 
 concurrency:
-  group: kolla-publish-${{ inputs.stream }}
-  cancel-in-progress: false
+  group: ${{ inputs.operation == 'publish' && format('kolla-publish-{0}-{1}', github.ref_name, inputs.stream) || format('kolla-plan-{0}', github.run_id) }}
+  queue: max
 
 permissions:
   contents: read
@@ -40,6 +38,9 @@ jobs:
     name: Render frozen publish plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    concurrency:
+      group: ${{ inputs.operation == 'plan' && format('kolla-plan-{0}-{1}', github.ref_name, inputs.stream) || format('kolla-publish-plan-{0}', github.run_id) }}
+      cancel-in-progress: ${{ inputs.operation == 'plan' }}
     outputs:
       parent_tier_0_matrix: ${{ steps.publish-matrices.outputs.parent_tier_0_matrix }}
       parent_tier_1_matrix: ${{ steps.publish-matrices.outputs.parent_tier_1_matrix }}
@@ -64,28 +65,119 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate release branch matrix
+        if: ${{ inputs.operation == 'publish' }}
+        env:
+          PUBLISH_BRANCH: ${{ github.ref_name }}
+        run: >-
+          python3 scripts/validate-release-context.py matrix
+          --matrix config/build-matrix.json
+          --branch "$PUBLISH_BRANCH"
+
+      - name: Check out pinned OpenStack release metadata
+        env:
+          CHECKOUT_PATH: ${{ runner.temp }}/openstack-releases
+          RELEASES_REPOSITORY: https://opendev.org/openstack/releases
+        run: |
+          set -euo pipefail
+          RELEASES_COMMIT="$(python3 - <<'PY'
+          import json
+          import pathlib
+
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          print(matrix["release_metadata"]["commit"])
+          PY
+          )"
+          if [[ ! "$RELEASES_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Pinned OpenStack release metadata commit must be a full SHA." >&2
+            exit 1
+          fi
+          if [ "$CHECKOUT_PATH" != "$RUNNER_TEMP/openstack-releases" ]; then
+            echo "Refusing unexpected OpenStack release metadata checkout path." >&2
+            exit 1
+          fi
+          if [ -e "$CHECKOUT_PATH" ]; then
+            echo "OpenStack release metadata checkout path already exists." >&2
+            exit 1
+          fi
+          git init --quiet "$CHECKOUT_PATH"
+          git -C "$CHECKOUT_PATH" remote add origin "$RELEASES_REPOSITORY"
+          git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
+          git -C "$CHECKOUT_PATH" checkout --quiet --detach FETCH_HEAD
+
       - name: Validate repository configuration
-        run: python3 scripts/validate-config.py
+        env:
+          RELEASE_METADATA_CHECKOUT: ${{ runner.temp }}/openstack-releases
+        run: >-
+          python3 scripts/validate-config.py
+          --release-metadata-checkout "$RELEASE_METADATA_CHECKOUT"
 
       - name: Render frozen publish plan
         env:
           STREAM: ${{ inputs.stream }}
-          PROFILE: ${{ inputs.profile }}
-          IMAGE: ${{ inputs.image }}
+          SCOPE: ${{ inputs.scope }}
           CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          case "$SCOPE" in
+            keystone)
+              profile="core"
+              image="keystone"
+              ;;
+            core)
+              profile="core"
+              image="all"
+              ;;
+            deployment)
+              profile="deployment"
+              image="all"
+              ;;
+            *)
+              echo "Unsupported publish scope: $SCOPE" >&2
+              exit 1
+              ;;
+          esac
           mkdir -p artifacts/plan
           plan_args=(
             --stream "$STREAM"
-            --profile "$PROFILE"
+            --profile "$profile"
             --candidate-id "$CANDIDATE_ID"
             --dry-run
           )
-          if [ "$IMAGE" != "all" ]; then
-            plan_args+=(--image "$IMAGE")
+          if [ "$image" != "all" ]; then
+            plan_args+=(--image "$image")
           fi
           python3 scripts/plan-publish.py "${plan_args[@]}" > artifacts/plan/publish-plan.json
+
+      - name: Bind frozen plan to release ref
+        if: ${{ inputs.operation == 'publish' }}
+        env:
+          PUBLISH_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$PUBLISH_REF"
+          --require-protected
+          --ref-protected "$REF_PROTECTED"
+
+      - name: Reject disabled publish stream
+        if: ${{ inputs.operation == 'publish' }}
+        env:
+          STREAM: ${{ inputs.stream }}
+        run: |
+          python3 - <<'PY'
+          import os
+
+          from scripts.profile_resolver import find_stream, load_matrix
+
+          stream = find_stream(load_matrix(), os.environ["STREAM"])
+          if stream.get("publish_enabled") is not True:
+              raise SystemExit(f"Stream {stream['id']} is disabled for publication")
+          PY
 
       - name: Publish dynamic build matrices
         id: publish-matrices
@@ -126,6 +218,78 @@ jobs:
               )
           PY
 
+      - name: Write plan summary
+        env:
+          OPERATION: ${{ inputs.operation }}
+          REQUESTED_SCOPE: ${{ inputs.scope }}
+          PUBLISH_BRANCH: ${{ github.ref_name }}
+          PUBLISH_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          plan = json.loads(
+              pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
+          )
+          scope = plan["scope"]
+          lines = [
+              "# Kolla publish plan",
+              "",
+              f"- Operation: `{os.environ['OPERATION']}`",
+              f"- Branch: `{os.environ['PUBLISH_BRANCH']}`",
+              f"- Commit: `{os.environ['PUBLISH_SHA']}`",
+              f"- Stream: `{plan['stream']}`",
+              (
+                  f"- Scope: `{os.environ['REQUESTED_SCOPE']}` "
+                  f"(`{scope['profile']}/{scope['image']}`, {scope['image_count']} images)"
+              ),
+              f"- Candidate ID: `{plan['candidate_id']}`",
+              f"- Kolla: `{plan['kolla']['version']}@{plan['kolla']['commit']}`",
+              (
+                  "- Kolla-Ansible: "
+                  f"`{plan['kolla_ansible']['version']}@{plan['kolla_ansible']['commit']}`"
+              ),
+          ]
+          base = plan.get("base")
+          if isinstance(base, dict):
+              requested_ref = base.get("requested_ref") or base.get("image_ref")
+              if requested_ref:
+                  lines.append(f"- Base: `{requested_ref}`")
+              if base.get("index_digest"):
+                  lines.append(f"- Base index digest: `{base['index_digest']}`")
+              platforms = base.get("platforms")
+              if isinstance(platforms, dict):
+                  for architecture in ("amd64", "arm64"):
+                      descriptor = platforms.get(architecture)
+                      if isinstance(descriptor, dict) and descriptor.get("digest"):
+                          lines.append(
+                              f"- Base linux/{architecture}: `{descriptor['digest']}`"
+                          )
+          openstack_sources = plan.get("openstack_sources")
+          if isinstance(openstack_sources, dict):
+              source_set = openstack_sources.get("source_set")
+              source_id = (
+                  source_set.get("id") if isinstance(source_set, dict) else None
+              )
+              source_digest = openstack_sources.get("canonical_digest")
+              if source_id:
+                  lines.append(f"- OpenStack source set: `{source_id}`")
+              if source_digest:
+                  lines.append(f"- Source-set digest: `{source_digest}`")
+          if plan.get("images"):
+              first_image = plan["images"][0]
+              lines.extend(
+                  [
+                      f"- Semantic tag: `{first_image['semantic_tag']}`",
+                      f"- Revision tag: `{first_image['revision_tag']}`",
+                  ]
+              )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n".join(lines) + "\n")
+          PY
+
       - name: Upload publish plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -136,7 +300,7 @@ jobs:
 
   authorize-publish:
     name: Authorize frozen publish plan
-    if: ${{ !inputs.dry_run }}
+    if: ${{ inputs.operation == 'publish' }}
     needs: publish-plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -145,17 +309,6 @@ jobs:
       contents: read
 
     steps:
-      - name: Require protected main ref
-        env:
-          PUBLISH_REF: ${{ github.ref }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        run: |
-          set -euo pipefail
-          if [ "$PUBLISH_REF" != "refs/heads/main" ] || [ "$REF_PROTECTED" != "true" ]; then
-            echo "Real publication requires the protected main branch." >&2
-            exit 1
-          fi
-
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -167,21 +320,34 @@ jobs:
           name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/plan
 
-      - name: Validate publish approval
+      - name: Validate protected release context
+        env:
+          PUBLISH_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$PUBLISH_REF"
+          --require-protected
+          --ref-protected "$REF_PROTECTED"
+
+      - name: Validate publish authorization
         env:
           ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
           ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
           ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
-          APPROVAL: ${{ inputs.approval }}
           CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --expected-scope "$PUBLISH_SCOPE"
 
   build-parent-tier-0:
     name: Parent tier 0 / ${{ matrix.arch }} / ${{ matrix.target }}
-    if: ${{ !inputs.dry_run }}
+    if: ${{ inputs.operation == 'publish' }}
     needs: [publish-plan, authorize-publish]
     strategy:
       fail-fast: false
@@ -191,15 +357,14 @@ jobs:
     with:
       unit: ${{ toJSON(matrix) }}
       publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
-      approval: ${{ inputs.approval }}
+      publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
       packages: write
 
   build-parent-tier-1:
     name: Parent tier 1 / ${{ matrix.arch }} / ${{ matrix.target }}
-    if: ${{ !inputs.dry_run }}
+    if: ${{ inputs.operation == 'publish' }}
     needs: [publish-plan, authorize-publish, build-parent-tier-0]
     strategy:
       fail-fast: false
@@ -210,15 +375,14 @@ jobs:
       unit: ${{ toJSON(matrix) }}
       publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
       input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
-      candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
-      approval: ${{ inputs.approval }}
+      publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
       packages: write
 
   build-parent-tier-2:
     name: Parent tier 2 / ${{ matrix.arch }} / ${{ matrix.target }}
-    if: ${{ !inputs.dry_run }}
+    if: ${{ inputs.operation == 'publish' }}
     needs: [publish-plan, authorize-publish, build-parent-tier-1]
     strategy:
       fail-fast: false
@@ -229,15 +393,14 @@ jobs:
       unit: ${{ toJSON(matrix) }}
       publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
       input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
-      candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
-      approval: ${{ inputs.approval }}
+      publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
       packages: write
 
   build-leaf-stage-0:
     name: Leaf stage 0 / ${{ matrix.arch }} / ${{ matrix.target }}
-    if: ${{ !inputs.dry_run }}
+    if: ${{ inputs.operation == 'publish' }}
     needs: [publish-plan, authorize-publish, build-parent-tier-2]
     strategy:
       fail-fast: false
@@ -248,15 +411,14 @@ jobs:
       unit: ${{ toJSON(matrix) }}
       publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
       input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
-      candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
-      approval: ${{ inputs.approval }}
+      publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
       packages: write
 
   build-leaf-stage-1:
     name: Leaf stage 1 / ${{ matrix.arch }} / ${{ matrix.target }}
-    if: ${{ !inputs.dry_run && needs.publish-plan.outputs.leaf_stage_1_count != '0' }}
+    if: ${{ inputs.operation == 'publish' && needs.publish-plan.outputs.leaf_stage_1_count != '0' }}
     needs: [publish-plan, authorize-publish, build-leaf-stage-0]
     strategy:
       fail-fast: false
@@ -267,8 +429,7 @@ jobs:
       unit: ${{ toJSON(matrix) }}
       publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
       input_evidence_artifact_pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
-      candidate_id: ${{ github.run_id }}-${{ github.run_attempt }}
-      approval: ${{ inputs.approval }}
+      publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
       packages: write
@@ -276,7 +437,7 @@ jobs:
   collect-native-evidence:
     name: Collect native evidence
     if: >-
-      ${{ !inputs.dry_run && !cancelled() &&
+      ${{ inputs.operation == 'publish' && !cancelled() &&
           needs.build-leaf-stage-0.result == 'success' &&
           (needs.build-leaf-stage-1.result == 'success' ||
            (needs.build-leaf-stage-1.result == 'skipped' &&
@@ -332,7 +493,7 @@ jobs:
   finalize-publish:
     name: Finalize manifests, summary, and candidate lock
     if: >-
-      ${{ !inputs.dry_run && !cancelled() &&
+      ${{ inputs.operation == 'publish' && !cancelled() &&
           needs.collect-native-evidence.result == 'success' }}
     needs: collect-native-evidence
     runs-on: ubuntu-24.04
@@ -342,17 +503,6 @@ jobs:
       packages: write
 
     steps:
-      - name: Require protected main ref
-        env:
-          PUBLISH_REF: ${{ github.ref }}
-          REF_PROTECTED: ${{ github.ref_protected }}
-        run: |
-          set -euo pipefail
-          if [ "$PUBLISH_REF" != "refs/heads/main" ] || [ "$REF_PROTECTED" != "true" ]; then
-            echo "Finalization requires the protected main branch." >&2
-            exit 1
-          fi
-
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -376,17 +526,30 @@ jobs:
           name: native-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/arch
 
-      - name: Revalidate publish approval
+      - name: Revalidate protected release context
+        env:
+          PUBLISH_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$PUBLISH_REF"
+          --require-protected
+          --ref-protected "$REF_PROTECTED"
+
+      - name: Revalidate publish authorization
         env:
           ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
           ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
           ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
-          APPROVAL: ${{ inputs.approval }}
           CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --expected-scope "$PUBLISH_SCOPE"
 
       - name: Prepare ephemeral Docker client state
         env:
@@ -410,7 +573,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
-      - name: Create and verify candidate multi-architecture manifests
+      - name: Create and verify final multi-architecture manifests
         run: |
           python3 - <<'PY'
           import hashlib
@@ -432,7 +595,9 @@ jobs:
               "arch",
               "platform",
               "runner_machine",
-              "kolla_version",
+              "kolla",
+              "base",
+              "openstack_sources",
               "parents",
               "images",
           }
@@ -462,16 +627,22 @@ jobs:
               evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
               if not isinstance(evidence, dict) or set(evidence) != EXPECTED_EVIDENCE_KEYS:
                   raise SystemExit(f"native-{arch} evidence schema is invalid")
-              if type(evidence["schema_version"]) is not int or evidence["schema_version"] != 1:
-                  raise SystemExit(f"native-{arch} evidence schema version must be 1")
+              if type(evidence["schema_version"]) is not int or evidence["schema_version"] != 3:
+                  raise SystemExit(f"native-{arch} evidence schema version must be 3")
               if evidence["stream"] != plan["stream"]:
                   raise SystemExit(f"native-{arch} stream does not match frozen scope")
               if evidence["arch"] != arch or evidence["platform"] != f"linux/{arch}":
                   raise SystemExit(f"native-{arch} architecture identity is invalid")
               if evidence["runner_machine"] != EXPECTED_MACHINES[arch]:
                   raise SystemExit(f"native-{arch} runner machine is invalid")
-              if evidence["kolla_version"] != plan["kolla_version"]:
+              if evidence["kolla"] != plan["kolla"]:
                   raise SystemExit(f"native-{arch} Kolla pin does not match frozen plan")
+              if evidence["base"] != plan["base"]:
+                  raise SystemExit(f"native-{arch} base pin does not match frozen plan")
+              if evidence["openstack_sources"] != plan["openstack_sources"]:
+                  raise SystemExit(
+                      f"native-{arch} OpenStack source pins do not match frozen plan"
+                  )
 
               planned_arch = planned_by_arch[arch]
               expected_parent_names = [
@@ -499,7 +670,7 @@ jobs:
                       raise SystemExit(f"native-{arch} {label} set does not match frozen plan")
                   for name, record in records_by_name.items():
                       planned_record = planned_by_name[name]
-                      if record["arch_ref"] != planned_record["arch_ref"]:
+                      if record["arch_ref"] != planned_record["revision_arch_ref"]:
                           raise SystemExit(f"native-{arch} {label} arch ref mismatch: {name}")
                       digest = record["digest"]
                       if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
@@ -547,9 +718,28 @@ jobs:
           manifests_dir = pathlib.Path("artifacts/manifests")
           manifests_dir.mkdir(parents=True, exist_ok=True)
           publish_summary = {
+              "schema_version": 3,
               "candidate_id": plan["candidate_id"],
               "stream": plan["stream"],
               "release": plan["release"],
+              "release_series": plan["release_series"],
+              "release_branch": plan["release_branch"],
+              "release_metadata": plan["release_metadata"],
+              "kolla": plan["kolla"],
+              "kolla_ansible": plan["kolla_ansible"],
+              "base": plan["base"],
+              "openstack_sources": {
+                  "source_set": plan["openstack_sources"]["source_set"],
+                  "canonical_digest": plan["openstack_sources"][
+                      "canonical_digest"
+                  ],
+                  "kolla_build_config_sha256": plan["openstack_sources"][
+                      "kolla_build_config"
+                  ]["sha256"],
+                  "template_override_sha256": plan["openstack_sources"][
+                      "template_override"
+                  ]["sha256"],
+              },
               "distro": plan["distro"],
               "distro_version": plan["distro_version"],
               "profile": plan["profile"],
@@ -562,12 +752,24 @@ jobs:
 
           for image in plan["images"]:
               image_name = image["image"]
-              deploy_ref = image["deploy_ref"]
+              semantic_ref = image["semantic_ref"]
+              revision_ref = image["revision_ref"]
+              if semantic_ref == revision_ref:
+                  raise SystemExit(f"semantic and revision refs must differ: {image_name}")
               recorded_child_digests = {}
               child_refs = []
               architecture_summaries = []
               for arch in EXPECTED_ARCHES:
                   record = evidence_by_arch[arch]["images"][image_name]
+                  planned_architecture = next(
+                      entry
+                      for entry in image["architectures"]
+                      if entry["arch"] == arch
+                  )
+                  if record["arch_ref"] != planned_architecture["revision_arch_ref"]:
+                      raise SystemExit(
+                          f"native-{arch} revision architecture ref mismatch: {image_name}"
+                      )
                   repository = record["arch_ref"].rsplit(":", 1)[0]
                   child_ref = f"{repository}@{record['digest']}"
                   if child_ref != record["immutable_ref"]:
@@ -578,7 +780,9 @@ jobs:
                       {
                           "arch": arch,
                           "platform": f"linux/{arch}",
-                          "arch_ref": record["arch_ref"],
+                          "revision_arch_ref": planned_architecture[
+                              "revision_arch_ref"
+                          ],
                           "digest": record["digest"],
                       }
                   )
@@ -591,7 +795,7 @@ jobs:
                   "imagetools",
                   "create",
                   "--tag",
-                  deploy_ref,
+                  revision_ref,
                   "--metadata-file",
                   str(metadata_path),
                   *child_refs,
@@ -623,9 +827,9 @@ jobs:
               if type(manifest_size) is not int or manifest_size <= 0:
                   raise SystemExit(f"manifest metadata size is invalid: {image_name}")
 
-              repository, separator, deploy_tag = deploy_ref.rpartition(":")
-              if not separator or not repository or not deploy_tag:
-                  raise SystemExit(f"deploy reference is invalid: {image_name}")
+              repository, separator, revision_tag = revision_ref.rpartition(":")
+              if not separator or not repository or not revision_tag:
+                  raise SystemExit(f"revision reference is invalid: {image_name}")
               immutable_manifest_ref = f"{repository}@{manifest_digest}"
               raw_result = subprocess.run(
                   [
@@ -651,13 +855,13 @@ jobs:
                   )
 
               tagged_raw_result = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", deploy_ref],
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", revision_ref],
                   check=True,
                   capture_output=True,
               )
               if tagged_raw_result.stdout != raw_bytes:
                   raise SystemExit(
-                      f"deploy tag moved during manifest validation: {image_name}"
+                      f"revision tag moved during manifest validation: {image_name}"
                   )
 
               raw_path = manifests_dir / f"{image_name}-{plan['stream']}-multiarch-manifest.json"
@@ -731,9 +935,12 @@ jobs:
                   {
                       "image": image_name,
                       "kolla_ansible_variables": image["kolla_ansible_variables"],
-                      "deploy_tag": image["deploy_tag"],
-                      "deploy_ref": deploy_ref,
+                      "semantic_tag": image["semantic_tag"],
+                      "semantic_ref": semantic_ref,
+                      "revision_tag": image["revision_tag"],
+                      "revision_ref": revision_ref,
                       "manifest_digest": manifest_digest,
+                      "immutable_ref": immutable_manifest_ref,
                       "architectures": architecture_summaries,
                   }
               )
@@ -822,9 +1029,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Update convenience stream aliases
+      - name: Update and verify semantic aliases
         run: |
           python3 - <<'PY'
+          import hashlib
           import json
           import pathlib
           import re
@@ -837,58 +1045,64 @@ jobs:
           summary = json.loads(
               pathlib.Path(plan["publish_summary_file"]).read_text(encoding="utf-8")
           )
-          if summary.get("candidate_id") != plan.get("candidate_id"):
-              raise SystemExit("publish summary candidate ID does not match frozen plan")
-          planned_images = plan.get("images")
-          summary_images = summary.get("images")
-          if not isinstance(planned_images, list) or not isinstance(summary_images, list):
-              raise SystemExit("candidate plan and summary images must be lists")
-          summary_by_name = {entry.get("image"): entry for entry in summary_images}
-          if len(summary_by_name) != len(summary_images):
-              raise SystemExit("publish summary contains duplicate image names")
-          if set(summary_by_name) != {entry.get("image") for entry in planned_images}:
-              raise SystemExit("publish summary images do not match frozen plan")
+          planned_by_name = {entry["image"]: entry for entry in plan["images"]}
+          summary_by_name = {entry["image"]: entry for entry in summary["images"]}
+          if (
+              len(planned_by_name) != len(plan["images"])
+              or len(summary_by_name) != len(summary["images"])
+              or set(planned_by_name) != set(summary_by_name)
+          ):
+              raise SystemExit("summary image set does not match frozen plan")
 
-          for planned_image in planned_images:
-              image_name = planned_image["image"]
-              summary_image = summary_by_name[image_name]
-              stream_ref = planned_image["stream_ref"]
-              candidate_ref = summary_image["deploy_ref"]
-              if candidate_ref != planned_image["deploy_ref"]:
-                  raise SystemExit(f"candidate ref mismatch: {image_name}")
-              repository, separator, candidate_tag = candidate_ref.rpartition(":")
-              stream_repository, stream_separator, stream_tag = stream_ref.rpartition(":")
+          for image_name, planned in planned_by_name.items():
+              published = summary_by_name[image_name]
+              semantic_ref = planned["semantic_ref"]
+              revision_ref = planned["revision_ref"]
               if (
-                  not separator
-                  or not stream_separator
-                  or not candidate_tag
-                  or not stream_tag
-                  or repository != stream_repository
+                  published["semantic_ref"] != semantic_ref
+                  or published["revision_ref"] != revision_ref
+                  or semantic_ref == revision_ref
               ):
-                  raise SystemExit(f"candidate/stream ref mismatch: {image_name}")
-              manifest_digest = summary_image["manifest_digest"]
-              if not isinstance(manifest_digest, str) or not DIGEST_RE.fullmatch(manifest_digest):
-                  raise SystemExit(f"candidate digest is invalid: {image_name}")
+                  raise SystemExit(f"summary refs do not match frozen plan: {image_name}")
+              manifest_digest = published["manifest_digest"]
+              if not isinstance(manifest_digest, str) or not DIGEST_RE.fullmatch(
+                  manifest_digest
+              ):
+                  raise SystemExit(f"summary manifest digest is invalid: {image_name}")
+              repository, separator, revision_tag = revision_ref.rpartition(":")
+              if not separator or not repository or not revision_tag:
+                  raise SystemExit(f"revision ref is invalid: {image_name}")
               immutable_ref = f"{repository}@{manifest_digest}"
-              immutable_raw = subprocess.run(
+              if published["immutable_ref"] != immutable_ref:
+                  raise SystemExit(f"summary immutable ref is invalid: {image_name}")
+
+              revision_raw = subprocess.run(
                   ["docker", "buildx", "imagetools", "inspect", "--raw", immutable_ref],
                   check=True,
                   capture_output=True,
               )
+              resolved_digest = f"sha256:{hashlib.sha256(revision_raw.stdout).hexdigest()}"
+              if resolved_digest != manifest_digest:
+                  raise SystemExit(f"revision manifest digest moved: {image_name}")
               subprocess.run(
                   [
-                      "docker", "buildx", "imagetools", "create",
-                      "--tag", stream_ref, immutable_ref,
+                      "docker",
+                      "buildx",
+                      "imagetools",
+                      "create",
+                      "--tag",
+                      semantic_ref,
+                      immutable_ref,
                   ],
                   check=True,
               )
-              stream_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", stream_ref],
+              semantic_raw = subprocess.run(
+                  ["docker", "buildx", "imagetools", "inspect", "--raw", semantic_ref],
                   check=True,
                   capture_output=True,
               )
-              if stream_raw.stdout != immutable_raw.stdout:
-                  raise SystemExit(f"stream alias bytes do not match candidate: {image_name}")
+              if semantic_raw.stdout != revision_raw.stdout:
+                  raise SystemExit(f"semantic alias digest verification failed: {image_name}")
           PY
 
       - name: Remove ephemeral Docker client state
@@ -903,3 +1117,46 @@ jobs:
             *) echo "Refusing unsafe Docker config cleanup: $DOCKER_CONFIG" >&2; exit 1 ;;
           esac
           rm -f -- "$DOCKER_CONFIG/config.json"
+
+  publish-result:
+    name: Report publish workflow result
+    if: ${{ always() }}
+    needs:
+      - publish-plan
+      - authorize-publish
+      - build-parent-tier-0
+      - build-parent-tier-1
+      - build-parent-tier-2
+      - build-leaf-stage-0
+      - build-leaf-stage-1
+      - collect-native-evidence
+      - finalize-publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Write result summary
+        env:
+          OPERATION: ${{ inputs.operation }}
+          STREAM: ${{ inputs.stream }}
+          SCOPE: ${{ inputs.scope }}
+          PLAN_RESULT: ${{ needs.publish-plan.result }}
+          AUTHORIZATION_RESULT: ${{ needs.authorize-publish.result }}
+          FINALIZE_RESULT: ${{ needs.finalize-publish.result }}
+        run: |
+          {
+            echo "# Kolla workflow result"
+            echo
+            echo "- Operation: \`$OPERATION\`"
+            echo "- Stream: \`$STREAM\`"
+            echo "- Scope: \`$SCOPE\`"
+            echo "- Plan: \`$PLAN_RESULT\`"
+            if [ "$OPERATION" = "publish" ]; then
+              echo "- Authorization: \`$AUTHORIZATION_RESULT\`"
+              echo "- Finalize: \`$FINALIZE_RESULT\`"
+            else
+              echo "- Registry mutation: \`skipped\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

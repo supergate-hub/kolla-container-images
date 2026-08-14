@@ -12,12 +12,12 @@ jobs:
     name: Validate repository configuration and publish plans
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Parse every JSON file
         run: |
@@ -27,17 +27,178 @@ jobs:
               python3 -m json.tool "$json_file" >/dev/null
             done
 
+      - name: Resolve validation branch context
+        id: validation-context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          validation_branch=""
+          baseline_sha=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              echo "Pull request base SHA is required for source-set history validation." >&2
+              exit 1
+            fi
+            validation_branch="$BASE_REF"
+            baseline_sha="$BASE_SHA"
+            if [ "$validation_branch" != "main" ] && [[ ! "$validation_branch" =~ ^[0-9]{4}-[0-9]+$ ]]; then
+              echo "Pull requests must target main or an exact YYYY-N release branch." >&2
+              exit 1
+            fi
+          elif [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ]; then
+            if [ "$REF_NAME" = "main" ] || [[ "$REF_NAME" =~ ^[0-9]{4}-[0-9]+$ ]]; then
+              validation_branch="$REF_NAME"
+              baseline_sha="$BEFORE_SHA"
+            fi
+            if [ -n "$validation_branch" ] && [ "$baseline_sha" = "0000000000000000000000000000000000000000" ]; then
+              if [ "$validation_branch" = "main" ]; then
+                echo "A recreated main branch has no trusted history baseline." >&2
+                exit 1
+              fi
+              if ! default_branch_sha="$(git rev-parse refs/remotes/origin/main^{commit})"; then
+                echo "The trusted origin/main commit is required for a first branch push." >&2
+                exit 1
+              fi
+              if [[ ! "$default_branch_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "The trusted origin/main commit must be an exact SHA." >&2
+                exit 1
+              fi
+              if ! git merge-base --is-ancestor "$default_branch_sha" HEAD; then
+                echo "A first branch push must descend from the current origin/main." >&2
+                exit 1
+              fi
+              baseline_sha="$default_branch_sha"
+            fi
+          fi
+          printf 'branch=%s\n' "$validation_branch" >> "$GITHUB_OUTPUT"
+          printf 'baseline=%s\n' "$baseline_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Validate append-only source-set history
+        env:
+          BASELINE_SHA: ${{ steps.validation-context.outputs.baseline }}
+          VALIDATION_BRANCH: ${{ steps.validation-context.outputs.branch }}
+        run: >-
+          python3 scripts/validate-source-set-history.py
+          --baseline="$BASELINE_SHA"
+          --branch "$VALIDATION_BRANCH"
+
+      - name: Validate release branch ownership
+        if: >-
+          ${{ steps.validation-context.outputs.branch != '' &&
+              steps.validation-context.outputs.branch != 'main' }}
+        env:
+          VALIDATION_BRANCH: ${{ steps.validation-context.outputs.branch }}
+        run: >-
+          python3 scripts/validate-release-context.py matrix
+          --matrix config/build-matrix.json
+          --branch "$VALIDATION_BRANCH"
+
+      - name: Check out pinned OpenStack release metadata
+        env:
+          CHECKOUT_PATH: ${{ runner.temp }}/openstack-releases
+          RELEASES_REPOSITORY: https://opendev.org/openstack/releases
+        run: |
+          set -euo pipefail
+          RELEASES_COMMIT="$(python3 - <<'PY'
+          import json
+          import pathlib
+
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          print(matrix["release_metadata"]["commit"])
+          PY
+          )"
+          if [[ ! "$RELEASES_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Pinned OpenStack release metadata commit must be a full SHA." >&2
+            exit 1
+          fi
+          if [ "$CHECKOUT_PATH" != "$RUNNER_TEMP/openstack-releases" ]; then
+            echo "Refusing unexpected OpenStack release metadata checkout path." >&2
+            exit 1
+          fi
+          if [ -e "$CHECKOUT_PATH" ]; then
+            echo "OpenStack release metadata checkout path already exists." >&2
+            exit 1
+          fi
+          git init --quiet "$CHECKOUT_PATH"
+          git -C "$CHECKOUT_PATH" remote add origin "$RELEASES_REPOSITORY"
+          git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
+          git -C "$CHECKOUT_PATH" checkout --quiet --detach FETCH_HEAD
+
       - name: Validate repository configuration
-        run: python3 scripts/validate-config.py
+        env:
+          VALIDATION_BRANCH: ${{ steps.validation-context.outputs.branch }}
+          RELEASE_METADATA_CHECKOUT: ${{ runner.temp }}/openstack-releases
+        run: |
+          set -euo pipefail
+          validation_args=(
+            --release-metadata-checkout "$RELEASE_METADATA_CHECKOUT"
+          )
+          if [ -n "$VALIDATION_BRANCH" ]; then
+            validation_args+=(--branch "$VALIDATION_BRANCH")
+          fi
+          python3 scripts/validate-config.py "${validation_args[@]}"
 
-      - name: Validate core profile dry-run plan
-        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile core --dry-run >/dev/null
+      - name: Validate every active stream dry-run plan
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
 
-      - name: Validate deployment profile dry-run plan
-        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile deployment --dry-run >/dev/null
-
-      - name: Validate Keystone dry-run plan
-        run: python3 scripts/plan-publish.py --stream 2025.1-rocky-9 --profile core --image keystone --dry-run >/dev/null
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          active_streams = [
+              stream["id"]
+              for stream in matrix["streams"]
+              if stream["publish_enabled"] is True
+          ]
+          if not active_streams:
+              raise SystemExit("branch matrix must contain an active stream")
+          for stream in active_streams:
+              for profile in matrix["profiles"]:
+                  subprocess.run(
+                      [
+                          sys.executable,
+                          "scripts/plan-publish.py",
+                          "--stream",
+                          stream,
+                          "--profile",
+                          profile,
+                          "--base-manifest",
+                          "tests/fixtures/oci-base-index.json",
+                          "--dry-run",
+                      ],
+                      check=True,
+                      stdout=subprocess.DEVNULL,
+                  )
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "scripts/plan-publish.py",
+                      "--stream",
+                      stream,
+                      "--profile",
+                      "core",
+                      "--image",
+                      "keystone",
+                      "--base-manifest",
+                      "tests/fixtures/oci-base-index.json",
+                      "--dry-run",
+                  ],
+                  check=True,
+                  stdout=subprocess.DEVNULL,
+              )
+          PY
 
       - name: Run complete unit suite
         run: python3 -m unittest discover -s tests -v

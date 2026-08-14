@@ -16,12 +16,8 @@ on:
         required: false
         default: ""
         type: string
-      candidate_id:
-        description: Candidate identity derived from the caller run context
-        required: true
-        type: string
-      approval:
-        description: Exact approval phrase for the frozen plan
+      publish_scope:
+        description: Trusted Actions scope used to render the frozen plan
         required: true
         type: string
 
@@ -47,8 +43,8 @@ jobs:
             echo "This build-unit workflow only accepts repository-owned calls." >&2
             exit 1
           fi
-          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
-            echo "Build publication requires the protected main branch." >&2
+          if [[ ! "$CALLER_REF" =~ ^refs/heads/[0-9]{4}-[0-9]+$ ]] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Build publication requires a protected YYYY-N release branch." >&2
             exit 1
           fi
 
@@ -63,6 +59,18 @@ jobs:
           name: ${{ inputs.publish_plan_artifact }}
           path: artifacts/plan
 
+      - name: Bind frozen plan to protected release branch
+        env:
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+        run: >-
+          python3 scripts/validate-release-context.py publish
+          --matrix config/build-matrix.json
+          --publish-plan artifacts/plan/publish-plan.json
+          --git-ref "$CALLER_REF"
+          --require-protected
+          --ref-protected "$CALLER_REF_PROTECTED"
+
       - name: Download prerequisite evidence
         if: ${{ inputs.input_evidence_artifact_pattern != '' }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -71,17 +79,18 @@ jobs:
           path: artifacts/input-evidence
           merge-multiple: true
 
-      - name: Revalidate publish approval
+      - name: Revalidate publish authorization
         env:
           ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
           ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
           ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
-          APPROVAL: ${{ inputs.approval }}
-          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          PUBLISH_SCOPE: ${{ inputs.publish_scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --expected-scope "$PUBLISH_SCOPE"
 
       - name: Verify native hosted runner and Docker storage
         env:
@@ -128,9 +137,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install the frozen Kolla and Docker SDK versions
+      - name: Check out and install the frozen Kolla source
+        env:
+          UNIT_ID: ${{ fromJSON(inputs.unit).id }}
         run: |
           set -euo pipefail
+          source_root="$RUNNER_TEMP/kolla-sources-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$UNIT_ID"
+          python3 scripts/frozen_sources.py prepare \
+            --matrix config/build-matrix.json \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --checkout-root "$source_root" \
+            --build-config-dir artifacts/config \
+            --build-engine-lock config/build-engine-requirements.lock
           KOLLA_VERSION="$(
             python3 - <<'PY'
           import json
@@ -139,19 +157,35 @@ jobs:
           plan = json.loads(
               pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
           )
-          matrix = json.loads(
-              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
-          )
-          streams = [entry for entry in matrix["streams"] if entry["id"] == plan["stream"]]
-          if len(streams) != 1 or plan["kolla_version"] != streams[0]["kolla_version"]:
-              raise SystemExit("frozen plan Kolla pin does not match the stream matrix pin")
-          print(plan["kolla_version"])
+          print(plan["kolla"]["version"])
           PY
           )"
+          KOLLA_SOURCE_DIR="$source_root/kolla"
           python3 -m venv .venv
-          .venv/bin/python -m pip install --no-cache-dir --upgrade pip
           .venv/bin/python -m pip install --no-cache-dir \
-            "kolla==$KOLLA_VERSION" "docker==7.1.0"
+            --require-hashes --only-binary=:all: \
+            -r config/build-engine-requirements.lock
+          PBR_VERSION="$KOLLA_VERSION" \
+            .venv/bin/python -m pip install --no-cache-dir --no-index \
+            --no-build-isolation --no-deps \
+            "$KOLLA_SOURCE_DIR"
+          .venv/bin/python -m pip check
+          .venv/bin/python scripts/frozen_sources.py prepare-unit-sources \
+            --matrix config/build-matrix.json \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --checkout-root "$source_root" \
+            --build-config-dir artifacts/config \
+            --build-engine-lock config/build-engine-requirements.lock \
+            --unit-id "$UNIT_ID" \
+            --source-archive-dir artifacts/source-archives
+          .venv/bin/python scripts/frozen_sources.py verify-install \
+            --matrix config/build-matrix.json \
+            --publish-plan artifacts/plan/publish-plan.json \
+            --checkout-root "$source_root" \
+            --build-config-dir artifacts/config \
+            --build-engine-lock config/build-engine-requirements.lock \
+            --unit-id "$UNIT_ID" \
+            --source-archive-dir artifacts/source-archives
           .venv/bin/python - <<'PY'
           import docker
 
@@ -197,7 +231,7 @@ jobs:
       - name: Upload unit evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
+          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/unit-evidence/${{ fromJSON(inputs.unit).id }}.json
           if-no-files-found: error
           retention-days: 7
@@ -220,7 +254,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: unit-diagnostics-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
+          name: unit-diagnostics-${{ fromJSON(inputs.unit).id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/unit-diagnostics/${{ fromJSON(inputs.unit).id }}.txt
           if-no-files-found: warn
           retention-days: 1

@@ -6,15 +6,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
-from publish_approval import approval_requirement
+from base_resolution import resolve_base, validate_resolved_base
+from openstack_source_set import render_frozen_configs
 from profile_resolver import (
     LOCAL_DRY_RUN_CANDIDATE_ID,
     find_stream,
     load_matrix,
     load_profile,
-    render_candidate_tag,
+    render_revision_tag,
     render_tag,
     resolve_profile,
     validate_candidate_id,
@@ -42,6 +44,8 @@ LEAF_STAGES = (0, 1)
 LEAF_TIER = 3
 KOLLA_BUILD_THREADS = 1
 KOLLA_PUSH_THREADS = 1
+KOLLA_BUILD_CONFIG_FILE = "artifacts/config/kolla-build.conf"
+KOLLA_TEMPLATE_OVERRIDE_FILE = "artifacts/config/template-overrides.j2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +69,17 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Required safety flag. This planner never builds or pushes images.",
     )
+    base_group = parser.add_mutually_exclusive_group()
+    base_group.add_argument(
+        "--base-manifest",
+        type=Path,
+        help="Use checked raw OCI index bytes instead of resolving the mutable base tag.",
+    )
+    base_group.add_argument(
+        "--frozen-base-resolution",
+        type=Path,
+        help="Revalidate a prior frozen base result without resolving its mutable tag.",
+    )
     return parser.parse_args()
 
 
@@ -72,8 +87,8 @@ def image_ref(registry: str, owner: str, repository: str, image: str, tag: str) 
     return f"{registry}/{owner}/{repository}/{image}:{tag}"
 
 
-def manifest_metadata_file(image: str, deploy_tag: str) -> str:
-    return f"artifacts/manifests/{image}-{deploy_tag}.json"
+def manifest_metadata_file(image: str, revision_tag: str) -> str:
+    return f"artifacts/manifests/{image}-{revision_tag}.json"
 
 
 def publish_summary_file(stream_id: str) -> str:
@@ -118,13 +133,16 @@ def kolla_build_command(
     arch_tag: str,
     summary_file: str,
     logs_dir: str,
+    use_template_override: bool,
 ) -> list[str]:
-    return [
+    command = [
         "kolla-build",
         "--engine",
         "docker",
         "--base",
         stream["distro"],
+        "--base-image",
+        stream["base_image"],
         "--base-tag",
         stream["base_tag"],
         "--base-arch",
@@ -133,6 +151,10 @@ def kolla_build_command(
         ARCH_TO_PLATFORM[arch],
         "--openstack-release",
         stream["release"],
+        "--config-file",
+        KOLLA_BUILD_CONFIG_FILE,
+        "--locals-base",
+        ".",
         "--registry",
         matrix["registry"],
         "--namespace",
@@ -147,10 +169,14 @@ def kolla_build_command(
         summary_file,
         "--logs-dir",
         logs_dir,
+        "--no-pull",
         "--skip-existing",
         "--push",
-        f"^{target}$",
     ]
+    if use_template_override:
+        command.extend(["--template-override", KOLLA_TEMPLATE_OVERRIDE_FILE])
+    command.append(f"^{target}$")
+    return command
 
 
 def selected_parent_chains(
@@ -277,8 +303,9 @@ def build_unit(
     arch: str,
     target: str,
     ancestor_chain: list[str],
+    use_template_override: bool,
 ) -> dict[str, Any]:
-    arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+    arch_tag = render_revision_tag(matrix, stream, candidate_id, arch)
     unit_id = f"{arch}-{kind}-{target}"
     summary_file = (
         f"artifacts/kolla-summary/{stream['id']}/{candidate_id}/{unit_id}.json"
@@ -318,6 +345,7 @@ def build_unit(
             arch_tag,
             summary_file,
             logs_dir,
+            use_template_override,
         ),
     }
 
@@ -328,10 +356,12 @@ def build_plan(
     stream: dict[str, Any],
     image_filter: str | None = None,
     candidate_id: str = LOCAL_DRY_RUN_CANDIDATE_ID,
+    base_manifest: bytes | None = None,
+    frozen_base_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidate_id = validate_candidate_id(candidate_id)
-    stream_tag = render_tag(matrix, stream)
-    candidate_tag = render_candidate_tag(matrix, stream, candidate_id)
+    semantic_tag = render_tag(matrix, stream)
+    revision_manifest_tag = render_revision_tag(matrix, stream, candidate_id)
     registry = matrix["registry"]
     owner = matrix["owner"]
     repository = matrix["repository"]
@@ -351,48 +381,46 @@ def build_plan(
     ]
     selected_groups = selected_build_groups(profile, build_leaf_entries)
     scope_image = image_filter or "all"
-    requirement = approval_requirement(
-        f"{registry}/{owner}/{repository}",
-        stream["id"],
-        profile["name"],
-        scope_image,
-        len(selected_images),
-    )
+    frozen_sources = render_frozen_configs(stream["source_set"])
+    use_template_override = bool(frozen_sources.template_override_content)
 
     images = []
     for image_entry in selected_images:
         image = image_entry["name"]
         architectures = []
         for arch in matrix["architectures"]:
-            arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+            arch_tag = render_revision_tag(matrix, stream, candidate_id, arch)
             arch_ref = image_ref(registry, owner, repository, image, arch_tag)
             architectures.append(
                 {
                     "arch": arch,
-                    "arch_tag": arch_tag,
-                    "arch_ref": arch_ref,
-                    "expected_ghcr_ref": arch_ref,
+                    "revision_arch_tag": arch_tag,
+                    "revision_arch_ref": arch_ref,
                     "kolla_base_arch": ARCH_TO_KOLLA_BASE_ARCH[arch],
                     "platform": ARCH_TO_PLATFORM[arch],
                 }
             )
 
-        deploy_ref = image_ref(
-            registry, owner, repository, image, candidate_tag
+        semantic_ref = image_ref(
+            registry, owner, repository, image, semantic_tag
         )
-        stream_ref = image_ref(
-            registry, owner, repository, image, stream_tag
+        revision_ref = image_ref(
+            registry, owner, repository, image, revision_manifest_tag
         )
-        arch_refs = [architecture["arch_ref"] for architecture in architectures]
+        arch_refs = [
+            architecture["revision_arch_ref"] for architecture in architectures
+        ]
         images.append(
             {
                 "image": image,
                 "kolla_ansible_variables": image_entry["kolla_ansible_variables"],
-                "deploy_tag": candidate_tag,
-                "deploy_ref": deploy_ref,
-                "stream_ref": stream_ref,
-                "expected_ghcr_ref": deploy_ref,
-                "manifest_metadata_file": manifest_metadata_file(image, candidate_tag),
+                "semantic_tag": semantic_tag,
+                "semantic_ref": semantic_ref,
+                "revision_tag": revision_manifest_tag,
+                "revision_ref": revision_ref,
+                "manifest_metadata_file": manifest_metadata_file(
+                    image, revision_manifest_tag
+                ),
                 "architectures": architectures,
                 "commands": {
                     "manifest_create": [
@@ -401,9 +429,9 @@ def build_plan(
                         "imagetools",
                         "create",
                         "--tag",
-                        deploy_ref,
+                        revision_ref,
                         "--metadata-file",
-                        manifest_metadata_file(image, candidate_tag),
+                        manifest_metadata_file(image, revision_manifest_tag),
                         *arch_refs,
                     ],
                     "manifest_inspect": [
@@ -411,7 +439,7 @@ def build_plan(
                         "buildx",
                         "imagetools",
                         "inspect",
-                        deploy_ref,
+                        revision_ref,
                     ],
                 },
             }
@@ -448,6 +476,7 @@ def build_plan(
                     arch=arch,
                     target=parent,
                     ancestor_chain=ancestor_chain,
+                    use_template_override=use_template_override,
                 )
             )
     for stage in LEAF_STAGES:
@@ -465,6 +494,7 @@ def build_plan(
                         arch=arch,
                         target=image,
                         ancestor_chain=leaf_chains[image],
+                        use_template_override=use_template_override,
                     )
                 )
 
@@ -495,23 +525,36 @@ def build_plan(
     if len(unit_ids) != len(set(unit_ids)):
         raise ValueError("build unit IDs must be unique")
 
+    configured_base = {
+        "id": stream["base_id"],
+        "distro": stream["distro"],
+        "os_version": stream["os_version"],
+        "image": stream["base_image"],
+        "tag": stream["base_tag"],
+    }
+    resolved_base = (
+        validate_resolved_base(configured_base, frozen_base_resolution)
+        if frozen_base_resolution is not None
+        else resolve_base(configured_base, base_manifest)
+    )
+
     parent_images = list(parent_chains)
     images_by_name = {image["image"]: image for image in images}
     build_architectures = []
     for arch in matrix["architectures"]:
-        arch_tag = render_candidate_tag(matrix, stream, candidate_id, arch)
+        arch_tag = render_revision_tag(matrix, stream, candidate_id, arch)
         platform = ARCH_TO_PLATFORM[arch]
         build_architectures.append(
             {
                 "arch": arch,
-                "arch_tag": arch_tag,
+                "revision_arch_tag": arch_tag,
                 "kolla_base_arch": ARCH_TO_KOLLA_BASE_ARCH[arch],
                 "platform": platform,
                 "runner_labels": [ARCH_TO_RUNNER[arch]],
                 "parents": [
                     {
                         "image": parent,
-                        "arch_ref": image_ref(
+                        "revision_arch_ref": image_ref(
                             registry, owner, repository, parent, arch_tag
                         ),
                     }
@@ -520,8 +563,8 @@ def build_plan(
                 "images": [
                     {
                         "image": image,
-                        "arch_ref": next(
-                            architecture["arch_ref"]
+                        "revision_arch_ref": next(
+                            architecture["revision_arch_ref"]
                             for architecture in images_by_name[image]["architectures"]
                             if architecture["arch"] == arch
                         ),
@@ -538,25 +581,47 @@ def build_plan(
         )
 
     return {
-        "dry_run": True,
+        "schema_version": 3,
         "candidate_id": candidate_id,
         "stream": stream["id"],
         "release": stream["release"],
+        "release_series": stream["release_series"],
+        "release_branch": stream["release_branch"],
         "distro": stream["distro"],
         "distro_version": stream["base_tag"],
-        "kolla_version": stream["kolla_version"],
-        "kolla_ansible_version": stream["kolla_ansible_version"],
+        "base": resolved_base,
+        "openstack_sources": {
+            "source_set": stream["source_set"],
+            "canonical_digest": stream["source_set_sha256"],
+            "kolla_build_config": {
+                "sha256": frozen_sources.config_sha256,
+                "content": frozen_sources.config_content,
+            },
+            "template_override": {
+                "sha256": frozen_sources.template_override_sha256,
+                "content": frozen_sources.template_override_content,
+            },
+        },
+        "release_metadata": {
+            "repository": matrix["release_metadata"]["repository"],
+            "commit": matrix["release_metadata"]["commit"],
+        },
+        "kolla": {
+            "repository": stream["kolla_repository"],
+            "version": stream["kolla_version"],
+            "commit": stream["kolla_commit"],
+        },
+        "kolla_ansible": {
+            "repository": stream["kolla_ansible_repository"],
+            "version": stream["kolla_ansible_version"],
+            "commit": stream["kolla_ansible_commit"],
+        },
         "profile": profile["name"],
         "image_filter": image_filter,
         "scope": {
             "profile": profile["name"],
             "image": scope_image,
             "image_count": len(selected_images),
-        },
-        "approval": {
-            "allowed": requirement is not None,
-            "required_variable": requirement.variable if requirement else None,
-            "phrase": requirement.phrase if requirement else None,
         },
         "registry": registry,
         "owner": owner,
@@ -593,8 +658,14 @@ def main() -> int:
             stream,
             args.image,
             args.candidate_id,
+            args.base_manifest.read_bytes() if args.base_manifest else None,
+            (
+                json.loads(args.frozen_base_resolution.read_text(encoding="utf-8"))
+                if args.frozen_base_resolution
+                else None
+            ),
         )
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

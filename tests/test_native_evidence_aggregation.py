@@ -14,9 +14,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLANNER = ROOT / "scripts" / "plan-publish.py"
 AGGREGATOR_PATH = ROOT / "scripts" / "aggregate-native-evidence.py"
+BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 CANDIDATE_ID = "123456789-1"
 TEN_GIB = 10 * 1024**3
 THREE_GIB = 3 * 1024**3
+
+
+def active_stream_id() -> str:
+    matrix = json.loads((ROOT / "config" / "build-matrix.json").read_text(
+        encoding="utf-8"
+    ))
+    return matrix["streams"][0]["id"]
 
 
 def load_module():
@@ -38,11 +46,13 @@ def candidate_plan(*, profile: str = "core", image: str | None = "keystone") -> 
         sys.executable,
         str(PLANNER),
         "--stream",
-        "2025.1-rocky-9",
+        active_stream_id(),
         "--profile",
         profile,
         "--candidate-id",
         CANDIDATE_ID,
+        "--base-manifest",
+        str(BASE_INDEX_FIXTURE),
         "--dry-run",
     ]
     if image is not None:
@@ -89,10 +99,12 @@ def records_for(plan: dict) -> dict[str, dict]:
                 "passed": True,
             }
         records[unit["id"]] = {
-            "schema_version": 1,
+            "schema_version": 3,
             "candidate_id": plan["candidate_id"],
             "stream": plan["stream"],
-            "kolla_version": plan["kolla_version"],
+            "kolla": plan["kolla"],
+            "base": plan["base"],
+            "openstack_sources": plan["openstack_sources"],
             "unit_id": unit["id"],
             "kind": unit["kind"],
             "tier": unit["tier"],
@@ -148,7 +160,7 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
         )
         return unit_dir
 
-    def test_exact_closure_aggregates_legacy_native_schema(self) -> None:
+    def test_exact_closure_aggregates_unit_evidence_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             unit_dir = self.prepare_unit_dir(temp_path)
@@ -168,7 +180,13 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                 self.assertEqual(evidence["arch"], arch)
                 self.assertEqual(evidence["platform"], f"linux/{arch}")
                 self.assertEqual(evidence["stream"], self.plan["stream"])
-                self.assertEqual(evidence["kolla_version"], self.plan["kolla_version"])
+                self.assertEqual(evidence["schema_version"], 3)
+                self.assertEqual(evidence["kolla"], self.plan["kolla"])
+                self.assertEqual(evidence["base"], self.plan["base"])
+                self.assertEqual(
+                    evidence["openstack_sources"], self.plan["openstack_sources"]
+                )
+                self.assertNotIn("kolla_version", evidence)
                 self.assertEqual(
                     set(evidence),
                     {
@@ -177,7 +195,9 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
                         "arch",
                         "platform",
                         "runner_machine",
-                        "kolla_version",
+                        "kolla",
+                        "base",
+                        "openstack_sources",
                         "parents",
                         "images",
                     },
@@ -192,6 +212,10 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
         plan, units = AGGREGATOR.validate_plan(
             candidate_plan(profile="deployment", image=None)
         )
+        expected_parent_count = len(
+            {unit["target"] for unit in units if unit["kind"] == "parent"}
+        )
+        expected_image_count = len(plan["images"])
         records = records_for(plan)
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -207,8 +231,12 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
             self.assertEqual(len(outputs), 2)
             for output in outputs:
                 evidence = json.loads(output.read_text(encoding="utf-8"))
-                self.assertEqual(len(evidence["parents"]), 16)
-                self.assertEqual(len(evidence["images"]), 63)
+                self.assertEqual(
+                    len(evidence["parents"]), expected_parent_count
+                )
+                self.assertEqual(
+                    len(evidence["images"]), expected_image_count
+                )
 
             relay = records["amd64-leaf-ovn-sb-db-relay"]
             server = records["amd64-leaf-ovn-sb-db-server"]
@@ -246,6 +274,24 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
             )
             unit_dir = self.prepare_unit_dir(temp_path, records)
             with self.assertRaisesRegex(AGGREGATOR.EvidenceError, "dependency digest mismatch"):
+                AGGREGATOR.aggregate_native(
+                    self.plan,
+                    self.units,
+                    unit_dir,
+                    temp_path / "native",
+                )
+
+    def test_native_aggregation_rejects_tampered_kolla_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            records = copy.deepcopy(self.records)
+            records["amd64-parent-base"]["kolla"]["commit"] = "0" * 40
+            unit_dir = self.prepare_unit_dir(temp_path, records)
+
+            with self.assertRaisesRegex(
+                AGGREGATOR.EvidenceError,
+                "unit evidence kolla mismatch: amd64-parent-base",
+            ):
                 AGGREGATOR.aggregate_native(
                     self.plan,
                     self.units,
@@ -304,7 +350,11 @@ class NativeEvidenceAggregationTest(unittest.TestCase):
     def test_candidate_pin_platform_disk_and_smoke_are_fail_closed(self) -> None:
         cases = (
             ("candidate_id", "wrong-candidate", "candidate_id mismatch"),
-            ("kolla_version", "0.0.0", "kolla_version mismatch"),
+            (
+                "kolla",
+                {**self.plan["kolla"], "commit": "0" * 40},
+                "kolla mismatch",
+            ),
             ("platform", "linux/arm64", "platform mismatch"),
         )
         for key, value, message in cases:
