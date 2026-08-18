@@ -84,6 +84,7 @@ GIB = 1024**3
 MIN_PREFLIGHT_FREE_BYTES = 8 * GIB
 MIN_BUILD_FREE_BYTES = 2 * GIB
 DISK_POLL_INTERVAL_SECONDS = 0.25
+REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS = (1, 2, 4, 8, 15)
 DOCKER_ROOT_OVERRIDE = os.environ.get("KOLLA_DOCKER_ROOT")
 KOLLA_BUILD_CONFIG_FILE = "artifacts/config/kolla-build.conf"
 KOLLA_TEMPLATE_OVERRIDE_FILE = "artifacts/config/template-overrides.j2"
@@ -539,23 +540,64 @@ def verify_local_digest(runner: CommandRunner, ref: str, expected_immutable_ref:
     raise BuildUnitError(f"local image {ref} does not contain expected digest")
 
 
+def is_transient_remote_descriptor_error(error: subprocess.CalledProcessError) -> bool:
+    output = "\n".join(
+        value
+        for value in (error.stdout, error.stderr)
+        if isinstance(value, str)
+    ).lower()
+    if any(marker in output for marker in ("unauthorized", "denied", "invalid reference")):
+        return False
+    return any(
+        marker in output
+        for marker in (
+            "manifest unknown",
+            "not found",
+            "too many requests",
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+            "timeout",
+            "connection reset",
+            "temporary failure",
+        )
+    )
+
+
 def remote_descriptor(
     runner: CommandRunner,
     arch_ref: str,
     expected_platform: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[str, str]:
-    result = runner.run(
-        [
-            "docker",
-            "buildx",
-            "imagetools",
-            "inspect",
-            arch_ref,
-            "--format",
-            "{{json .Manifest}}",
-        ],
-        capture_output=True,
-    )
+    command = [
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        arch_ref,
+        "--format",
+        "{{json .Manifest}}",
+    ]
+    for attempt, delay in enumerate(REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS, start=1):
+        try:
+            result = runner.run(command, capture_output=True)
+            break
+        except subprocess.CalledProcessError as exc:
+            if not is_transient_remote_descriptor_error(exc):
+                raise
+            print(
+                f"Remote manifest for {arch_ref} is not visible yet; "
+                f"retry {attempt}/{len(REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS)} "
+                f"in {delay}s.",
+                file=sys.stderr,
+            )
+            sleep(delay)
+    else:
+        result = runner.run(command, capture_output=True)
     try:
         descriptor = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
