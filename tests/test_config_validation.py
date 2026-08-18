@@ -35,6 +35,9 @@ EXPECTED_STREAMS = {
         "24.04",
     ),
     "2025.1-rocky-10.2-20.5.0": ("2025.1", "20.5.0", "20.5.0", "rocky", "10.2", "10.2"),
+    "2025.1-ubuntu-24.04-20.5.0": (
+        "2025.1", "20.5.0", "20.5.0", "ubuntu", "24.04", "24.04"
+    ),
     "2025.2-rocky-10.2-21.1.0": ("2025.2", "21.1.0", "21.1.0", "rocky", "10.2", "10.2"),
     "2025.2-ubuntu-24.04-21.1.0": (
         "2025.2",
@@ -147,6 +150,7 @@ DEPLOYMENT_EXPECTED_COUNTS = {
     "2025.1-rocky-10.2-20.4.0": 63,
     "2025.1-ubuntu-24.04-20.4.0": 64,
     "2025.1-rocky-10.2-20.5.0": 63,
+    "2025.1-ubuntu-24.04-20.5.0": 64,
     "2025.2-rocky-10.2-21.1.0": 63,
     "2025.2-ubuntu-24.04-21.1.0": 64,
     "2026.1-rocky-10.2-22.0.0": 65,
@@ -345,6 +349,7 @@ class ConfigValidationTest(unittest.TestCase):
                 for version in ("20.4.0", "20.5.0")
             ],
             "architectures": ["amd64", "arm64"],
+            "tag_aliases": {},
             "tag_policy": {
                 "deploy_tag_template": (
                     "{release}-{distro}-{os_version}-{kolla_ansible_version}"
@@ -479,6 +484,11 @@ class ConfigValidationTest(unittest.TestCase):
             base_id: copy.deepcopy(bases[base_id])
             for base_id in base_ids
         }
+        matrix["tag_aliases"] = {
+            alias: target
+            for alias, target in matrix.get("tag_aliases", {}).items()
+            if target in {stream["id"] for stream in matching_streams}
+        }
         return Matrix(matrix, source_sets_dir=self.synthetic_source_sets_dir)
 
     @staticmethod
@@ -573,7 +583,7 @@ class ConfigValidationTest(unittest.TestCase):
                 self.assertEqual(
                     set(profile["reviewed_streams"]), set(EXPECTED_STREAMS)
                 )
-                self.assertEqual(len(profile["reviewed_streams"]), 8)
+                self.assertEqual(len(profile["reviewed_streams"]), len(EXPECTED_STREAMS))
 
                 neutron = next(
                     image

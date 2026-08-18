@@ -860,6 +860,11 @@ class PublishWorkflowTest(unittest.TestCase):
             alias_step,
             r'"imagetools",\s+"create",\s+"--tag",\s+semantic_ref,\s+immutable_ref',
         )
+        self.assertIn('for alias_ref in alias_refs', alias_step)
+        self.assertRegex(
+            alias_step,
+            r'"imagetools",\s+"create",\s+"--tag",\s+alias_ref,\s+immutable_ref',
+        )
         self.assertIn('"imagetools", "inspect", "--raw", semantic_ref', alias_step)
         self.assertIn("if semantic_raw.stdout != revision_raw.stdout:", alias_step)
 

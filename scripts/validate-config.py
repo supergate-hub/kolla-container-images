@@ -69,6 +69,7 @@ MATRIX_KEYS = frozenset(
         "bases",
         "streams",
         "architectures",
+        "tag_aliases",
         "tag_policy",
     }
 )
@@ -730,6 +731,43 @@ def validate_matrix(
                     )
         except (AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
             errors.append(f"cannot render tags for stream {stream_id!r}: {error}")
+
+    tag_aliases = matrix.get("tag_aliases")
+    if not isinstance(tag_aliases, dict):
+        errors.append("tag_aliases must be an object")
+    else:
+        alias_targets: set[str] = set()
+        for alias, target in tag_aliases.items():
+            if not isinstance(alias, str) or not alias:
+                errors.append("tag_aliases keys must be non-empty strings")
+                continue
+            if not isinstance(target, str) or not target:
+                errors.append(f"tag_aliases[{alias!r}] target must be a non-empty string")
+                continue
+            try:
+                target_stream = find_stream(matrix, target)
+            except ValueError as error:
+                errors.append(f"tag_aliases[{alias!r}] target is invalid: {error}")
+                continue
+            if target in alias_targets:
+                errors.append(f"multiple aliases target the same stream: {target!r}")
+            alias_targets.add(target)
+            if target_stream.get("publish_enabled") is not True:
+                errors.append(f"tag_aliases[{alias!r}] target must be publish-enabled")
+            expected_alias = "-".join(
+                (
+                    target_stream["release"],
+                    target_stream["distro"],
+                    target_stream["os_version"],
+                )
+            )
+            if alias != expected_alias:
+                errors.append(
+                    f"tag_aliases[{alias!r}] must be the release/distro/os alias "
+                    f"{expected_alias!r}"
+                )
+            if alias in rendered_tags:
+                errors.append(f"tag alias collides with an exact stream tag: {alias!r}")
 
 
 def validate_selector(
