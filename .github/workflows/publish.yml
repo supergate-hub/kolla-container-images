@@ -332,11 +332,8 @@ jobs:
           --require-protected
           --ref-protected "$REF_PROTECTED"
 
-      - name: Validate publish authorization
+      - name: Validate frozen publish context
         env:
-          ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
-          ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
-          ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
           CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
@@ -538,11 +535,8 @@ jobs:
           --require-protected
           --ref-protected "$REF_PROTECTED"
 
-      - name: Revalidate publish authorization
+      - name: Revalidate frozen publish context
         env:
-          ALLOW_GHCR_PUBLISH: ${{ vars.ALLOW_GHCR_PUBLISH }}
-          ALLOW_GHCR_FULL_CORE_PUBLISH: ${{ vars.ALLOW_GHCR_FULL_CORE_PUBLISH }}
-          ALLOW_GHCR_DEPLOYMENT_PUBLISH: ${{ vars.ALLOW_GHCR_DEPLOYMENT_PUBLISH }}
           CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-

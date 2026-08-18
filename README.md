@@ -234,8 +234,8 @@ the local planner CLI.
 `operation=plan` creates a frozen plan and Actions summary without registry
 mutation, publish summary, or lock. `operation=publish` is rejected from
 `main`, tags, feature branches, the wrong release branch, or a disabled stream.
-It requires a protected `YYYY-N` branch, the `ghcr-publish` environment
-reviewer, and the scope-specific kill switch. See
+It requires a protected `YYYY-N` branch and the `ghcr-publish` environment
+approval. See
 [docs/publish.md](docs/publish.md) for the operator contract and
 [docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
 

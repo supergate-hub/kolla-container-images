@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Authorize a real GHCR publish against its frozen publish plan."""
+"""Validate a real GHCR publish against its frozen publish plan."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -14,11 +13,7 @@ from typing import Any
 
 from base_resolution import validate_resolved_base
 from profile_resolver import find_stream, load_matrix, validate_candidate_id
-from publish_approval import (
-    AuthorizationRequirement,
-    authorization_requirement,
-    scope_selection,
-)
+from publish_approval import scope_selection
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,11 +125,11 @@ def render_expected_plan(
     return expected
 
 
-def recompute_authorization(
+def recompute_publish_context(
     plan: dict[str, Any],
     expected_candidate_id: str,
     expected_scope: str,
-) -> AuthorizationRequirement:
+) -> None:
     expected_candidate_id = validate_candidate_id(
         expected_candidate_id,
         allow_local=False,
@@ -179,14 +174,6 @@ def recompute_authorization(
     if canonical_json(plan) != canonical_json(expected_plan):
         raise plan_mismatch("complete plan")
 
-    scope = expected_plan["scope"]
-    requirement = authorization_requirement(scope["profile"], scope["image"])
-    if requirement is None or requirement.scope != expected_scope:
-        raise ValueError(
-            "Frozen publish plan scope is not authorized: "
-            f"{scope['profile']}/{scope['image']}"
-        )
-    return requirement
 
 
 def load_publish_plan(path: Path) -> dict[str, Any]:
@@ -201,7 +188,7 @@ def main() -> int:
     args = parse_args()
     try:
         plan = load_publish_plan(args.publish_plan)
-        requirement = recompute_authorization(
+        recompute_publish_context(
             plan,
             args.expected_candidate_id,
             args.expected_scope,
@@ -209,10 +196,7 @@ def main() -> int:
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         return reject(f"Invalid publish plan: {exc}")
 
-    if os.environ.get(requirement.variable) != "true":
-        return reject(f"Publish requires {requirement.variable}=true.")
-
-    print("Publish authorization validated.")
+    print("Frozen publish context validated.")
     return 0
 
 

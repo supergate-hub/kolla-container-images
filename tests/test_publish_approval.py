@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -11,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from scripts.profile_resolver import load_matrix
-from scripts.publish_approval import authorization_requirement, scope_selection
+from scripts.publish_approval import scope_selection
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,21 +21,12 @@ MATRIX = load_matrix()
 STREAM_IDS = [stream["id"] for stream in MATRIX["streams"]]
 DEFAULT_STREAM = STREAM_IDS[0]
 OTHER_STREAM = STREAM_IDS[1]
-APPROVAL_VARIABLES = (
-    "ALLOW_GHCR_PUBLISH",
-    "ALLOW_GHCR_FULL_CORE_PUBLISH",
-    "ALLOW_GHCR_DEPLOYMENT_PUBLISH",
-)
 TEST_CANDIDATE_ID = "123456789-1"
 
 SCOPE_CASES = {
-    "keystone": ("core", "keystone", "ALLOW_GHCR_PUBLISH"),
-    "core": ("core", "all", "ALLOW_GHCR_FULL_CORE_PUBLISH"),
-    "deployment": (
-        "deployment",
-        "all",
-        "ALLOW_GHCR_DEPLOYMENT_PUBLISH",
-    ),
+    "keystone": ("core", "keystone"),
+    "core": ("core", "all"),
+    "deployment": ("deployment", "all"),
 }
 
 
@@ -82,16 +72,10 @@ def run_validator(
     plan_path: Path,
     *,
     expected_scope: str,
-    variables: dict[str, str] | None = None,
     expected_candidate_id: str = TEST_CANDIDATE_ID,
     extra_args: list[str] | None = None,
     publish_plan_option: str = "--publish-plan",
 ) -> subprocess.CompletedProcess[str]:
-    env = os.environ.copy()
-    for name in (*APPROVAL_VARIABLES, "APPROVAL"):
-        env.pop(name, None)
-    if variables:
-        env.update(variables)
     return subprocess.run(
         [
             sys.executable,
@@ -105,7 +89,6 @@ def run_validator(
             *(extra_args or []),
         ],
         cwd=ROOT,
-        env=env,
         text=True,
         capture_output=True,
     )
@@ -118,7 +101,7 @@ class PublishApprovalTest(unittest.TestCase):
         cls.plan_directory = Path(cls.temp_directory.name)
         cls.plans: dict[tuple[str, str], dict] = {}
         for stream in STREAM_IDS:
-            for scope, (profile, image, _variable) in SCOPE_CASES.items():
+            for scope, (profile, image) in SCOPE_CASES.items():
                 cls.plans[(stream, scope)] = generate_plan(
                     stream=stream,
                     profile=profile,
@@ -132,23 +115,17 @@ class PublishApprovalTest(unittest.TestCase):
     def plan(self, stream: str, scope: str) -> dict:
         return copy.deepcopy(self.plans[(stream, scope)])
 
-    def test_scope_mapping_and_kill_switch_contract(self) -> None:
-        for scope, (profile, image, variable) in SCOPE_CASES.items():
+    def test_scope_mapping_contract(self) -> None:
+        for scope, (profile, image) in SCOPE_CASES.items():
             with self.subTest(scope=scope):
                 self.assertEqual(scope_selection(scope), (profile, image))
-                requirement = authorization_requirement(profile, image)
-                self.assertIsNotNone(requirement)
-                assert requirement is not None
-                self.assertEqual(requirement.scope, scope)
-                self.assertEqual(requirement.variable, variable)
         with self.assertRaisesRegex(ValueError, "publish scope"):
             scope_selection("unknown")
-        self.assertIsNone(authorization_requirement("core", "glance-api"))
 
     def test_all_active_streams_and_three_scopes_validate(self) -> None:
         case_count = 0
         for stream in STREAM_IDS:
-            for scope, (_profile, _image, variable) in SCOPE_CASES.items():
+            for scope in SCOPE_CASES:
                 case_count += 1
                 path = write_plan(
                     self.plan_directory,
@@ -159,10 +136,9 @@ class PublishApprovalTest(unittest.TestCase):
                     result = run_validator(
                         path,
                         expected_scope=scope,
-                        variables={variable: "true", "APPROVAL": "ignored"},
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn("Publish authorization validated.", result.stdout)
+                    self.assertIn("Frozen publish context validated.", result.stdout)
         self.assertEqual(case_count, len(STREAM_IDS) * len(SCOPE_CASES))
 
     def test_trusted_candidate_id_must_match_frozen_plan(self) -> None:
@@ -174,7 +150,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="keystone",
-            variables={"ALLOW_GHCR_PUBLISH": "true"},
             expected_candidate_id="123456789-2",
         )
         self.assertEqual(result.returncode, 1)
@@ -190,42 +165,10 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="keystone",
-            variables={"ALLOW_GHCR_PUBLISH": "true"},
             expected_candidate_id="local-dry-run",
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("workflow candidate ID", result.stderr)
-
-    def test_required_variable_must_be_exactly_true(self) -> None:
-        path = write_plan(
-            self.plan_directory,
-            "missing-variable",
-            self.plan(DEFAULT_STREAM, "keystone"),
-        )
-        for value in (None, "false", "TRUE", "1"):
-            variables = {} if value is None else {"ALLOW_GHCR_PUBLISH": value}
-            with self.subTest(value=value):
-                result = run_validator(
-                    path,
-                    expected_scope="keystone",
-                    variables=variables,
-                )
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("ALLOW_GHCR_PUBLISH=true", result.stderr)
-
-    def test_different_scope_variable_does_not_authorize_plan(self) -> None:
-        path = write_plan(
-            self.plan_directory,
-            "wrong-variable",
-            self.plan(DEFAULT_STREAM, "keystone"),
-        )
-        result = run_validator(
-            path,
-            expected_scope="keystone",
-            variables={"ALLOW_GHCR_FULL_CORE_PUBLISH": "true"},
-        )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("ALLOW_GHCR_PUBLISH=true", result.stderr)
 
     def test_expected_scope_must_match_frozen_plan(self) -> None:
         path = write_plan(
@@ -236,7 +179,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="core",
-            variables={"ALLOW_GHCR_FULL_CORE_PUBLISH": "true"},
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("trusted workflow scope", result.stderr)
@@ -250,7 +192,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="invalid",
-            variables={"ALLOW_GHCR_PUBLISH": "true"},
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid choice", result.stderr)
@@ -273,7 +214,6 @@ class PublishApprovalTest(unittest.TestCase):
                 result = run_validator(
                     path,
                     expected_scope="keystone",
-                    variables={"ALLOW_GHCR_PUBLISH": "true"},
                 )
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("publish plan", result.stderr.lower())
@@ -286,7 +226,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="keystone",
-            variables={"ALLOW_GHCR_PUBLISH": "true"},
         )
 
         self.assertEqual(result.returncode, 1)
@@ -298,7 +237,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="core",
-            variables={name: "true" for name in APPROVAL_VARIABLES},
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("trusted workflow scope", result.stderr)
@@ -312,7 +250,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="keystone",
-            variables={"ALLOW_GHCR_PUBLISH": "true"},
             extra_args=["--profile", "core"],
         )
         self.assertEqual(result.returncode, 2)
@@ -337,7 +274,7 @@ class PublishApprovalTest(unittest.TestCase):
         validator.load_matrix = lambda: matrix
         try:
             with self.assertRaisesRegex(ValueError, "not enabled for publication"):
-                validator.recompute_authorization(
+                validator.recompute_publish_context(
                     self.plan(DEFAULT_STREAM, "keystone"),
                     TEST_CANDIDATE_ID,
                     "keystone",
@@ -354,7 +291,6 @@ class PublishApprovalTest(unittest.TestCase):
         result = run_validator(
             path,
             expected_scope="keystone",
-            variables={"ALLOW_GHCR_PUBLISH": "true"},
             publish_plan_option="--publish-p",
         )
         self.assertEqual(result.returncode, 2)

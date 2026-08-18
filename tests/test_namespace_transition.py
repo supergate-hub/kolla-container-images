@@ -23,7 +23,8 @@ class NamespaceTransitionTest(unittest.TestCase):
             EXPECTED_NAMESPACE,
         )
 
-    def test_personal_owner_is_absent_from_repository_content(self) -> None:
+    def test_personal_owner_is_absent_from_container_references(self) -> None:
+        personal_registry_prefix = f"ghcr.io/{PERSONAL_OWNER}/"
         matches: list[str] = []
         for path in ROOT.rglob("*"):
             if not path.is_file() or any(part in SKIP_PARTS for part in path.parts):
@@ -32,7 +33,7 @@ class NamespaceTransitionTest(unittest.TestCase):
                 content = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
-            if PERSONAL_OWNER in content:
+            if personal_registry_prefix in content:
                 matches.append(str(path.relative_to(ROOT)))
         self.assertEqual(matches, [])
 

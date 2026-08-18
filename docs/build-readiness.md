@@ -249,17 +249,14 @@ manifest bytes and digest recorded in the candidate lock.
    stream/scope. Confirm the full OpenStack source-set/config hashes and frozen
    base index/AMD64/ARM64 digests.
 2. Verify protected release branches, required validation,
-   `ghcr-publish` reviewers/branch restrictions, scope kill switches, and
-   read-default Actions permissions. `main` must remain unable to publish.
-3. Publish only
-   `2025-1 / 2025.1-rocky-10.2-20.5.0 / keystone` first, with only
-   `ALLOW_GHCR_PUBLISH=true`.
+   `ghcr-publish` reviewers/branch restrictions, and read-default Actions
+   permissions. `main` must remain unable to publish.
+3. Publish only `2025-1 / 2025.1-rocky-10.2-20.5.0 / keystone` first.
 4. Require all eight native units, 8 GiB preflight, 2 GiB observed minimum,
    exact source/base provenance, both aggregate evidence files, the revision
    two-platform manifest, summary, and semantic digest verification.
 5. Confirm new GHCR packages are linked to this repository, explicitly Public,
-   and anonymously inspectable/pullable with an empty Docker config. Restore
-   the kill switch to false.
+   and anonymously inspectable/pullable with an empty Docker config.
 6. Expand independently to core and deployment. After the deployment summary
    and lock pass, hand the generic lock to `openstack-infra-ops`.
 

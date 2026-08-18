@@ -13,6 +13,7 @@ from scripts.profile_resolver import find_stream
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 PUBLISH_DOC = ROOT / "docs" / "publish.md"
+CODEOWNERS = ROOT / ".github" / "CODEOWNERS"
 READINESS_DOC = ROOT / "docs" / "build-readiness.md"
 MATRIX_PATH = ROOT / "config" / "build-matrix.json"
 PLAN_PUBLISH = ROOT / "scripts" / "plan-publish.py"
@@ -250,13 +251,25 @@ class RepositoryBoundaryTest(unittest.TestCase):
             "core -> core / all",
             "deployment -> deployment / all",
             "There is no typed approval phrase",
-            "ALLOW_GHCR_PUBLISH",
-            "ALLOW_GHCR_FULL_CORE_PUBLISH",
-            "ALLOW_GHCR_DEPLOYMENT_PUBLISH",
             "ghcr-publish",
             "required reviewers",
+            "self-review allowed",
             "github.ref_protected",
             "packages: write",
+        )
+        self.assertNotIn("ALLOW_GHCR_", document)
+
+    def test_sensitive_repository_paths_have_the_two_maintainers_as_owners(self) -> None:
+        self.assertEqual(
+            read_text(CODEOWNERS),
+            "\n".join(
+                (
+                    "/.github/workflows/ @supergate-hsyun @supergate-jhbyun",
+                    "/scripts/           @supergate-hsyun @supergate-jhbyun",
+                    "/config/            @supergate-hsyun @supergate-jhbyun",
+                    "",
+                )
+            ),
         )
 
     def test_publish_doc_records_artifacts_order_and_handoff(self) -> None:
