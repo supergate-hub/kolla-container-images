@@ -426,7 +426,7 @@ class PublishWorkflowTest(unittest.TestCase):
                 )
                 self.assertNotIn("inputs.dry_run", self.publish_job(name))
 
-    def test_authorization_is_bound_before_all_package_writes(self) -> None:
+    def test_environment_gate_is_bound_before_all_package_writes(self) -> None:
         authorize = self.publish_job("authorize-publish")
         self.assertIn("needs: publish-plan", authorize)
         self.assertIn("environment: ghcr-publish", authorize)
@@ -437,6 +437,7 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn(candidate_binding, authorize)
         self.assertIn('--expected-scope "$PUBLISH_SCOPE"', authorize)
         self.assertNotIn("APPROVAL:", authorize)
+        self.assertNotIn("ALLOW_GHCR_", self.publish + self.build_unit)
 
         for name in (
             "build-parent-tier-0",

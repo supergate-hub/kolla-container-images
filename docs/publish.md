@@ -70,17 +70,21 @@ Only a protected release branch may publish:
 
 `main`, tags, feature branches, the wrong release branch, mixed-release local
 configuration, and `publish_enabled: false` all fail closed. Every writer
-revalidates the frozen plan, candidate ID, protected ref, and kill switch after
-the `ghcr-publish` environment gate.
+revalidates the frozen plan, candidate ID, and protected ref after the
+`ghcr-publish` environment gate.
 
 Publication is selected explicitly with `operation=publish`; changing `scope`
 alone never turns a plan into a writer.
 
-| Scope input | Frozen scope | Required repository variable |
-| --- | --- | --- |
-| `keystone` | `core/keystone` | `ALLOW_GHCR_PUBLISH=true` |
-| `core` | `core/all` | `ALLOW_GHCR_FULL_CORE_PUBLISH=true` |
-| `deployment` | `deployment/all` | `ALLOW_GHCR_DEPLOYMENT_PUBLISH=true` |
+| Scope input | Frozen scope |
+| --- | --- |
+| `keystone` | `core/keystone` |
+| `core` | `core/all` |
+| `deployment` | `deployment/all` |
+
+The `ghcr-publish` environment is the sole publish gate. Only
+`supergate-hsyun` and `supergate-jhbyun` may run and approve a publish. They
+may approve their own runs; repository variables do not authorize publication.
 
 Plan and publish concurrency are separate. Pending plan runs for the same
 ref/stream may cancel older plans. Publish scopes for one release
@@ -143,7 +147,7 @@ The staged jobs are:
 
 1. `publish-plan` renders and uploads the frozen plan.
 2. `authorize-publish` crosses the protected `ghcr-publish` environment and
-   validates the scope kill switch.
+   validates the frozen publish context.
 3. `build-parent-tier-0`, `build-parent-tier-1`, and
    `build-parent-tier-2` build one frozen target per native job.
 4. `build-leaf-stage-0` and the optional `build-leaf-stage-1` build selected
@@ -260,15 +264,16 @@ tags or digest-bearing values.
 1. Keep the repository **Public** and allow standard `ubuntu-24.04` and
    `ubuntu-24.04-arm` runners. Do not substitute billed larger runners. Verify
    Organization package creation allows Public GHCR packages.
-2. Create protected `2025-1`, `2025-2`, and `2026-1` branches with PR review,
-   required validation, conversation resolution, no bypass, and force-push /
-   delete disabled. `main`은 publish ref로 사용할 수 없다. The workflow also
-   requires `github.ref_protected == true`.
-3. Configure the `ghcr-publish` environment with required reviewers and allow
-   only those three branches; exclude `main` and tags.
-4. Create `ALLOW_GHCR_PUBLISH`, `ALLOW_GHCR_FULL_CORE_PUBLISH`, and
-   `ALLOW_GHCR_DEPLOYMENT_PUBLISH`. Keep all false outside an approved window
-   and enable only the required scope.
+2. Create protected `2025-1`, `2025-2`, and `2026-1` branches with a pull
+   request, required validation, conversation resolution, no bypass, and
+   force-push / delete disabled. Code-owner approval and a numeric PR approval
+   are not required, so either maintainer can merge a validated PR. `main`은
+   publish ref로 사용할 수 없다. The workflow also requires
+   `github.ref_protected == true`.
+3. Restrict repository Write/Admin access to `supergate-hsyun` and
+   `supergate-jhbyun`. Configure `ghcr-publish` with those two required
+   reviewers, self-review allowed, administrator bypass disabled, and only the
+   three release branches allowed; exclude `main` and tags.
 5. Keep repository-wide Actions permissions read-only. Grant job-scoped
    `packages: write` only to native build writers and finalization. External CI
    dispatch uses `Actions: write` with no package-write permission.
@@ -276,11 +281,10 @@ tags or digest-bearing values.
    commits from the reviewed merge, and run `operation=plan` for every
    branch-local stream and scope. Inspect source/base digests and the exact
    eight-unit Keystone closure before publishing.
-7. First publish only
-   `2025-1 / 2025.1-rocky-10.2-20.5.0 / keystone` with
-   `ALLOW_GHCR_PUBLISH=true`. Approve it through `ghcr-publish`, then require
-   the 8 GiB preflight, 2 GiB observed minimum, native evidence, exact
-   two-platform revision manifest, summary, and semantic-alias digest check.
+7. First publish only `2025-1 / 2025.1-rocky-10.2-20.5.0 / keystone`.
+   Approve it through `ghcr-publish`, then require the 8 GiB preflight, 2 GiB
+   observed minimum, native evidence, exact two-platform revision manifest,
+   summary, and semantic-alias digest check.
 
    ```bash
    gh workflow run publish.yml \
@@ -293,13 +297,12 @@ tags or digest-bearing values.
 8. After the first push, verify every GHCR package is linked to this repository,
    explicitly Public, and anonymously inspectable/pullable with an empty
    Docker config. Apply retention, vulnerability scanning, and cleanup policy,
-   restore the kill switch to false, then expand separately to core and
-   deployment.
+   then expand separately to core and deployment.
 
 The checklist does not prove that current GitHub settings exist. Re-query
-branch protection, environment reviewers, kill switches, package visibility
-and linkage immediately before each publish, and preserve the observed result
-with the run.
+branch protection, environment reviewers, package visibility and linkage
+immediately before each publish, and preserve the observed result with the
+run.
 
 ## Handoff and secret boundary
 
