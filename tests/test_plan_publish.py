@@ -27,6 +27,7 @@ CATALOG_STREAM_EXPECTATIONS = {
     "2025.1-rocky-10.2-20.4.0": ("2025.1", "rocky", "10.2", "20.4.0", 63, 16),
     "2025.1-ubuntu-24.04-20.4.0": ("2025.1", "ubuntu", "24.04", "20.4.0", 64, 16),
     "2025.1-rocky-10.2-20.5.0": ("2025.1", "rocky", "10.2", "20.5.0", 63, 16),
+    "2025.1-ubuntu-24.04-20.5.0": ("2025.1", "ubuntu", "24.04", "20.5.0", 64, 16),
     "2025.2-rocky-10.2-21.1.0": ("2025.2", "rocky", "10.2", "21.1.0", 63, 15),
     "2025.2-ubuntu-24.04-21.1.0": ("2025.2", "ubuntu", "24.04", "21.1.0", 64, 15),
     "2026.1-rocky-10.2-22.0.0": ("2026.1", "rocky", "10.2", "22.0.0", 65, 15),
@@ -303,6 +304,19 @@ class PlanPublishTest(unittest.TestCase):
                     arch_tag = expected_revision_tag(stream_id, unit["arch"])
                     self.assertEqual(option_value(unit["command"], "--tag"), arch_tag)
                     self.assertTrue(unit["arch_ref"].endswith(f":{arch_tag}"))
+
+    def test_default_alias_is_included_for_the_selected_default_stream(self) -> None:
+        plan = run_plan(stream="2025.1-rocky-10.2-20.5.0", image="keystone")
+        image = plan["images"][0]
+
+        self.assertEqual(image["alias_tags"], ["2025.1-rocky-10.2"])
+        self.assertEqual(
+            image["alias_refs"],
+            [
+                "ghcr.io/supergate-hub/kolla-container-images/keystone:"
+                "2025.1-rocky-10.2"
+            ],
+        )
 
     def test_parent_sets_match_checked_in_kolla_dependency_fixture(self) -> None:
         fixture = json.loads(PARENT_FIXTURE.read_text(encoding="utf-8"))

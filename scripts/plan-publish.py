@@ -19,6 +19,7 @@ from profile_resolver import (
     render_revision_tag,
     render_tag,
     resolve_profile,
+    tag_aliases_for_stream,
     validate_candidate_id,
 )
 
@@ -362,6 +363,7 @@ def build_plan(
     candidate_id = validate_candidate_id(candidate_id)
     semantic_tag = render_tag(matrix, stream)
     revision_manifest_tag = render_revision_tag(matrix, stream, candidate_id)
+    alias_tags = tag_aliases_for_stream(matrix, stream)
     registry = matrix["registry"]
     owner = matrix["owner"]
     repository = matrix["repository"]
@@ -404,6 +406,10 @@ def build_plan(
         semantic_ref = image_ref(
             registry, owner, repository, image, semantic_tag
         )
+        alias_refs = [
+            image_ref(registry, owner, repository, image, alias_tag)
+            for alias_tag in alias_tags
+        ]
         revision_ref = image_ref(
             registry, owner, repository, image, revision_manifest_tag
         )
@@ -416,6 +422,8 @@ def build_plan(
                 "kolla_ansible_variables": image_entry["kolla_ansible_variables"],
                 "semantic_tag": semantic_tag,
                 "semantic_ref": semantic_ref,
+                "alias_tags": alias_tags,
+                "alias_refs": alias_refs,
                 "revision_tag": revision_manifest_tag,
                 "revision_ref": revision_ref,
                 "manifest_metadata_file": manifest_metadata_file(

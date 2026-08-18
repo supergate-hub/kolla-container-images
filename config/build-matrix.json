@@ -60,9 +60,14 @@
     {"id": "2025.1-rocky-9.8-20.4.0", "release": "2025.1", "toolchain": "20.4.0", "base": "rocky-9.8", "publish_enabled": true},
     {"id": "2025.1-rocky-10.2-20.4.0", "release": "2025.1", "toolchain": "20.4.0", "base": "rocky-10.2", "publish_enabled": true},
     {"id": "2025.1-ubuntu-24.04-20.4.0", "release": "2025.1", "toolchain": "20.4.0", "base": "ubuntu-24.04", "publish_enabled": true},
-    {"id": "2025.1-rocky-10.2-20.5.0", "release": "2025.1", "toolchain": "20.5.0", "base": "rocky-10.2", "publish_enabled": true}
+    {"id": "2025.1-rocky-10.2-20.5.0", "release": "2025.1", "toolchain": "20.5.0", "base": "rocky-10.2", "publish_enabled": true},
+    {"id": "2025.1-ubuntu-24.04-20.5.0", "release": "2025.1", "toolchain": "20.5.0", "base": "ubuntu-24.04", "publish_enabled": true}
   ],
   "architectures": ["amd64", "arm64"],
+  "tag_aliases": {
+    "2025.1-rocky-10.2": "2025.1-rocky-10.2-20.5.0",
+    "2025.1-ubuntu-24.04": "2025.1-ubuntu-24.04-20.5.0"
+  },
   "tag_policy": {
     "deploy_tag_template": "{release}-{distro}-{os_version}-{kolla_ansible_version}"
   }

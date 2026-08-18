@@ -88,6 +88,45 @@ def stream_ids(matrix: dict[str, Any]) -> list[str]:
     return [stream["id"] for stream in matrix["streams"]]
 
 
+def _tag_aliases(matrix: dict[str, Any]) -> dict[str, str]:
+    aliases = matrix.get("tag_aliases", {})
+    if not isinstance(aliases, dict):
+        raise ValueError("matrix tag_aliases must be an object")
+    if any(
+        not isinstance(alias, str) or not alias
+        or not isinstance(target, str) or not target
+        for alias, target in aliases.items()
+    ):
+        raise ValueError("matrix tag_aliases must map non-empty strings to non-empty strings")
+    return aliases
+
+
+def tag_aliases_for_stream(
+    matrix: dict[str, Any],
+    stream: dict[str, Any],
+) -> list[str]:
+    """Return configured mutable aliases that point at one exact stream."""
+    stream_id = stream.get("id")
+    if not isinstance(stream_id, str) or not stream_id:
+        raise ValueError("stream id must be a non-empty string")
+    return sorted(
+        alias
+        for alias, target in _tag_aliases(matrix).items()
+        if target == stream_id
+    )
+
+
+def resolve_tag_alias(matrix: dict[str, Any], alias: str) -> dict[str, Any]:
+    """Resolve one user-facing alias to its exact configured stream."""
+    if not isinstance(alias, str) or not alias:
+        raise ValueError("tag alias must be a non-empty string")
+    target = _tag_aliases(matrix).get(alias)
+    if target is None:
+        accepted = ", ".join(sorted(_tag_aliases(matrix))) or "none"
+        raise ValueError(f"unknown tag alias {alias!r}; accepted aliases: {accepted}")
+    return find_stream(matrix, target)
+
+
 def find_toolchain(matrix: dict[str, Any], version: str) -> dict[str, Any]:
     toolchains = matrix.get("toolchains")
     if not isinstance(toolchains, dict):

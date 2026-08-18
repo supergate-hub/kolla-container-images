@@ -70,7 +70,7 @@ Schema v4 separates four concerns:
 
 ## Supported streams
 
-The aggregate `main` catalog contains exactly these eight active streams:
+The aggregate `main` catalog contains exactly these nine active streams:
 
 | Stream ID / semantic tag | Release branch | Toolchain | Configured base | Deployment leaves |
 | --- | --- | --- | --- | ---: |
@@ -78,6 +78,7 @@ The aggregate `main` catalog contains exactly these eight active streams:
 | `2025.1-rocky-10.2-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Rocky `10.2` | 63 |
 | `2025.1-ubuntu-24.04-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Ubuntu `24.04` | 64 |
 | `2025.1-rocky-10.2-20.5.0` | `2025-1` | Kolla / Kolla-Ansible `20.5.0` | Rocky `10.2` | 63 |
+| `2025.1-ubuntu-24.04-20.5.0` | `2025-1` | Kolla / Kolla-Ansible `20.5.0` | Ubuntu `24.04` | 64 |
 | `2025.2-rocky-10.2-21.1.0` | `2025-2` | Kolla / Kolla-Ansible `21.1.0` | Rocky `10.2` | 63 |
 | `2025.2-ubuntu-24.04-21.1.0` | `2025-2` | Kolla / Kolla-Ansible `21.1.0` | Ubuntu `24.04` | 64 |
 | `2026.1-rocky-10.2-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
@@ -170,6 +171,12 @@ The semantic tag contract is
 `-candidate-...` image tags are removed. Candidate ID remains an internal
 identity joining the plan, evidence, summary, and lock, while `-rev-...` names
 the immutable published revision.
+
+Default OS aliases are persistent `tag_aliases` entries in
+`config/build-matrix.json` (for example, `2025.1-rocky-10.2` points to the
+selected 20.5.0 exact stream). The planner includes the configured aliases
+automatically; each publish updates them after the immutable revision manifest
+has been verified, so operators do not re-enter alias settings per build.
 
 The workflow builds and pushes native revision tags, creates and verifies the
 revision multi-architecture manifest, validates and uploads the publish

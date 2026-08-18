@@ -53,6 +53,11 @@ digest, resolved base index/child digests, and semantic/revision refs. It does
 not request the publish environment, log in to GHCR, build, push, create a
 publish summary, generate a lock, or mutate a registry.
 
+Default OS aliases are configured once in the matrix `tag_aliases` map. The
+planner carries the matching alias refs into every plan, and the finalizer
+updates and verifies them from the immutable revision digest automatically;
+they are not workflow-dispatch inputs.
+
 ## Publish authorization
 
 Only a protected release branch may publish:

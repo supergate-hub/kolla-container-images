@@ -164,6 +164,45 @@
       }
     },
     {
+      "id": "2025.1-ubuntu-24.04-20.5.0",
+      "kolla_version": "20.5.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "mariadb-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
       "id": "2025.2-rocky-10.2-21.1.0",
       "kolla_version": "21.1.0",
       "scopes": {
