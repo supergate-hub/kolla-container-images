@@ -124,6 +124,8 @@ class FakeRunner:
         bad_summary: bool = False,
         docker_hub_familiar_repo_digest: bool = False,
         repo_digest_override: str | None = None,
+        remote_inspect_failures: int = 0,
+        remote_inspect_error: str = "not found",
         target_present: bool = False,
         unbuildable: tuple[str, ...] = (),
     ) -> None:
@@ -131,9 +133,12 @@ class FakeRunner:
         self.bad_summary = bad_summary
         self.docker_hub_familiar_repo_digest = docker_hub_familiar_repo_digest
         self.repo_digest_override = repo_digest_override
+        self.remote_inspect_failures = remote_inspect_failures
+        self.remote_inspect_error = remote_inspect_error
         self.target_present = target_present
         self.unbuildable = unbuildable
         self.commands: list[list[str]] = []
+        self.remote_inspect_attempts = 0
         self.target_digest = "sha256:" + "f" * 64
 
     def run(self, argv, *, capture_output=False):
@@ -158,6 +163,13 @@ class FakeRunner:
             if self.target_present and command[5] == self.unit["arch_ref"]:
                 stdout = "sha256:" + "e" * 64 + "\n"
         elif command[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            self.remote_inspect_attempts += 1
+            if self.remote_inspect_attempts <= self.remote_inspect_failures:
+                raise subprocess.CalledProcessError(
+                    1,
+                    command,
+                    stderr=f"ERROR: {command[4]}: {self.remote_inspect_error}",
+                )
             stdout = json.dumps(
                 {
                     "digest": self.target_digest,
@@ -224,6 +236,62 @@ class BuildUnitTest(unittest.TestCase):
             temp_path,
             self.plan,
             "amd64-leaf-keystone",
+        )
+
+    def test_remote_descriptor_retries_a_transient_missing_manifest(self) -> None:
+        unit = planned_target(self.plan, "amd64", "keystone")
+        runner = FakeRunner(unit, remote_inspect_failures=1)
+        waits: list[float] = []
+
+        digest, immutable = BUILD_UNIT.remote_descriptor(
+            runner,
+            unit["arch_ref"],
+            unit["platform"],
+            sleep=waits.append,
+        )
+
+        self.assertEqual(digest, runner.target_digest)
+        self.assertEqual(immutable, f"{unit['arch_ref'].rpartition(':')[0]}@{digest}")
+        self.assertEqual(runner.remote_inspect_attempts, 2)
+        self.assertEqual(waits, [1])
+
+    def test_remote_descriptor_rejects_a_permanent_registry_error_without_waiting(self) -> None:
+        unit = planned_target(self.plan, "amd64", "keystone")
+        runner = FakeRunner(
+            unit,
+            remote_inspect_failures=1,
+            remote_inspect_error="denied: requested access to the resource is denied",
+        )
+        waits: list[float] = []
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            BUILD_UNIT.remote_descriptor(
+                runner,
+                unit["arch_ref"],
+                unit["platform"],
+                sleep=waits.append,
+            )
+
+        self.assertEqual(runner.remote_inspect_attempts, 1)
+        self.assertEqual(waits, [])
+
+    def test_remote_descriptor_gives_up_after_bounded_transient_retries(self) -> None:
+        unit = planned_target(self.plan, "amd64", "keystone")
+        runner = FakeRunner(unit, remote_inspect_failures=6)
+        waits: list[float] = []
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            BUILD_UNIT.remote_descriptor(
+                runner,
+                unit["arch_ref"],
+                unit["platform"],
+                sleep=waits.append,
+            )
+
+        self.assertEqual(runner.remote_inspect_attempts, 6)
+        self.assertEqual(
+            waits,
+            list(BUILD_UNIT.REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS),
         )
 
     def test_leaf_uses_immutable_ancestors_and_records_native_smoke(self) -> None:
