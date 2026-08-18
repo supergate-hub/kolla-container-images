@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from scripts.frozen_sources import (
@@ -28,6 +29,7 @@ from scripts.frozen_sources import (
     validate_plan_source_pins,
     verify_build_engine_install,
     verify_exact_checkout,
+    verify_kolla_build_command,
     verify_installed_kolla,
     verify_materialized_configs,
     verify_project_mirror,
@@ -884,6 +886,62 @@ RUN curl -o /usr/bin/clustercheck ${mariadb_clustercheck_url}
             (checkout / "upper-constraints.txt").write_bytes(b"mutated\n")
             with self.assertRaisesRegex(FrozenSourceError, "digest"):
                 _verify_requirements_constraints(checkout, contract)
+
+
+class InstalledKollaCommandContractTest(unittest.TestCase):
+    def test_frozen_argv_is_parsed_by_installed_kolla_with_pull_disabled(self) -> None:
+        plan = {
+            "build": {
+                "all_units": [
+                    {
+                        "id": "amd64-parent-base",
+                        "target": "base",
+                        "ancestor_chain": [],
+                        "command": ["kolla-build", "--nopull", "^base$"],
+                    }
+                ]
+            }
+        }
+        parsed_argv: list[str] = []
+
+        def parse_command(argv: list[str]) -> SimpleNamespace:
+            parsed_argv.extend(argv)
+            return SimpleNamespace(pull=False, regex=["^base$"])
+
+        verify_kolla_build_command(
+            plan,
+            "amd64-parent-base",
+            parse_command=parse_command,
+        )
+
+        self.assertEqual(parsed_argv, ["--nopull", "^base$"])
+
+    def test_kolla_parser_rejection_is_fail_closed(self) -> None:
+        plan = {
+            "build": {
+                "all_units": [
+                    {
+                        "id": "amd64-parent-base",
+                        "target": "base",
+                        "ancestor_chain": [],
+                        "command": ["kolla-build", "--no-pull", "^base$"],
+                    }
+                ]
+            }
+        }
+
+        def reject_command(_: list[str]) -> SimpleNamespace:
+            raise SystemExit(2)
+
+        with self.assertRaisesRegex(
+            FrozenSourceError,
+            "installed Kolla parser rejected frozen command",
+        ):
+            verify_kolla_build_command(
+                plan,
+                "amd64-parent-base",
+                parse_command=reject_command,
+            )
 
 
 class InstalledKollaProvenanceTest(unittest.TestCase):

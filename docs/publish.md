@@ -53,6 +53,11 @@ digest, resolved base index/child digests, and semantic/revision refs. It does
 not request the publish environment, log in to GHCR, build, push, create a
 publish summary, generate a lock, or mutate a registry.
 
+Default OS aliases are configured once in the matrix `tag_aliases` map. The
+planner carries the matching alias refs into every plan, and the finalizer
+updates and verifies them from the immutable revision digest automatically;
+they are not workflow-dispatch inputs.
+
 ## Publish authorization
 
 Only a protected release branch may publish:
@@ -119,7 +124,8 @@ commit-addressed URLs with in-build SHA-256 verification.
 
 The base tag is resolved only by the plan job. A native unit pulls
 `requested-repository@child-digest`, verifies its platform and digest, retags
-it to the configured base tag, and runs Kolla with `--no-pull`. Thus an
+it to the configured base tag, and runs Kolla with Kolla's upstream `--nopull`
+option. Thus an
 upstream tag move during the workflow cannot change that run's base.
 DNF/APT repository snapshots are not implemented, so package-level complete
 rebuild reproducibility remains future work.
@@ -152,7 +158,9 @@ The staged jobs are:
    manifest bytes are reverified.
 
 All matrices use `max-parallel: 4`. Each build command is anchored to one
-target with `--threads 1`, `--push-threads 1`, and `--no-pull`.
+target with `--threads 1`, `--push-threads 1`, and `--nopull`. Before registry
+login, the installed exact Kolla parser validates the complete frozen argv and
+proves that `pull=False`.
 Each dependent unit pulls ancestors through immutable digests recorded in raw
 unit evidence, verifies and retags them locally, proves that its own revision
 tag is absent, and then uses `--skip-existing` to skip only those proven

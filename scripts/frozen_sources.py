@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Callable
 from configparser import ConfigParser, Error as ConfigParserError
 from io import BytesIO
 from pathlib import Path
@@ -1490,6 +1491,54 @@ def verify_prepared_sources(
     return paths
 
 
+def verify_kolla_build_command(
+    plan: dict[str, Any],
+    unit_id: str,
+    *,
+    parse_command: Callable[[list[str]], Any] | None = None,
+) -> None:
+    """Prove the frozen argv is accepted with upstream base pulls disabled."""
+    unit = _unit_from_plan(plan, unit_id)
+    command = unit.get("command")
+    if (
+        not isinstance(command, list)
+        or len(command) < 2
+        or command[0] != "kolla-build"
+        or any(not isinstance(part, str) or not part for part in command)
+    ):
+        raise FrozenSourceError(f"publish plan Kolla command is invalid: {unit_id}")
+    if parse_command is None:
+        parse_command = _parse_installed_kolla_command
+    try:
+        parsed = parse_command(command[1:])
+    except SystemExit as error:
+        raise FrozenSourceError(
+            f"installed Kolla parser rejected frozen command: {unit_id}"
+        ) from error
+    if getattr(parsed, "pull", None) is not False:
+        raise FrozenSourceError("frozen Kolla command must disable upstream base pulls")
+    if getattr(parsed, "regex", None) != [f"^{unit['target']}$"]:
+        raise FrozenSourceError("frozen Kolla command target was not parsed exactly")
+
+
+def _parse_installed_kolla_command(argv: list[str]) -> Any:
+    try:
+        from kolla.common import config as kolla_config
+        from oslo_config import cfg
+    except ImportError as error:
+        raise FrozenSourceError(
+            "installed Kolla parser dependencies are unavailable"
+        ) from error
+    conf = cfg.ConfigOpts()
+    kolla_config.parse(
+        conf,
+        argv,
+        prog="kolla-build",
+        default_config_files=[],
+    )
+    return conf
+
+
 def verify_installed_kolla(source_path: Path, expected_version: str) -> None:
     try:
         distribution = importlib.metadata.distribution("kolla")
@@ -1631,6 +1680,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 build_engine_lock,
                 kolla_version=source_contract["kolla"]["version"],
             )
+            verify_kolla_build_command(plan, args.unit_id)
             verify_unit_source_archives(
                 args.checkout_root,
                 source_contract,
@@ -1640,7 +1690,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 python_executable=Path(sys.executable),
             )
             print(
-                "Verified installed Kolla source provenance: "
+                "Verified installed Kolla source and frozen CLI contract: "
                 f"{source_contract['kolla']['commit']}; build engine {lock_digest}"
             )
     except FrozenSourceError as error:

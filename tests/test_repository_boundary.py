@@ -146,7 +146,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
         matrix = json.loads(read_text(MATRIX_PATH))
         readme = read_text(README)
         self.assertEqual(matrix["schema_version"], 4)
-        expected_counts = {"2025.1": 4, "2025.2": 2, "2026.1": 2}
+        expected_counts = {"2025.1": 5, "2025.2": 2, "2026.1": 2}
         self.assertEqual(
             len(matrix["streams"]),
             sum(expected_counts[release] for release in matrix["releases"]),
@@ -190,7 +190,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
                     "index digest",
                     "linux/amd64",
                     "linux/arm64",
-                    "--no-pull",
+                    "--nopull",
                     "DNF/APT repository snapshots",
                 )
         matrix = json.loads(read_text(MATRIX_PATH))

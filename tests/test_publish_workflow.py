@@ -715,6 +715,11 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('"$KOLLA_SOURCE_DIR"', self.build_unit)
         self.assertNotIn('"kolla==$KOLLA_VERSION"', self.build_unit)
         self.assertIn(".venv/bin/kolla-build --version", self.build_unit)
+        self.assertIn('export PATH="$PWD/.venv/bin:$PATH"', self.build_unit)
+        self.assertIn(
+            'test "$(command -v kolla-build)" = "$PWD/.venv/bin/kolla-build"',
+            self.build_unit,
+        )
 
     def test_build_unit_and_collectors_exchange_only_evidence(self) -> None:
         for token in (
@@ -854,6 +859,11 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertRegex(
             alias_step,
             r'"imagetools",\s+"create",\s+"--tag",\s+semantic_ref,\s+immutable_ref',
+        )
+        self.assertIn('for alias_ref in alias_refs', alias_step)
+        self.assertRegex(
+            alias_step,
+            r'"imagetools",\s+"create",\s+"--tag",\s+alias_ref,\s+immutable_ref',
         )
         self.assertIn('"imagetools", "inspect", "--raw", semantic_ref', alias_step)
         self.assertIn("if semantic_raw.stdout != revision_raw.stdout:", alias_step)
@@ -1117,6 +1127,23 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn(
             'python3 scripts/validate-config.py "${validation_args[@]}"',
             self.validate,
+        )
+        cli_contract = yaml_block(
+            self.validate,
+            "      - name: Validate every pinned Kolla CLI contract",
+        )
+        self.assertIn("scripts/validate-kolla-cli-contract.py", cli_contract)
+        self.assertIn("config/build-engine-requirements.lock", cli_contract)
+        self.assertIn("--require-hashes --only-binary=:all:", cli_contract)
+        self.assertIn("--base-manifest tests/fixtures/oci-base-index.json", cli_contract)
+        self.assertIn("--checkout-root \"$CONTRACT_CHECKOUT_ROOT\"", cli_contract)
+        self.assertLess(
+            self.validate.index("Validate repository configuration"),
+            self.validate.index("Validate every pinned Kolla CLI contract"),
+        )
+        self.assertLess(
+            self.validate.index("Validate every pinned Kolla CLI contract"),
+            self.validate.index("Validate every active stream dry-run plan"),
         )
         self.assertIn("Validate every active stream dry-run plan", self.validate)
         self.assertIn('for stream in matrix["streams"]', self.validate)

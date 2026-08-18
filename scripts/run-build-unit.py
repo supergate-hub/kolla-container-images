@@ -284,8 +284,8 @@ def validate_build_command_contract(
             raise BuildUnitError(
                 f"frozen command {option} does not match the publish plan"
             )
-    if command.count("--no-pull") != 1:
-        raise BuildUnitError("frozen command must contain --no-pull exactly once")
+    if command.count("--nopull") != 1:
+        raise BuildUnitError("frozen command must contain --nopull exactly once")
 
     template_content = plan["openstack_sources"]["template_override"]["content"]
     template_positions = [

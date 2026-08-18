@@ -1084,6 +1084,15 @@ jobs:
               resolved_digest = f"sha256:{hashlib.sha256(revision_raw.stdout).hexdigest()}"
               if resolved_digest != manifest_digest:
                   raise SystemExit(f"revision manifest digest moved: {image_name}")
+              alias_refs = planned.get("alias_refs")
+              alias_tags = planned.get("alias_tags")
+              if (
+                  not isinstance(alias_refs, list)
+                  or not isinstance(alias_tags, list)
+                  or len(alias_refs) != len(alias_tags)
+                  or len(alias_refs) != len(set(alias_refs))
+              ):
+                  raise SystemExit(f"frozen alias refs are invalid: {image_name}")
               subprocess.run(
                   [
                       "docker",
@@ -1103,6 +1112,28 @@ jobs:
               )
               if semantic_raw.stdout != revision_raw.stdout:
                   raise SystemExit(f"semantic alias digest verification failed: {image_name}")
+              for alias_ref in alias_refs:
+                  if alias_ref in {semantic_ref, revision_ref, immutable_ref}:
+                      raise SystemExit(f"alias ref collides with revision ref: {image_name}")
+                  subprocess.run(
+                      [
+                          "docker",
+                          "buildx",
+                          "imagetools",
+                          "create",
+                          "--tag",
+                          alias_ref,
+                          immutable_ref,
+                      ],
+                      check=True,
+                  )
+                  alias_raw = subprocess.run(
+                      ["docker", "buildx", "imagetools", "inspect", "--raw", alias_ref],
+                      check=True,
+                      capture_output=True,
+                  )
+                  if alias_raw.stdout != revision_raw.stdout:
+                      raise SystemExit(f"alias digest verification failed: {image_name}: {alias_ref}")
           PY
 
       - name: Remove ephemeral Docker client state
