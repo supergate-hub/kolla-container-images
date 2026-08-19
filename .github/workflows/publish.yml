@@ -576,6 +576,8 @@ jobs:
           import re
           import subprocess
 
+          from scripts.registry_manifest import inspect_raw_manifest
+
           DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
           MULTIARCH_MEDIA_TYPES = {
               "application/vnd.oci.image.index.v1+json",
@@ -825,19 +827,7 @@ jobs:
               if not separator or not repository or not revision_tag:
                   raise SystemExit(f"revision reference is invalid: {image_name}")
               immutable_manifest_ref = f"{repository}@{manifest_digest}"
-              raw_result = subprocess.run(
-                  [
-                      "docker",
-                      "buildx",
-                      "imagetools",
-                      "inspect",
-                      "--raw",
-                      immutable_manifest_ref,
-                  ],
-                  check=True,
-                  capture_output=True,
-              )
-              raw_bytes = raw_result.stdout
+              raw_bytes = inspect_raw_manifest(immutable_manifest_ref)
               raw_digest = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"
               if raw_digest != manifest_digest:
                   raise SystemExit(
@@ -848,12 +838,8 @@ jobs:
                       f"raw multi-architecture manifest size does not match metadata: {image_name}"
                   )
 
-              tagged_raw_result = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", revision_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              if tagged_raw_result.stdout != raw_bytes:
+              tagged_raw_bytes = inspect_raw_manifest(revision_ref)
+              if tagged_raw_bytes != raw_bytes:
                   raise SystemExit(
                       f"revision tag moved during manifest validation: {image_name}"
                   )
@@ -1032,6 +1018,8 @@ jobs:
           import re
           import subprocess
 
+          from scripts.registry_manifest import inspect_raw_manifest
+
           DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
           plan = json.loads(
               pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
@@ -1070,12 +1058,8 @@ jobs:
               if published["immutable_ref"] != immutable_ref:
                   raise SystemExit(f"summary immutable ref is invalid: {image_name}")
 
-              revision_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", immutable_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              resolved_digest = f"sha256:{hashlib.sha256(revision_raw.stdout).hexdigest()}"
+              revision_raw = inspect_raw_manifest(immutable_ref)
+              resolved_digest = f"sha256:{hashlib.sha256(revision_raw).hexdigest()}"
               if resolved_digest != manifest_digest:
                   raise SystemExit(f"revision manifest digest moved: {image_name}")
               alias_refs = planned.get("alias_refs")
@@ -1099,12 +1083,8 @@ jobs:
                   ],
                   check=True,
               )
-              semantic_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", semantic_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              if semantic_raw.stdout != revision_raw.stdout:
+              semantic_raw = inspect_raw_manifest(semantic_ref)
+              if semantic_raw != revision_raw:
                   raise SystemExit(f"semantic alias digest verification failed: {image_name}")
               for alias_ref in alias_refs:
                   if alias_ref in {semantic_ref, revision_ref, immutable_ref}:
@@ -1121,12 +1101,8 @@ jobs:
                       ],
                       check=True,
                   )
-                  alias_raw = subprocess.run(
-                      ["docker", "buildx", "imagetools", "inspect", "--raw", alias_ref],
-                      check=True,
-                      capture_output=True,
-                  )
-                  if alias_raw.stdout != revision_raw.stdout:
+                  alias_raw = inspect_raw_manifest(alias_ref)
+                  if alias_raw != revision_raw:
                       raise SystemExit(f"alias digest verification failed: {image_name}: {alias_ref}")
           PY
 
