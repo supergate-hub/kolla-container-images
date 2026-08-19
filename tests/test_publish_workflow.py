@@ -803,12 +803,27 @@ class PublishWorkflowTest(unittest.TestCase):
 
     def test_finalize_uses_recorded_children_and_verifies_exact_multiarch_manifest(self) -> None:
         job = self.publish_job("finalize-publish")
+        manifest_step = python_heredoc(
+            job,
+            "      - name: Create and verify final multi-architecture manifests",
+        )
         self.assertIn('child_ref = f"{repository}@{record[\'digest\']}"', job)
         self.assertRegex(
             job,
             r'"imagetools",\s+"create",\s+"--tag",\s+revision_ref',
         )
-        self.assertIn('"imagetools", "inspect", "--raw", revision_ref', job)
+        self.assertIn(
+            "from scripts.registry_manifest import inspect_raw_manifest",
+            manifest_step,
+        )
+        self.assertIn(
+            "raw_bytes = inspect_raw_manifest(immutable_manifest_ref)",
+            manifest_step,
+        )
+        self.assertIn(
+            "tagged_raw_bytes = inspect_raw_manifest(revision_ref)",
+            manifest_step,
+        )
         self.assertIn('len(index["manifests"]) != 2', job)
         self.assertIn('{"linux/amd64", "linux/arm64"}', job)
         self.assertIn("recorded_child_digests", job)
@@ -856,6 +871,14 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('image["semantic_tag"]', job)
         self.assertIn('architecture["revision_arch_ref"]', job)
         alias_step = yaml_block(job, "      - name: Update and verify semantic aliases")
+        alias_python = python_heredoc(
+            job,
+            "      - name: Update and verify semantic aliases",
+        )
+        self.assertIn(
+            "from scripts.registry_manifest import inspect_raw_manifest",
+            alias_python,
+        )
         self.assertIn('immutable_ref = f"{repository}@{manifest_digest}"', alias_step)
         self.assertRegex(
             alias_step,
@@ -866,8 +889,10 @@ class PublishWorkflowTest(unittest.TestCase):
             alias_step,
             r'"imagetools",\s+"create",\s+"--tag",\s+alias_ref,\s+immutable_ref',
         )
-        self.assertIn('"imagetools", "inspect", "--raw", semantic_ref', alias_step)
-        self.assertIn("if semantic_raw.stdout != revision_raw.stdout:", alias_step)
+        self.assertIn("revision_raw = inspect_raw_manifest(immutable_ref)", alias_python)
+        self.assertIn("semantic_raw = inspect_raw_manifest(semantic_ref)", alias_python)
+        self.assertIn("alias_raw = inspect_raw_manifest(alias_ref)", alias_python)
+        self.assertIn("if semantic_raw != revision_raw:", alias_step)
 
     def test_finalize_binds_summary_digest_to_exact_immutable_manifest_bytes(self) -> None:
         job = self.publish_job("finalize-publish")
@@ -881,9 +906,9 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('manifest_descriptor.get("mediaType")', job)
         self.assertIn('manifest_descriptor.get("size")', job)
         self.assertIn('immutable_manifest_ref = f"{repository}@{manifest_digest}"', job)
-        self.assertRegex(
+        self.assertIn(
+            "raw_bytes = inspect_raw_manifest(immutable_manifest_ref)",
             job,
-            r'"imagetools",\s+"inspect",\s+"--raw",\s+immutable_manifest_ref',
         )
         self.assertIn(
             'raw_digest = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"',
@@ -891,17 +916,14 @@ class PublishWorkflowTest(unittest.TestCase):
         )
         self.assertIn("if raw_digest != manifest_digest:", job)
         self.assertIn("if manifest_size != len(raw_bytes):", job)
-        self.assertIn(
-            '["docker", "buildx", "imagetools", "inspect", "--raw", revision_ref]',
-            job,
-        )
-        self.assertIn("if tagged_raw_result.stdout != raw_bytes:", job)
+        self.assertIn("tagged_raw_bytes = inspect_raw_manifest(revision_ref)", job)
+        self.assertIn("if tagged_raw_bytes != raw_bytes:", job)
 
         metadata = job.index(
             'manifest_descriptor = manifest_metadata.get("containerimage.descriptor")'
         )
         immutable = job.index('immutable_manifest_ref = f"{repository}@{manifest_digest}"')
-        tag_match = job.index("if tagged_raw_result.stdout != raw_bytes:")
+        tag_match = job.index("if tagged_raw_bytes != raw_bytes:")
         self.assertLess(metadata, immutable)
         self.assertLess(immutable, tag_match)
 
