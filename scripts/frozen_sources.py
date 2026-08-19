@@ -756,6 +756,16 @@ def _pbr_project_metadata(worktree: Path) -> tuple[str, str | None] | None:
     return name, pre_version
 
 
+def _pbr_egg_info_directory(package_name: str) -> str:
+    """Return setuptools' deterministic egg-info directory for a PBR name."""
+    normalized = re.sub(r"[^A-Za-z0-9.]+", "-", package_name).replace("-", "_")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._]*", normalized):
+        raise FrozenSourceError(
+            f"project package name cannot form a safe egg-info directory: {package_name!r}"
+        )
+    return f"{normalized}.egg-info"
+
+
 def _pbr_project_version(
     worktree: Path,
     package_name: str,
@@ -891,6 +901,7 @@ def prepare_project_archive(
             )
         package_version = None
         package_name: str | None = None
+        egg_info_directory = ""
         if package_metadata is not None:
             assert python_executable is not None
             package_name, pre_version = package_metadata
@@ -900,6 +911,7 @@ def prepare_project_archive(
                 pre_version,
                 python_executable=python_executable,
             )
+            egg_info_directory = _pbr_egg_info_directory(package_name)
         root_name = archive_root
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*-archive-[0-9a-f]{40}", root_name):
             raise FrozenSourceError(
@@ -931,20 +943,49 @@ def prepare_project_archive(
             }
             if package_name is not None and package_version is not None:
                 pkg_info_name = f"{root_name}/PKG-INFO"
+                egg_pkg_info_name = f"{root_name}/{egg_info_directory}/PKG-INFO"
+                egg_sources_name = f"{root_name}/{egg_info_directory}/SOURCES.txt"
                 if pkg_info_name in source_members:
                     raise FrozenSourceError(
                         "project export commit already contains root PKG-INFO"
+                    )
+                if (
+                    egg_pkg_info_name in source_members
+                    or egg_sources_name in source_members
+                ):
+                    raise FrozenSourceError(
+                        "project export commit already contains generated PBR metadata"
                     )
                 pkg_info = (
                     "Metadata-Version: 2.1\n"
                     f"Name: {package_name}\n"
                     f"Version: {package_version}\n"
                 ).encode("utf-8")
+                source_manifest = (
+                    "\n".join(
+                        [
+                            *tracked,
+                            f"{egg_info_directory}/PKG-INFO",
+                            f"{egg_info_directory}/SOURCES.txt",
+                        ]
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                directory_names.add(f"{root_name}/{egg_info_directory}")
             else:
                 pkg_info_name = ""
+                egg_pkg_info_name = ""
+                egg_sources_name = ""
                 pkg_info = b""
+                source_manifest = b""
             all_member_names = sorted(
-                directory_names | set(source_members) | ({pkg_info_name} if pkg_info_name else set())
+                directory_names
+                | set(source_members)
+                | (
+                    {pkg_info_name, egg_pkg_info_name, egg_sources_name}
+                    if pkg_info_name
+                    else set()
+                )
             )
             with tarfile.open(temporary_path, "w", format=tarfile.PAX_FORMAT) as archive:
                 for member_name in all_member_names:
@@ -957,6 +998,22 @@ def prepare_project_archive(
                             name=member_name,
                             mode=0o644,
                             data=pkg_info,
+                        )
+                        continue
+                    if member_name == egg_pkg_info_name:
+                        _archive_member(
+                            archive,
+                            name=member_name,
+                            mode=0o644,
+                            data=pkg_info,
+                        )
+                        continue
+                    if member_name == egg_sources_name:
+                        _archive_member(
+                            archive,
+                            name=member_name,
+                            mode=0o644,
+                            data=source_manifest,
                         )
                         continue
                     source = source_members[member_name]
