@@ -503,6 +503,30 @@ class FrozenProjectMirrorTest(unittest.TestCase):
                     "Name: demo-service\n"
                     "Version: 1.2.4.dev1\n",
                 )
+                egg_pkg_info = archive.extractfile(
+                    f"{archive_root}/demo_service.egg-info/PKG-INFO"
+                )
+                self.assertIsNotNone(egg_pkg_info)
+                self.assertEqual(
+                    egg_pkg_info.read().decode("utf-8"),
+                    "Metadata-Version: 2.1\n"
+                    "Name: demo-service\n"
+                    "Version: 1.2.4.dev1\n",
+                )
+                sources = archive.extractfile(
+                    f"{archive_root}/demo_service.egg-info/SOURCES.txt"
+                )
+                self.assertIsNotNone(sources)
+                self.assertEqual(
+                    sources.read().decode("utf-8").splitlines(),
+                    [
+                        "README.rst",
+                        "bin/service",
+                        "setup.cfg",
+                        "demo_service.egg-info/PKG-INFO",
+                        "demo_service.egg-info/SOURCES.txt",
+                    ],
+                )
                 modes = {member.name: member.mode for member in members}
                 self.assertEqual(modes[f"{archive_root}/bin/service"], 0o755)
                 self.assertTrue(all(member.mtime == 0 for member in members))
