@@ -84,7 +84,10 @@ The aggregate `main` catalog contains exactly these nine active streams:
 | `2026.1-rocky-10.2-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
 | `2026.1-ubuntu-24.04-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 66 |
 
-The `core` profile resolves to 21 leaves for every stream. The two 2025.1
+The `core` profile resolves to 18 leaves for every stream. It is a strict
+subset of `deployment`: legacy ML2 agents (`neutron-dhcp-agent`,
+`neutron-l3-agent`, and `neutron-openvswitch-agent`) are excluded because the
+reviewed deployment uses OVN. The two 2025.1
 Rocky 10.2 streams demonstrate why a release cannot own only one toolchain:
 20.4.0 and 20.5.0 coexist without overwriting each other. When Rocky 10.3 is
 needed, add a new `rocky-10.3` base and new streams; do not mutate the 10.2
@@ -221,7 +224,7 @@ variables never carry `-amd64`, `-arm64`, or `@sha256`.
 
 | Input | Contract |
 | --- | --- |
-| `operation` | `plan` (default) or `publish` |
+| `operation` | `plan` (default; render and validate only, with no image build or registry mutation) or `publish` (build and publish after approval) |
 | `stream` | Exact schema-v4 stream ID |
 | `scope` | `keystone`, `core`, or `deployment` |
 

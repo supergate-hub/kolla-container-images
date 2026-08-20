@@ -113,10 +113,7 @@ EXPECTED_CORE_IMAGES = {
     "keystone",
     "keystone-fernet",
     "keystone-ssh",
-    "neutron-dhcp-agent",
-    "neutron-l3-agent",
     "neutron-metadata-agent",
-    "neutron-openvswitch-agent",
     "neutron-server",
     "nova-api",
     "nova-compute",
@@ -1312,12 +1309,52 @@ def validate_profile(
         validate_resolved_profile(profile_name, stream, resolved, errors)
 
 
+def validate_core_subset(
+    matrix: dict[str, Any],
+    profiles: dict[str, dict[str, Any]],
+    errors: list[str],
+) -> None:
+    """Require the core validation profile to remain deployable as a subset."""
+    core = profiles.get("core")
+    deployment = profiles.get("deployment")
+    if core is None or deployment is None:
+        return
+
+    for stream_id in stream_ids(matrix):
+        try:
+            stream = find_stream(matrix, stream_id)
+            resolved_core = resolve_profile(core, stream)
+            resolved_deployment = resolve_profile(deployment, stream)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            # validate_profile() reports the detailed resolution failure.
+            continue
+
+        core_images = {
+            image["name"]
+            for image in resolved_core.get("images", [])
+            if isinstance(image, dict) and isinstance(image.get("name"), str)
+        }
+        deployment_images = {
+            image["name"]
+            for image in resolved_deployment.get("images", [])
+            if isinstance(image, dict) and isinstance(image.get("name"), str)
+        }
+        missing_images = sorted(core_images - deployment_images)
+        if missing_images:
+            errors.append(
+                "config/profiles/core.json resolved for "
+                f"{stream_id!r} must be a subset of deployment; "
+                f"deployment omits {missing_images!r}"
+            )
+
+
 def validate_profiles(matrix: dict[str, Any], errors: list[str]) -> None:
     profiles = matrix.get("profiles")
     if not isinstance(profiles, list) or not profiles:
         errors.append("profiles must be a non-empty list")
         return
 
+    loaded_profiles: dict[str, dict[str, Any]] = {}
     for profile_name in profiles:
         if not isinstance(profile_name, str) or not profile_name:
             errors.append(f"profile reference must be a non-empty string: {profile_name!r}")
@@ -1336,7 +1373,10 @@ def validate_profiles(matrix: dict[str, Any], errors: list[str]) -> None:
         if not isinstance(profile, dict):
             errors.append(f"{profile_path.relative_to(ROOT)} must contain an object")
             continue
+        loaded_profiles[profile_name] = profile
         validate_profile(matrix, profile_name, profile, errors)
+
+    validate_core_subset(matrix, loaded_profiles, errors)
 
 
 def parse_args() -> argparse.Namespace:
