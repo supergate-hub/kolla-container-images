@@ -379,7 +379,7 @@ class PublishWorkflowTest(unittest.TestCase):
 
     def test_plan_job_rejects_cross_repository_dispatch_before_checkout(self) -> None:
         job = self.publish_job("publish-plan")
-        guard = "Require repository-owned invocation"
+        guard = "Require repository-owned main invocation"
         self.assertIn(guard, job)
         self.assertIn("CALLER_REPOSITORY: ${{ github.repository }}", job)
         self.assertIn(
@@ -545,13 +545,22 @@ class PublishWorkflowTest(unittest.TestCase):
             job.index("Upload publish plan"),
         )
 
-    def test_plan_operation_has_no_main_ref_gate_or_registry_mutation(self) -> None:
+    def test_every_operation_requires_main_before_registry_access(self) -> None:
         job = self.publish_job("publish-plan")
         self.assertNotIn("packages: write", job)
         self.assertNotIn("docker login", job)
         self.assertNotIn("GITHUB_TOKEN", job)
-        step = yaml_block(job, "      - name: Bind frozen plan to protected main")
-        self.assertIn("if: ${{ inputs.operation == 'publish' }}", step)
+        gate = yaml_block(job, "      - name: Require repository-owned main invocation")
+        self.assertIn("CALLER_REF: ${{ github.ref }}", gate)
+        self.assertIn('"$CALLER_REF" != "refs/heads/main"', gate)
+        self.assertNotIn("inputs.operation", gate)
+        self.assertLess(
+            gate.index('"$CALLER_REF" != "refs/heads/main"'), gate.rindex("exit 1")
+        )
+        self.assertLess(
+            job.index("Require repository-owned main invocation"),
+            job.index("Check out repository"),
+        )
 
     def test_disabled_publish_stream_is_rejected_before_environment_approval(self) -> None:
         plan = self.publish_job("publish-plan")

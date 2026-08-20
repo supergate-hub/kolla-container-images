@@ -223,10 +223,9 @@ change; CI rejects a stale option block. Internal matrix PRs additionally get a
 bot-generated child stack PR that applies this update with trusted `main`
 tools. See [docs/publish.md](docs/publish.md#automatic-stack-prs).
 
-`operation=plan` creates a frozen plan and Actions summary without registry
-mutation, publish summary, or lock. `operation=publish` is rejected from tags,
-feature branches, or a disabled stream. It requires protected `main` and the
-`ghcr-publish` environment approval. See
+Use the workflow from `main`. `operation=plan` creates a frozen plan and Actions
+summary without registry mutation, publish summary, or lock. `operation=publish`
+also requires protected `main` and the `ghcr-publish` environment approval. See
 [docs/publish.md](docs/publish.md) for the operator contract and
 [docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
 
