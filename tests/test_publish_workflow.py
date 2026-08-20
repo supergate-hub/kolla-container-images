@@ -1178,34 +1178,25 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("PUBLISH_DROPDOWN_APP_PRIVATE_KEY", token)
         self.assertIn("permission-contents: write", token)
         self.assertIn("permission-pull-requests: write", token)
-        render = yaml_block(
-            job,
-            "      - name: Render dropdown from proposal data with trusted tools",
-        )
-        self.assertIn("gh api --method GET", render)
-        self.assertIn("contents/config/build-matrix.json?ref=$HEAD_SHA", render)
-        self.assertIn("contents/.github/workflows/publish.yml?ref=$HEAD_SHA", render)
-        self.assertIn(
-            'python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stream-options.py"',
-            render,
-        )
         create = yaml_block(
             job,
             "      - name: Create or refresh dropdown synchronization stack PR",
         )
-        self.assertIn('"refs/pull/$PULL_REQUEST_NUMBER/head"', create)
-        self.assertIn('fetched_head="$(git -C "$TRUSTED_REPOSITORY" rev-parse FETCH_HEAD)"', create)
-        self.assertIn('if [ "$fetched_head" != "$HEAD_SHA" ]', create)
-        self.assertIn('checkout --detach "$HEAD_SHA"', create)
-        self.assertIn("core.hooksPath=/dev/null", create)
         self.assertIn(
-            'git -C "$TRUSTED_REPOSITORY" add .github/workflows/publish.yml',
+            'python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stack-pr.py"',
             create,
         )
-        self.assertIn("gh pr create", create)
-        self.assertIn('--base "$SOURCE_BRANCH"', create)
-        self.assertIn('--head "$bot_branch"', create)
-        self.assertIn("gh pr close", create)
+        for argument in (
+            '--repository "$GITHUB_REPOSITORY"',
+            '--head-sha "$HEAD_SHA"',
+            '--source-branch "$SOURCE_BRANCH"',
+            '--pull-request-number "$PULL_REQUEST_NUMBER"',
+            '--repository-dir "$TRUSTED_REPOSITORY"',
+        ):
+            self.assertIn(argument, create)
+        self.assertNotIn("gh api", create)
+        self.assertNotIn("gh pr", create)
+        self.assertNotIn("git -C", create)
 
 
 if __name__ == "__main__":
