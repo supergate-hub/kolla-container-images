@@ -1,0 +1,87 @@
+name: Update catalog from main configuration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - config/build-matrix.json
+      - config/profiles/**
+  workflow_dispatch:
+    inputs:
+      refresh_mode:
+        description: Reconcile the catalog from the aggregate configuration
+        required: true
+        type: choice
+        options:
+          - incremental
+          - full
+        default: full
+
+concurrency:
+  group: catalog-pages
+  cancel-in-progress: false
+
+jobs:
+  update-catalog:
+    name: Render and commit catalog update
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Check out aggregate catalog source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out current gh-pages snapshot
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: gh-pages
+          path: pages
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Validate aggregate catalog configuration
+        run: python3 scripts/validate-config.py --branch main
+
+      - name: Render and commit changed catalog data
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_MODE: ${{ inputs.refresh_mode }}
+          CATALOG_PACKAGES_TOKEN: ${{ secrets.CATALOG_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          mode=incremental
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            mode="$REQUESTED_MODE"
+          fi
+          mkdir -p generated
+          python3 scripts/generate-image-catalog.py \
+            --mode "$mode" \
+            --baseline pages/catalog.json \
+            --output generated/catalog.json
+          python3 -m json.tool generated/catalog.json >/dev/null
+          node --check pages/assets/app.js
+          if cmp -s generated/catalog.json pages/catalog.json && \
+             cmp -s generated/catalog-data.js pages/catalog-data.js; then
+            echo "Catalog data is already current."
+            exit 0
+          fi
+          cp generated/catalog.json pages/catalog.json
+          cp generated/catalog-data.js pages/catalog-data.js
+          git -C pages add -- catalog.json catalog-data.js
+          if git -C pages diff --cached --quiet; then
+            echo "Catalog data is already current."
+            exit 0
+          fi
+          git -C pages config user.name "github-actions[bot]"
+          git -C pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C pages commit -m "docs: update published image catalog"
+          git -C pages push origin HEAD:refs/heads/gh-pages

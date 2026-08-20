@@ -1,0 +1,141 @@
+name: Update catalog after image publish
+
+on:
+  workflow_run:
+    workflows: ["Publish Kolla images"]
+    types: [completed]
+
+concurrency:
+  group: catalog-pages
+  cancel-in-progress: false
+
+jobs:
+  update-catalog:
+    name: Refresh and commit published catalog entries
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+      packages: read
+    steps:
+      - name: Check out aggregate catalog source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Check out current gh-pages snapshot
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: gh-pages
+          path: pages
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: List triggering workflow artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp \
+            "/repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISH_RUN_ID}/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/publish-artifacts.json"
+
+      - name: Select terminal publish artifact
+        id: artifact
+        env:
+          PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
+          PUBLISH_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 scripts/select-publish-artifact.py
+          --artifacts "$RUNNER_TEMP/publish-artifacts.json"
+          --run-id "$PUBLISH_RUN_ID"
+          --run-attempt "$PUBLISH_RUN_ATTEMPT"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Download terminal publish artifact
+        if: ${{ steps.artifact.outputs.should_refresh == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ steps.artifact.outputs.artifact_name }}
+          path: publish-artifact
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate terminal summary and commit changed catalog entries
+        if: ${{ steps.artifact.outputs.should_refresh == 'true' }}
+        env:
+          CATALOG_PACKAGES_TOKEN: ${{ secrets.CATALOG_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t summaries < <(find publish-artifact -type f -name 'publish-summary-*.json' -print)
+          if [ "${#summaries[@]}" -ne 1 ]; then
+            echo "terminal publish artifact must contain exactly one publish summary" >&2
+            exit 1
+          fi
+          SUMMARY_PATH="${summaries[0]}"
+          SUMMARY_PATH="$SUMMARY_PATH" python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          summary_path = pathlib.Path(os.environ["SUMMARY_PATH"])
+          summary = json.loads(summary_path.read_text(encoding="utf-8"))
+          command = [
+              sys.executable,
+              "scripts/validate-publish-summary.py",
+              "--publish-summary",
+              str(summary_path),
+              "--stream",
+              summary["stream"],
+              "--profile",
+              summary["profile"],
+              "--candidate-id",
+              summary["candidate_id"],
+          ]
+          scope = summary.get("scope")
+          if isinstance(scope, dict) and scope.get("image") != "all":
+              command.extend(["--allow-partial", "--image", scope["image"]])
+          subprocess.run(command, check=True)
+          PY
+          mkdir -p generated
+          python3 scripts/generate-image-catalog.py \
+            --mode publish \
+            --baseline pages/catalog.json \
+            --publish-summary "$SUMMARY_PATH" \
+            --output generated/catalog.json
+          python3 -m json.tool generated/catalog.json >/dev/null
+          node --check pages/assets/app.js
+          if cmp -s generated/catalog.json pages/catalog.json && \
+             cmp -s generated/catalog-data.js pages/catalog-data.js; then
+            echo "Catalog data is already current."
+            exit 0
+          fi
+          cp generated/catalog.json pages/catalog.json
+          cp generated/catalog-data.js pages/catalog-data.js
+          git -C pages add -- catalog.json catalog-data.js
+          if git -C pages diff --cached --quiet; then
+            echo "Catalog data is already current."
+            exit 0
+          fi
+          git -C pages config user.name "github-actions[bot]"
+          git -C pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C pages commit -m "docs: update published image catalog"
+          git -C pages push origin HEAD:refs/heads/gh-pages
+
+      - name: Mark successful plan run as a no-op
+        if: ${{ steps.artifact.outputs.should_refresh != 'true' }}
+        run: |
+          echo "The successful workflow run was a plan; no catalog data changed."
