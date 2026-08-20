@@ -23,36 +23,21 @@ site-specific configuration. None of that state or automation belongs here.
 
 ## Branch and configuration model
 
-`config/build-matrix.json` uses schema v4. `main` is the aggregate catalog and
-cannot publish. Protected release branches contain the same workflows,
-scripts, tests, and docs as `main`, but only their release-owned matrix rows and
-OpenStack source-set files:
+`config/build-matrix.json` uses schema v4. Protected `main` is the single
+catalog and publication branch. Every release, stream, source-set, workflow,
+test, and document is reviewed together in one history:
 
 ```text
 main
 ├── .github/workflows/, scripts/, tests/, docs/
 └── config/
     ├── build-matrix.json               # every supported release and stream
-    ├── openstack-sources/
-    │   ├── epoxy-*.json
-    │   ├── flamingo-*.json
-    │   └── gazpacho-*.json
+    ├── openstack-sources/              # every immutable source-set revision
     └── profiles/
-
-2025-1
-├── same common code
-└── config/
-    ├── build-matrix.json               # 2025.1 only
-    ├── openstack-sources/epoxy-*.json
-    └── profiles/
-
-2025-2                                      # 2025.2 + Flamingo source set only
-2026-1                                      # 2026.1 + Gazpacho source set only
 ```
 
-The branch name is derived from the OpenStack release (`2025.1` -> `2025-1`)
-and is not duplicated in the matrix. Validation rejects mixed-release branch
-catalogs, unknown references, unused toolchains or bases, duplicate
+Publication is selected by exact stream ID, not by an OpenStack release branch.
+Validation rejects unknown references, unused toolchains or bases, duplicate
 release/toolchain/base combinations, and stream IDs that differ from their
 rendered semantic tag.
 
@@ -72,17 +57,17 @@ Schema v4 separates four concerns:
 
 The aggregate `main` catalog contains exactly these nine active streams:
 
-| Stream ID / semantic tag | Release branch | Toolchain | Configured base | Deployment leaves |
-| --- | --- | --- | --- | ---: |
-| `2025.1-rocky-9.8-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Rocky `9.8` | 63 |
-| `2025.1-rocky-10.2-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Rocky `10.2` | 63 |
-| `2025.1-ubuntu-24.04-20.4.0` | `2025-1` | Kolla / Kolla-Ansible `20.4.0` | Ubuntu `24.04` | 64 |
-| `2025.1-rocky-10.2-20.5.0` | `2025-1` | Kolla / Kolla-Ansible `20.5.0` | Rocky `10.2` | 63 |
-| `2025.1-ubuntu-24.04-20.5.0` | `2025-1` | Kolla / Kolla-Ansible `20.5.0` | Ubuntu `24.04` | 64 |
-| `2025.2-rocky-10.2-21.1.0` | `2025-2` | Kolla / Kolla-Ansible `21.1.0` | Rocky `10.2` | 63 |
-| `2025.2-ubuntu-24.04-21.1.0` | `2025-2` | Kolla / Kolla-Ansible `21.1.0` | Ubuntu `24.04` | 64 |
-| `2026.1-rocky-10.2-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
-| `2026.1-ubuntu-24.04-22.0.0` | `2026-1` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 66 |
+| Stream ID / semantic tag | Toolchain | Configured base | Deployment leaves |
+| --- | --- | --- | ---: |
+| `2025.1-rocky-9.8-20.4.0` | Kolla / Kolla-Ansible `20.4.0` | Rocky `9.8` | 63 |
+| `2025.1-rocky-10.2-20.4.0` | Kolla / Kolla-Ansible `20.4.0` | Rocky `10.2` | 63 |
+| `2025.1-ubuntu-24.04-20.4.0` | Kolla / Kolla-Ansible `20.4.0` | Ubuntu `24.04` | 64 |
+| `2025.1-rocky-10.2-20.5.0` | Kolla / Kolla-Ansible `20.5.0` | Rocky `10.2` | 63 |
+| `2025.1-ubuntu-24.04-20.5.0` | Kolla / Kolla-Ansible `20.5.0` | Ubuntu `24.04` | 64 |
+| `2025.2-rocky-10.2-21.1.0` | Kolla / Kolla-Ansible `21.1.0` | Rocky `10.2` | 63 |
+| `2025.2-ubuntu-24.04-21.1.0` | Kolla / Kolla-Ansible `21.1.0` | Ubuntu `24.04` | 64 |
+| `2026.1-rocky-10.2-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
+| `2026.1-ubuntu-24.04-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 66 |
 
 The `core` profile resolves to 21 leaves for every stream. The two 2025.1
 Rocky 10.2 streams demonstrate why a release cannot own only one toolchain:
@@ -222,7 +207,7 @@ variables never carry `-amd64`, `-arm64`, or `@sha256`.
 | Input | Contract |
 | --- | --- |
 | `operation` | `plan` (default) or `publish` |
-| `stream` | Exact schema-v4 stream ID |
+| `stream` | Matrix-generated choice of enabled schema-v4 stream IDs |
 | `scope` | `keystone`, `core`, or `deployment` |
 
 Scopes map to local planner arguments as `keystone -> core/keystone`,
@@ -231,18 +216,24 @@ Scopes map to local planner arguments as `keystone -> core/keystone`,
 inputs. Arbitrary profile or single-image planning remains available only in
 the local planner CLI.
 
+The `stream` choices are generated from enabled matrix entries because GitHub
+Actions cannot populate a dispatch form dynamically. Update them with
+`python3 scripts/sync-publish-stream-options.py --write` whenever streams
+change; CI rejects a stale option block. Internal matrix PRs additionally get a
+bot-generated child stack PR that applies this update with trusted `main`
+tools. See [docs/publish.md](docs/publish.md#automatic-stack-prs).
+
 `operation=plan` creates a frozen plan and Actions summary without registry
-mutation, publish summary, or lock. `operation=publish` is rejected from
-`main`, tags, feature branches, the wrong release branch, or a disabled stream.
-It requires a protected `YYYY-N` branch and the `ghcr-publish` environment
-approval. See
+mutation, publish summary, or lock. `operation=publish` is rejected from tags,
+feature branches, or a disabled stream. It requires protected `main` and the
+`ghcr-publish` environment approval. See
 [docs/publish.md](docs/publish.md) for the operator contract and
 [docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
 
 ## Repository layout
 
 ```text
-config/build-matrix.json              Aggregate or branch-local schema-v4 catalog
+config/build-matrix.json              Aggregate schema-v4 catalog
 config/openstack-sources/             Immutable OpenStack source-set revisions
 config/profiles/                      Reviewed image catalogs and variable mapping
 scripts/base_resolution.py            OCI index/child digest resolver and validator
@@ -254,27 +245,21 @@ scripts/validate-publish-summary.py   Publish-summary schema-v3 validator
 scripts/generate-lock.py              Generic candidate-lock schema-v3 renderer
 .github/workflows/validate.yml        Repository validation
 .github/workflows/publish.yml         Dispatch-only plan/publish workflow
+.github/workflows/sync-publish-stream-options.yml  Generated dropdown stack-PR bot
 .github/workflows/build-unit.yml      Reusable one-target native build job
 ```
 
 ## Local validation
 
 ```bash
-python3 scripts/validate-config.py --branch main
+python3 scripts/validate-config.py
+python3 scripts/sync-publish-stream-options.py --check
 python3 scripts/plan-publish.py \
   --stream 2025.1-rocky-10.2-20.5.0 \
   --profile deployment \
   --candidate-id local-dry-run \
   --dry-run
 python3 -m unittest discover -s tests -v
-```
-
-On a release-local tree, replace the first command and add the ownership gate:
-
-```bash
-python3 scripts/validate-config.py --branch 2025-1
-python3 scripts/validate-release-context.py matrix \
-  --matrix config/build-matrix.json --branch 2025-1
 ```
 
 The planner is read-only but resolves the configured base tag over the network.

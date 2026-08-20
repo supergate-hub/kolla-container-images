@@ -21,8 +21,32 @@ The form contains exactly three inputs:
 | Input | Contract |
 | --- | --- |
 | `operation` | Choice `plan` or `publish`; default `plan` |
-| `stream` | Exact ID from the branch-local schema-v4 matrix |
+| `stream` | Dropdown generated from enabled IDs in the aggregate schema-v4 matrix |
 | `scope` | Choice `keystone`, `core`, or `deployment`; default `keystone` |
+
+GitHub Actions renders `choice` inputs from committed YAML, not dynamically from
+JSON. When an enabled stream changes, run
+`python3 scripts/sync-publish-stream-options.py --write` in the same change;
+validation rejects a stale dropdown.
+
+### Automatic stack PRs
+
+When an internal PR targeting `main` changes `config/build-matrix.json`,
+`.github/workflows/sync-publish-stream-options.yml` reads the proposal as data,
+runs the trusted `main` synchronizer, and opens or refreshes a child stack PR
+that changes only `.github/workflows/publish.yml`. It never executes scripts
+from the proposal branch.
+
+Install a repository-scoped GitHub App with only **Contents: read/write** and
+**Pull requests: read/write** permissions. Store its client ID as the repository
+variable `PUBLISH_DROPDOWN_APP_CLIENT_ID` and its private key as the repository
+secret `PUBLISH_DROPDOWN_APP_PRIVATE_KEY`. The workflow obtains a short-lived,
+repository-scoped installation token; it does not use a package-write token.
+
+Review the original matrix PR and its generated child PR normally. Merge the
+**top child PR** after both pass: GitHub lands the complete same-repository stack
+atomically on `main`. Do not merge the lower matrix PR separately. Fork PRs and
+bot-generated child PRs are deliberately ignored by the synchronizer.
 
 The scope mapping is fixed:
 
@@ -40,7 +64,7 @@ Render a workflow plan from any reviewed ref:
 
 ```bash
 gh workflow run publish.yml \
-  --ref 2025-1 \
+  --ref main \
   --field operation=plan \
   --field stream=2025.1-rocky-10.2-20.5.0 \
   --field scope=keystone
@@ -60,18 +84,10 @@ they are not workflow-dispatch inputs.
 
 ## Publish authorization
 
-Only a protected release branch may publish:
-
-```text
-2025.1 streams -> refs/heads/2025-1
-2025.2 streams -> refs/heads/2025-2
-2026.1 streams -> refs/heads/2026-1
-```
-
-`main`, tags, feature branches, the wrong release branch, mixed-release local
-configuration, and `publish_enabled: false` all fail closed. Every writer
-revalidates the frozen plan, candidate ID, and protected ref after the
-`ghcr-publish` environment gate.
+Only protected `refs/heads/main` may publish. Tags, feature branches, and
+`publish_enabled: false` streams all fail closed. Every writer revalidates the
+frozen plan, candidate ID, and protected main ref after the `ghcr-publish`
+environment gate.
 
 Publication is selected explicitly with `operation=publish`; changing `scope`
 alone never turns a plan into a writer.
@@ -87,8 +103,8 @@ The `ghcr-publish` environment is the sole publish gate. Only
 may approve their own runs; repository variables do not authorize publication.
 
 Plan and publish concurrency are separate. Pending plan runs for the same
-ref/stream may cancel older plans. Publish scopes for one release
-branch/stream are serialized and an in-progress publish is never cancelled by
+ref/stream may cancel older plans. Publish scopes for one stream are serialized
+and an in-progress publish is never cancelled by
 a plan or another publish. GitHub's `queue: max` retains up to 100 pending
 publishes for that writer group instead of replacing the older pending run.
 
@@ -264,31 +280,27 @@ tags or digest-bearing values.
 1. Keep the repository **Public** and allow standard `ubuntu-24.04` and
    `ubuntu-24.04-arm` runners. Do not substitute billed larger runners. Verify
    Organization package creation allows Public GHCR packages.
-2. Create protected `2025-1`, `2025-2`, and `2026-1` branches with a pull
-   request, required validation, conversation resolution, no bypass, and
-   force-push / delete disabled. Code-owner approval and a numeric PR approval
-   are not required, so either maintainer can merge a validated PR. `main`은
-   publish ref로 사용할 수 없다. The workflow also requires
-   `github.ref_protected == true`.
+2. Protect `main` with a pull request, required validation, conversation
+   resolution, no administrator bypass, and force-push / delete disabled. The
+   workflow requires `github.ref_protected == true`.
 3. Restrict repository Write/Admin access to `supergate-hsyun` and
    `supergate-jhbyun`. Configure `ghcr-publish` with those two required
-   reviewers, self-review allowed, administrator bypass disabled, and only the
-   three release branches allowed; exclude `main` and tags.
+   reviewers, self-review allowed, administrator bypass disabled, and only
+   `main` allowed; exclude tags and every feature branch.
 5. Keep repository-wide Actions permissions read-only. Grant job-scoped
    `packages: write` only to native build writers and finalization. External CI
    dispatch uses `Actions: write` with no package-write permission.
-6. Validate aggregate changes on `main`, create release-local matrix/source-set
-   commits from the reviewed merge, and run `operation=plan` for every
-   branch-local stream and scope. Inspect source/base digests and the exact
+6. Validate aggregate changes on `main` and run `operation=plan` for every
+   enabled stream and scope. Inspect source/base digests and the exact
    eight-unit Keystone closure before publishing.
-7. First publish only `2025-1 / 2025.1-rocky-10.2-20.5.0 / keystone`.
+7. First publish only `main / 2025.1-rocky-10.2-20.5.0 / keystone`.
    Approve it through `ghcr-publish`, then require the 8 GiB preflight, 2 GiB
    observed minimum, native evidence, exact two-platform revision manifest,
    summary, and semantic-alias digest check.
 
    ```bash
    gh workflow run publish.yml \
-     --ref 2025-1 \
+     --ref main \
      --field operation=publish \
      --field stream=2025.1-rocky-10.2-20.5.0 \
      --field scope=keystone

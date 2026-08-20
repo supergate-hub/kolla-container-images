@@ -43,8 +43,8 @@ jobs:
             echo "This build-unit workflow only accepts repository-owned calls." >&2
             exit 1
           fi
-          if [[ ! "$CALLER_REF" =~ ^refs/heads/[0-9]{4}-[0-9]+$ ]] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
-            echo "Build publication requires a protected YYYY-N release branch." >&2
+          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Build publication requires the protected main branch." >&2
             exit 1
           fi
 
@@ -59,12 +59,12 @@ jobs:
           name: ${{ inputs.publish_plan_artifact }}
           path: artifacts/plan
 
-      - name: Bind frozen plan to protected release branch
+      - name: Bind frozen plan to protected main
         env:
           CALLER_REF: ${{ github.ref }}
           CALLER_REF_PROTECTED: ${{ github.ref_protected }}
         run: >-
-          python3 scripts/validate-release-context.py publish
+          python3 scripts/validate-release-context.py
           --matrix config/build-matrix.json
           --publish-plan artifacts/plan/publish-plan.json
           --git-ref "$CALLER_REF"

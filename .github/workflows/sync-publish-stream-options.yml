@@ -1,0 +1,72 @@
+name: Synchronize publish stream dropdown
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    paths:
+      - config/build-matrix.json
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-publish-stream-options-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  synchronize:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'automation/sync-publish-stream-options/')
+    name: Create dropdown synchronization stack PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted main tools
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.pull_request.stack.base.sha || github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Require catalog bot credentials
+        env:
+          APP_CLIENT_ID: ${{ vars.PUBLISH_DROPDOWN_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.PUBLISH_DROPDOWN_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_CLIENT_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "Configure PUBLISH_DROPDOWN_APP_CLIENT_ID and PUBLISH_DROPDOWN_APP_PRIVATE_KEY before changing config/build-matrix.json." >&2
+            exit 1
+          fi
+
+      - name: Create least-privilege catalog bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.PUBLISH_DROPDOWN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUBLISH_DROPDOWN_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create or refresh dropdown synchronization stack PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_REPOSITORY: ${{ github.workspace }}/trusted
+        run: |
+          set -euo pipefail
+          python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stack-pr.py" \
+            --repository "$GITHUB_REPOSITORY" \
+            --head-sha "$HEAD_SHA" \
+            --source-branch "$SOURCE_BRANCH" \
+            --pull-request-number "$PULL_REQUEST_NUMBER" \
+            --repository-dir "$TRUSTED_REPOSITORY"

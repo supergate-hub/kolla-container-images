@@ -13,9 +13,21 @@ on:
           - publish
         default: plan
       stream:
-        description: Exact build stream ID from config/build-matrix.json
+        description: Exact enabled build stream ID from config/build-matrix.json
         required: true
-        type: string
+        type: choice
+        options:
+          # BEGIN GENERATED STREAM OPTIONS
+          - 2025.1-rocky-9.8-20.4.0
+          - 2025.1-rocky-10.2-20.4.0
+          - 2025.1-ubuntu-24.04-20.4.0
+          - 2025.1-rocky-10.2-20.5.0
+          - 2025.1-ubuntu-24.04-20.5.0
+          - 2025.2-rocky-10.2-21.1.0
+          - 2025.2-ubuntu-24.04-21.1.0
+          - 2026.1-rocky-10.2-22.0.0
+          - 2026.1-ubuntu-24.04-22.0.0
+          # END GENERATED STREAM OPTIONS
       scope:
         description: Reviewed image scope
         required: true
@@ -64,15 +76,6 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
-
-      - name: Validate release branch matrix
-        if: ${{ inputs.operation == 'publish' }}
-        env:
-          PUBLISH_BRANCH: ${{ github.ref_name }}
-        run: >-
-          python3 scripts/validate-release-context.py matrix
-          --matrix config/build-matrix.json
-          --branch "$PUBLISH_BRANCH"
 
       - name: Check out pinned OpenStack release metadata
         env:
@@ -151,13 +154,13 @@ jobs:
           fi
           python3 scripts/plan-publish.py "${plan_args[@]}" > artifacts/plan/publish-plan.json
 
-      - name: Bind frozen plan to release ref
+      - name: Bind frozen plan to protected main
         if: ${{ inputs.operation == 'publish' }}
         env:
           PUBLISH_REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: >-
-          python3 scripts/validate-release-context.py publish
+          python3 scripts/validate-release-context.py
           --matrix config/build-matrix.json
           --publish-plan artifacts/plan/publish-plan.json
           --git-ref "$PUBLISH_REF"
@@ -320,12 +323,12 @@ jobs:
           name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/plan
 
-      - name: Validate protected release context
+      - name: Validate protected main publication context
         env:
           PUBLISH_REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: >-
-          python3 scripts/validate-release-context.py publish
+          python3 scripts/validate-release-context.py
           --matrix config/build-matrix.json
           --publish-plan artifacts/plan/publish-plan.json
           --git-ref "$PUBLISH_REF"
@@ -523,12 +526,12 @@ jobs:
           name: native-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/arch
 
-      - name: Revalidate protected release context
+      - name: Revalidate protected main publication context
         env:
           PUBLISH_REF: ${{ github.ref }}
           REF_PROTECTED: ${{ github.ref_protected }}
         run: >-
-          python3 scripts/validate-release-context.py publish
+          python3 scripts/validate-release-context.py
           --matrix config/build-matrix.json
           --publish-plan artifacts/plan/publish-plan.json
           --git-ref "$PUBLISH_REF"
