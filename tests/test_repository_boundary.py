@@ -166,12 +166,10 @@ class RepositoryBoundaryTest(unittest.TestCase):
             self.assertIn(stream["base_tag"], rows[0])
         self.assert_tokens(
             readme,
-            "`main` is the aggregate catalog",
-            "cannot publish",
-            "same workflows",
-            "2025-1",
-            "2025-2",
-            "2026-1",
+            "protected `main` is the single catalog and publication branch",
+            "publication is selected by exact stream ID",
+            "every release, stream, source-set, workflow, test, and document",
+            "aggregate `main` catalog",
             "schema v4",
             "Rocky 10.3",
             "do not mutate",

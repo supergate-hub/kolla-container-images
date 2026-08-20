@@ -180,7 +180,11 @@ class PublishWorkflowTest(unittest.TestCase):
         expected_inputs = {"operation", "stream", "scope"}
         inputs = set(re.findall(r"^      ([a-z_]+):$", dispatch, re.MULTILINE))
         self.assertEqual(inputs, expected_inputs)
-        self.assertIn("type: string", yaml_block(dispatch, "      stream:"))
+        stream = yaml_block(dispatch, "      stream:")
+        self.assertIn("type: choice", stream)
+        self.assertIn("# BEGIN GENERATED STREAM OPTIONS", stream)
+        self.assertIn("# END GENERATED STREAM OPTIONS", stream)
+        self.assertIn("- 2025.1-rocky-10.2-20.5.0", stream)
         operation = yaml_block(dispatch, "      operation:")
         self.assertIn("type: choice", operation)
         self.assertIn("options:", operation)
@@ -506,36 +510,31 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("GITHUB_STEP_SUMMARY", result)
         self.assertNotIn("packages: write", result)
 
-    def test_publish_plan_is_bound_to_exact_release_ref_and_branch_matrix(self) -> None:
+    def test_publish_plan_is_bound_to_protected_main(self) -> None:
         job = self.publish_job("publish-plan")
-        self.assertIn("Validate release branch matrix", job)
-        matrix_gate = yaml_block(job, "      - name: Validate release branch matrix")
-        self.assertIn("if: ${{ inputs.operation == 'publish' }}", matrix_gate)
-        self.assertIn("PUBLISH_BRANCH: ${{ github.ref_name }}", job)
-        self.assertIn("scripts/validate-release-context.py matrix", job)
-        self.assertIn('--branch "$PUBLISH_BRANCH"', job)
-        self.assertIn("Bind frozen plan to release ref", job)
-        ref_gate = yaml_block(job, "      - name: Bind frozen plan to release ref")
+        self.assertNotIn("Validate release branch matrix", job)
+        self.assertIn("Bind frozen plan to protected main", job)
+        ref_gate = yaml_block(job, "      - name: Bind frozen plan to protected main")
         self.assertIn("if: ${{ inputs.operation == 'publish' }}", ref_gate)
         self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", ref_gate)
         self.assertIn("--require-protected", ref_gate)
         self.assertIn('--ref-protected "$REF_PROTECTED"', ref_gate)
         self.assertIn("PUBLISH_REF: ${{ github.ref }}", job)
-        self.assertIn("scripts/validate-release-context.py publish", job)
+        self.assertIn("scripts/validate-release-context.py", job)
+        self.assertNotIn("validate-release-context.py publish", job)
         self.assertIn('--git-ref "$PUBLISH_REF"', job)
         self.assertLess(
-            job.index("Bind frozen plan to release ref"),
+            job.index("Bind frozen plan to protected main"),
             job.index("Upload publish plan"),
         )
 
-    def test_plan_operation_has_no_release_ref_gate_or_registry_mutation(self) -> None:
+    def test_plan_operation_has_no_main_ref_gate_or_registry_mutation(self) -> None:
         job = self.publish_job("publish-plan")
         self.assertNotIn("packages: write", job)
         self.assertNotIn("docker login", job)
         self.assertNotIn("GITHUB_TOKEN", job)
-        for name in ("Validate release branch matrix", "Bind frozen plan to release ref"):
-            step = yaml_block(job, f"      - name: {name}")
-            self.assertIn("if: ${{ inputs.operation == 'publish' }}", step)
+        step = yaml_block(job, "      - name: Bind frozen plan to protected main")
+        self.assertIn("if: ${{ inputs.operation == 'publish' }}", step)
 
     def test_disabled_publish_stream_is_rejected_before_environment_approval(self) -> None:
         plan = self.publish_job("publish-plan")
@@ -548,18 +547,19 @@ class PublishWorkflowTest(unittest.TestCase):
             plan.index("Upload publish plan"),
         )
 
-    def test_every_mutating_layer_fails_closed_to_protected_release_ref(self) -> None:
+    def test_every_mutating_layer_fails_closed_to_protected_main(self) -> None:
         for name in ("authorize-publish", "finalize-publish"):
             with self.subTest(job=name):
                 job = self.publish_job(name)
-                guard = job.index("protected release context")
+                guard = job.index("protected main publication context")
                 self.assertIn("PUBLISH_REF: ${{ github.ref }}", job)
                 self.assertIn("REF_PROTECTED: ${{ github.ref_protected }}", job)
-                self.assertIn("scripts/validate-release-context.py publish", job)
+                self.assertIn("scripts/validate-release-context.py", job)
+                self.assertNotIn("validate-release-context.py publish", job)
                 self.assertIn('--git-ref "$PUBLISH_REF"', job)
                 self.assertIn("--require-protected", job)
                 self.assertIn('--ref-protected "$REF_PROTECTED"', job)
-                self.assertNotIn("refs/heads/main", job)
+                self.assertIn("protected main", job)
                 next_sensitive_step = (
                     "docker login ghcr.io"
                     if name == "finalize-publish"
@@ -575,11 +575,12 @@ class PublishWorkflowTest(unittest.TestCase):
             "CALLER_REF_PROTECTED: ${{ github.ref_protected }}",
             self.build_unit,
         )
-        self.assertIn("scripts/validate-release-context.py publish", self.build_unit)
+        self.assertIn("scripts/validate-release-context.py", self.build_unit)
+        self.assertNotIn("validate-release-context.py publish", self.build_unit)
         self.assertIn('--git-ref "$CALLER_REF"', self.build_unit)
         self.assertIn("--require-protected", self.build_unit)
         self.assertIn('--ref-protected "$CALLER_REF_PROTECTED"', self.build_unit)
-        self.assertNotIn("refs/heads/main", self.build_unit)
+        self.assertIn('"$CALLER_REF" != "refs/heads/main"', self.build_unit)
 
     def test_dynamic_stages_follow_parent_then_leaf_dependency_order(self) -> None:
         expected = {
@@ -1025,10 +1026,7 @@ class PublishWorkflowTest(unittest.TestCase):
             "      - name: Check out repository",
         )
         self.assertIn("fetch-depth: 0", checkout)
-        context_step = yaml_block(
-            self.validate,
-            "      - name: Resolve validation branch context",
-        )
+        context_step = yaml_block(self.validate, "      - name: Resolve main history baseline")
         self.assertIn("EVENT_NAME: ${{ github.event_name }}", context_step)
         self.assertIn("BASE_REF: ${{ github.base_ref }}", context_step)
         self.assertIn(
@@ -1041,37 +1039,14 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('if [ "$EVENT_NAME" = "pull_request" ]', context_step)
         self.assertIn('if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]', context_step)
         self.assertIn("Pull request base SHA is required", context_step)
-        self.assertIn('validation_branch="$BASE_REF"', context_step)
+        self.assertIn('if [ "$BASE_REF" != "main" ]', context_step)
+        self.assertIn("Pull requests must target main.", context_step)
         self.assertIn('baseline_sha="$BASE_SHA"', context_step)
-        self.assertIn('elif [ "$EVENT_NAME" = "push" ]', context_step)
+        self.assertIn('elif [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ]', context_step)
+        self.assertIn('if [ "$REF_NAME" = "main" ]', context_step)
         self.assertIn('baseline_sha="$BEFORE_SHA"', context_step)
-        self.assertIn(
-            'if [ -n "$validation_branch" ] && [ "$baseline_sha" = "0000000000000000000000000000000000000000" ]',
-            context_step,
-        )
-        self.assertIn(
-            'if [ "$validation_branch" = "main" ]',
-            context_step,
-        )
+        self.assertIn('if [ "$baseline_sha" = "0000000000000000000000000000000000000000" ]', context_step)
         self.assertIn("A recreated main branch has no trusted history baseline", context_step)
-        self.assertIn(
-            'default_branch_sha="$(git rev-parse refs/remotes/origin/main^{commit})"',
-            context_step,
-        )
-        self.assertIn(
-            'git merge-base --is-ancestor "$default_branch_sha" HEAD',
-            context_step,
-        )
-        self.assertIn('baseline_sha="$default_branch_sha"', context_step)
-        self.assertIn(
-            '[[ ! "$validation_branch" =~ ^[0-9]{4}-[0-9]+$ ]]',
-            context_step,
-        )
-        self.assertIn(
-            'elif [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ]',
-            context_step,
-        )
-        self.assertIn("branch=%s", context_step)
         self.assertIn("baseline=%s", context_step)
         history_gate = yaml_block(
             self.validate,
@@ -1079,29 +1054,11 @@ class PublishWorkflowTest(unittest.TestCase):
         )
         self.assertIn("scripts/validate-source-set-history.py", history_gate)
         self.assertIn(
-            'steps.validation-context.outputs.baseline',
-            history_gate,
-        )
-        self.assertIn(
-            'steps.validation-context.outputs.branch',
+            'steps.history-baseline.outputs.baseline',
             history_gate,
         )
         self.assertIn('--baseline="$BASELINE_SHA"', history_gate)
-        self.assertIn('--branch "$VALIDATION_BRANCH"', history_gate)
-        branch_gate = yaml_block(
-            self.validate,
-            "      - name: Validate release branch ownership",
-        )
-        self.assertIn(
-            "steps.validation-context.outputs.branch != ''",
-            branch_gate,
-        )
-        self.assertIn(
-            "steps.validation-context.outputs.branch != 'main'",
-            branch_gate,
-        )
-        self.assertIn("scripts/validate-release-context.py matrix", branch_gate)
-        self.assertIn('--branch "$VALIDATION_BRANCH"', branch_gate)
+        self.assertNotIn("--branch", history_gate)
         metadata_checkout = yaml_block(
             self.validate,
             "      - name: Check out pinned OpenStack release metadata",
@@ -1124,11 +1081,15 @@ class PublishWorkflowTest(unittest.TestCase):
             '--release-metadata-checkout "$RELEASE_METADATA_CHECKOUT"',
             repository_validation,
         )
-        self.assertIn('validation_args+=(--branch "$VALIDATION_BRANCH")', self.validate)
         self.assertIn(
             'python3 scripts/validate-config.py "${validation_args[@]}"',
             self.validate,
         )
+        dropdown = yaml_block(
+            self.validate,
+            "      - name: Verify publish stream dropdown",
+        )
+        self.assertIn("scripts/sync-publish-stream-options.py --check", dropdown)
         cli_contract = yaml_block(
             self.validate,
             "      - name: Validate every pinned Kolla CLI contract",

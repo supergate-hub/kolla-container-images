@@ -18,6 +18,7 @@ RELEASE_BRANCH_RE = re.compile(
     r"^(?P<year>[1-9][0-9]{3})-(?P<cycle>[1-9][0-9]*)$"
 )
 HEADS_REF_PREFIX = "refs/heads/"
+MAIN_PUBLISH_REF = f"{HEADS_REF_PREFIX}main"
 
 
 def release_branch_for(release: str) -> str:
@@ -120,31 +121,14 @@ def validate_matrix_branch(
     return errors
 
 
-def validate_plan_matrix(
+def validate_plan_catalog(
     matrix: dict[str, Any],
     plan: dict[str, Any],
-    branch_name: str,
 ) -> list[str]:
-    """Bind a frozen plan to the one stream and toolchain owned by a branch."""
-    errors = validate_matrix_branch(matrix, branch_name)
-    try:
-        expected_release = release_for_branch(branch_name)
-    except ValueError as error:
-        return [str(error)]
-
+    """Bind a frozen plan to exactly one stream in the aggregate catalog."""
+    errors: list[str] = []
     if not isinstance(plan, dict):
-        return [*errors, "publish plan must be an object"]
-
-    if plan.get("release") != expected_release:
-        errors.append(
-            f"publish plan release must be {expected_release!r} for branch "
-            f"{branch_name!r}, got {plan.get('release')!r}"
-        )
-    if plan.get("release_branch") != branch_name:
-        errors.append(
-            f"publish plan release_branch must be {branch_name!r}, got "
-            f"{plan.get('release_branch')!r}"
-        )
+        return ["publish plan must be an object"]
 
     streams = matrix.get("streams") if isinstance(matrix, dict) else None
     stream_id = plan.get("stream")
@@ -159,11 +143,6 @@ def validate_plan_matrix(
         errors.append(
             f"publish plan stream {stream_id!r} must identify exactly one matrix stream"
         )
-    elif matching_streams[0].get("release") != expected_release:
-        errors.append(
-            f"publish plan stream {stream_id!r} is not owned by release "
-            f"{expected_release!r}"
-        )
 
     if len(matching_streams) == 1:
         try:
@@ -173,11 +152,25 @@ def validate_plan_matrix(
                 from profile_resolver import resolve_stream
             resolved = resolve_stream(matrix, matching_streams[0])
         except (KeyError, TypeError, ValueError) as error:
-            errors.append(f"cannot resolve branch matrix stream: {error}")
+            errors.append(f"cannot resolve catalog stream: {error}")
         else:
+            if plan.get("release") != resolved["release"]:
+                errors.append(
+                    "publish plan release must match the catalog stream; "
+                    f"expected {resolved['release']!r}, got {plan.get('release')!r}"
+                )
+            # This field remains in the frozen plan and generic lock for current
+            # downstream compatibility. It is a release-train label only: live
+            # publication is always bound to refs/heads/main below.
+            if plan.get("release_branch") != resolved["release_branch"]:
+                errors.append(
+                    "publish plan release_branch must match the catalog stream; "
+                    f"expected {resolved['release_branch']!r}, "
+                    f"got {plan.get('release_branch')!r}"
+                )
             if plan.get("release_series") != resolved["release_series"]:
                 errors.append(
-                    "publish plan release_series must match the branch matrix release"
+                    "publish plan release_series must match the catalog stream"
                 )
             expected_provenance = {
                 "release_metadata": matrix.get("release_metadata"),
@@ -196,7 +189,7 @@ def validate_plan_matrix(
                 actual = plan.get(key)
                 if type(actual) is not dict or actual != expected:
                     errors.append(
-                        f"publish plan {key} must exactly match the branch matrix pin"
+                        f"publish plan {key} must exactly match the catalog pin"
                     )
             try:
                 configured_base = {
@@ -210,7 +203,7 @@ def validate_plan_matrix(
             except (KeyError, TypeError, ValueError) as error:
                 errors.append(
                     "publish plan base must be a valid frozen resolution of the "
-                    f"branch matrix base: {error}"
+                    f"catalog base: {error}"
                 )
             try:
                 source_contract = validate_frozen_source_contract(
@@ -227,9 +220,29 @@ def validate_plan_matrix(
             except (KeyError, TypeError, ValueError) as error:
                 errors.append(
                     "publish plan OpenStack sources must exactly match the branch "
-                    f"matrix source-set: {error}"
+                    f"catalog source-set: {error}"
                 )
 
+    return errors
+
+
+def validate_plan_matrix(
+    matrix: dict[str, Any],
+    plan: dict[str, Any],
+    branch_name: str,
+) -> list[str]:
+    """Legacy branch-projection validator retained for local migration checks."""
+    errors = validate_matrix_branch(matrix, branch_name)
+    errors.extend(validate_plan_catalog(matrix, plan))
+    try:
+        expected_release = release_for_branch(branch_name)
+    except ValueError as error:
+        return [*errors, str(error)]
+    if isinstance(plan, dict) and plan.get("release") != expected_release:
+        errors.append(
+            f"publish plan release must be {expected_release!r} for legacy "
+            f"branch projection {branch_name!r}"
+        )
     return errors
 
 
@@ -241,13 +254,12 @@ def validate_publish_context(
     require_protected: bool = False,
     ref_protected: bool | None = None,
 ) -> list[str]:
-    """Validate branch ownership, frozen plan identity, and optional protection."""
-    try:
-        branch_name = branch_for_ref(git_ref)
-    except ValueError as error:
-        return [str(error)]
-
-    errors = validate_plan_matrix(matrix, plan, branch_name)
+    """Validate a frozen plan against the sole protected publication ref."""
+    errors = validate_plan_catalog(matrix, plan)
+    if type(git_ref) is not str or git_ref != MAIN_PUBLISH_REF:
+        errors.append(
+            f"publication is allowed only from {MAIN_PUBLISH_REF!r}; got {git_ref!r}"
+        )
     if require_protected and ref_protected is not True:
         errors.append(f"publish ref {git_ref!r} must be protected")
     return errors
@@ -258,19 +270,11 @@ def validate_publish_source(
     git_ref: str,
     ref_protected: bool,
 ) -> list[str]:
-    """Validate a protected Git ref against the release frozen in a plan."""
+    """Validate the protected main ref at every mutating workflow boundary."""
     errors: list[str] = []
-    release = plan.get("release") if isinstance(plan, dict) else None
-    try:
-        expected_branch = release_branch_for(release)
-    except ValueError as error:
-        return [f"publish plan release is invalid: {error}"]
-
-    expected_ref = f"{HEADS_REF_PREFIX}{expected_branch}"
-    if type(git_ref) is not str or git_ref != expected_ref:
+    if type(git_ref) is not str or git_ref != MAIN_PUBLISH_REF:
         errors.append(
-            f"release {release!r} may publish only from {expected_ref!r}; "
-            f"got {git_ref!r}"
+            f"publication is allowed only from {MAIN_PUBLISH_REF!r}; got {git_ref!r}"
         )
     if ref_protected is not True:
         errors.append(f"publish ref {git_ref!r} must be protected")

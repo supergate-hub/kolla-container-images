@@ -2,8 +2,9 @@
 
 This document defines evidence required for `operation=publish`. It does not
 authorize a publish. Complete the GitHub/GHCR checklist in
-[publish.md](publish.md) first. Only protected `2025-1`, `2025-2`, and `2026-1`
-release branches may publish; `main` is aggregate validation and plan only.
+[publish.md](publish.md) first. Only protected `main` may publish; the exact
+stream selects the OpenStack release, toolchain, and base from the aggregate
+catalog.
 
 ## Native runner contract
 
@@ -52,7 +53,7 @@ python3 scripts/plan-publish.py \
 The workflow candidate ID is `github.run_id`-`github.run_attempt`; users do not
 input it. The plan freezes:
 
-- release branch and pinned OpenStack Releases, Kolla, and Kolla-Ansible
+- protected main ref and pinned OpenStack Releases, Kolla, and Kolla-Ansible
   commits;
 - the complete OpenStack source-set and canonical digest;
 - generated `kolla-build.conf` and template-override content/digests;
@@ -245,13 +246,12 @@ manifest bytes and digest recorded in the candidate lock.
 
 ## First-publish readiness sequence
 
-1. Validate schema v4 and inspect `operation=plan` for every release-local
+1. Validate schema v4 and inspect `operation=plan` for every enabled
    stream/scope. Confirm the full OpenStack source-set/config hashes and frozen
    base index/AMD64/ARM64 digests.
-2. Verify protected release branches, required validation,
-   `ghcr-publish` reviewers/branch restrictions, and read-default Actions
-   permissions. `main` must remain unable to publish.
-3. Publish only `2025-1 / 2025.1-rocky-10.2-20.5.0 / keystone` first.
+2. Verify protected main, required validation, `ghcr-publish`
+   reviewers/main-only branch restriction, and read-default Actions permissions.
+3. Publish only `main / 2025.1-rocky-10.2-20.5.0 / keystone` first.
 4. Require all eight native units, 8 GiB preflight, 2 GiB observed minimum,
    exact source/base provenance, both aggregate evidence files, the revision
    two-platform manifest, summary, and semantic digest verification.

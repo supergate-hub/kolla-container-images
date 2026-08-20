@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Protect append-only source-set history and release branch projections."""
+"""Protect append-only OpenStack source-set history on the aggregate catalog."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from typing import Any
 
 
 BASELINE_RE = re.compile(r"^[0-9a-f]{40}$")
-BRANCH_RE = re.compile(r"^(?:main|[0-9]{4}-[0-9]+)$")
 RELEASE_RE = re.compile(r"^[0-9]{4}\.[0-9]+$")
 SOURCE_SET_FILENAME_RE = re.compile(r"^[a-z][a-z0-9-]*\.json$")
 ZERO_BASELINE = "0" * 40
@@ -247,50 +246,14 @@ def catalog_contract(root: Path) -> tuple[set[str], list[str]]:
             )
 
     assert common_reviewed is not None
-    if len(active_releases) == 1:
-        release = next(iter(active_releases))
-        expected = [
-            stream_id
-            for stream_id in common_reviewed
-            if stream_id.startswith(f"{release}-")
-        ]
-        if not expected:
-            raise HistoryValidationError(
-                f"shared profiles have no reviewed streams for release {release}"
-            )
-        if stream_ids != expected:
-            missing = [stream_id for stream_id in expected if stream_id not in stream_ids]
-            extra = [stream_id for stream_id in stream_ids if stream_id not in expected]
-            raise HistoryValidationError(
-                "release-local stream projection must exactly equal the release-prefixed "
-                f"shared reviewed_streams subset for {release}; missing={missing!r}, "
-                f"extra={extra!r}, expected_order={expected!r}"
-            )
-
     return active_releases, stream_ids
 
 
 def validate_history(
     root: Path,
     baseline: str,
-    active_releases: set[str],
-    branch: str,
 ) -> None:
-    projection_release: str | None = None
-    if branch and branch != "main":
-        projection_release = branch.replace("-", ".", 1)
-        if active_releases != {projection_release}:
-            raise HistoryValidationError(
-                f"release branch {branch!r} must own exactly {projection_release!r}"
-            )
     for source_set in baseline_source_sets(root, baseline):
-        if (
-            projection_release is not None
-            and source_set.release != projection_release
-        ):
-            # This is the deliberate aggregate-main -> release-branch projection
-            # exception. Main and generic validation protect every baseline release.
-            continue
         current_path = root / source_set.path
         if not current_path.exists():
             raise HistoryValidationError(
@@ -322,31 +285,22 @@ def parse_args() -> argparse.Namespace:
         "--baseline",
         help="Exact 40-character Git commit SHA to compare against",
     )
-    parser.add_argument(
-        "--branch",
-        default="",
-        help="Validation branch context (main or exact YYYY-N)",
-    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        if args.branch and not BRANCH_RE.fullmatch(args.branch):
-            raise HistoryValidationError(
-                "branch must be main or an exact YYYY-N name"
-            )
         baseline, skip_reason = normalize_baseline(args.baseline)
         root = repository_root()
-        active_releases, _ = catalog_contract(root)
+        catalog_contract(root)
         if baseline is None:
             print(
                 "Source-set history validation passed; immutable Git history check "
                 f"skipped ({skip_reason})."
             )
             return 0
-        validate_history(root, baseline, active_releases, args.branch)
+        validate_history(root, baseline)
     except HistoryValidationError as error:
         print(f"Source-set history validation failed: {error}", file=sys.stderr)
         return 1
