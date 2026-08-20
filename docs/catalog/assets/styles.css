@@ -1,0 +1,95 @@
+/* Static catalog presentation. All catalog values are rendered from catalog.json. */
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f8fafc;
+  color: #17283d;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: #f8fafc; }
+button { font: inherit; }
+
+.catalog-shell { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
+.site-header { padding: 26px 30px 20px; background: #f8fafc; }
+.site-header strong { display: block; color: #1d3047; font-size: 20px; letter-spacing: -0.035em; }
+.site-header span { display: block; margin-top: 3px; color: #75849a; font-size: 12px; }
+.release-sidebar { display: flex; position: sticky; top: 0; flex-direction: column; min-height: 100vh; padding: 27px 15px 20px; background: #f8fafc; }
+.sidebar-label { margin: 0 10px 7px; color: #77879b; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.release-tabs { display: grid; gap: 3px; }
+.release-tab { width: 100%; padding: 11px 10px; border: 0; border-radius: 8px; background: transparent; color: #63748a; cursor: pointer; font-size: 13px; font-weight: 650; text-align: left; }
+.release-tab:hover { background: #f3f7f8; color: #34475e; }
+.release-tab.active { background: #e8f5ef; color: #08785b; }
+.release-tab small { display: block; margin-top: 2px; color: #8391a2; font-size: 10px; font-weight: 500; }
+.sidebar-note { display: flex; align-items: center; gap: 7px; margin: auto 9px 0; padding-top: 18px; color: #7a899b; font-size: 11px; }
+.status-dot { display: inline-block; flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: #d79a17; }
+.status-dot.error { background: #d13c3c; }
+
+.catalog-content { width: min(1060px, 100%); padding: 0 42px 56px; }
+.toolchain-bar { padding: 0; }
+.eyebrow { margin: 0 0 5px; color: #77879b; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 8px; font-size: clamp(28px, 4vw, 37px); letter-spacing: -0.045em; }
+h2 { margin-bottom: 0; font-size: 18px; letter-spacing: -0.025em; }
+.toolchain-tabs { display: flex; gap: 4px; }
+.toolchain-tab { position: relative; min-width: 112px; padding: 11px 14px 14px; border: 0; background: transparent; color: #6d7c91; cursor: pointer; font-size: 14px; font-weight: 650; text-align: left; }
+.toolchain-tab:hover { color: #34475e; }
+.toolchain-tab.active { color: #08785b; }
+.toolchain-tab.active::after { position: absolute; right: 11px; bottom: -1px; left: 11px; height: 2px; background: #0a926d; content: ""; }
+.toolchain-tab small { display: block; margin-top: 2px; color: #8290a2; font-size: 10px; font-weight: 500; }
+
+.release-heading { padding: 33px 0 27px; }
+.targets-section, .images-section { padding: 27px 0; }
+.images-section { padding-top: 38px; }
+.section-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 15px; }
+.quiet-copy { max-width: 480px; margin: 0; color: #728198; font-size: 12px; line-height: 1.5; text-align: right; }
+
+.table-wrap { overflow-x: auto; border: 1px solid #dae3ec; border-radius: 9px; background: #fff; }
+.catalog-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.catalog-table th { padding: 12px 14px; border-bottom: 1px solid #dfe6ee; background: #f5f8fb; color: #718097; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+.catalog-table td { padding: 13px 14px; border-top: 1px solid #e5ebf2; color: #35485f; }
+.catalog-table tbody tr:first-child td { border-top: 0; }
+.catalog-table code { color: #24536b; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; white-space: nowrap; }
+.target-name { color: #20364e; font-weight: 650; }
+.arch { display: inline-block; margin-right: 5px; padding: 3px 6px; border-radius: 999px; background: #eaf5f0; color: #08785b; font-size: 10px; font-weight: 700; }
+.arch.unavailable { background: #fff0f0; color: #b42318; }
+
+.images-section { padding-bottom: 0; }
+.images-heading { align-items: center; }
+.image-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 9px; }
+.base-tabs, .profile-tabs { display: flex; gap: 4px; padding: 4px; border-radius: 9px; background: #edf2f6; }
+.base-tab, .profile-tab { padding: 7px 10px; border: 0; border-radius: 6px; background: transparent; color: #687991; cursor: pointer; font-size: 12px; font-weight: 650; }
+.base-tab.active, .profile-tab.active { background: #fff; color: #08785b; box-shadow: 0 1px 2px rgba(34, 55, 79, .12); }
+.base-tab small, .profile-tab small { color: #8190a3; font-weight: 500; }
+.image-table-summary { margin: -4px 0 10px; color: #728198; font-size: 12px; line-height: 1.5; text-align: left; }
+.image-table-wrap { max-height: 690px; overflow-y: auto; scrollbar-gutter: stable; }
+.image-table { border-collapse: separate; border-spacing: 0; }
+.image-table thead th { position: sticky; top: 0; z-index: 1; box-shadow: 0 1px 0 #dfe6ee; }
+.image-table th:first-child { width: 220px; }
+.image-table tbody tr:hover { background: #f5faf8; }
+.image-category { color: #718197 !important; font-size: 11px; }
+.image-name { color: #263a52 !important; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+.architecture-status { width: 74px; text-align: center; font-size: 14px; font-weight: 700; }
+.architecture-status.available { color: #08785b; }
+.architecture-status.unavailable { color: #9aa8b8; }
+
+.catalog-footer { display: flex; align-items: flex-start; gap: 7px; margin-top: 20px; padding-top: 18px; color: #79889a; font-size: 11px; line-height: 1.5; }
+.catalog-error { margin: 28px 0 0; padding: 12px 14px; border: 1px solid #f3c6c6; border-radius: 8px; background: #fff6f6; color: #9a2727; font-size: 13px; }
+
+@media (max-width: 760px) {
+  .catalog-shell { display: block; }
+  .site-header { padding: 18px 16px 15px; }
+  .release-sidebar { position: static; min-height: auto; padding: 16px 14px; }
+  .release-tabs { display: flex; overflow-x: auto; }
+  .release-tab { min-width: 126px; }
+  .sidebar-note { display: none; }
+  .catalog-content { width: 100%; padding: 0 16px 42px; }
+  .toolchain-tabs { overflow-x: auto; }
+  .toolchain-tab { flex: 1 0 110px; }
+  .release-heading { padding: 30px 0 27px; }
+  .section-heading { align-items: flex-start; flex-direction: column; }
+  .quiet-copy { text-align: left; }
+  .image-controls { width: 100%; justify-content: flex-start; }
+  .base-tabs, .profile-tabs { max-width: 100%; overflow-x: auto; }
+  .catalog-table { min-width: 650px; }
+}

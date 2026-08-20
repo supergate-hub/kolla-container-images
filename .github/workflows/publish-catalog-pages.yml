@@ -1,0 +1,179 @@
+name: Publish image catalog Pages
+
+on:
+  workflow_run:
+    workflows: ["Publish Kolla images"]
+    types: [completed]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+concurrency:
+  group: catalog-pages
+  cancel-in-progress: true
+
+jobs:
+  generate-catalog:
+    name: Generate verified catalog snapshot
+    if: >-
+      ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - name: Check out aggregate catalog
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Check out pinned OpenStack release metadata
+        env:
+          CHECKOUT_PATH: ${{ runner.temp }}/openstack-releases
+          RELEASES_REPOSITORY: https://opendev.org/openstack/releases
+        run: |
+          set -euo pipefail
+          RELEASES_COMMIT="$(python3 - <<'PY'
+          import json
+          import pathlib
+
+          matrix = json.loads(
+              pathlib.Path("config/build-matrix.json").read_text(encoding="utf-8")
+          )
+          print(matrix["release_metadata"]["commit"])
+          PY
+          )"
+          if [[ ! "$RELEASES_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Pinned OpenStack release metadata commit must be a full SHA." >&2
+            exit 1
+          fi
+          if [ "$CHECKOUT_PATH" != "$RUNNER_TEMP/openstack-releases" ] || [ -e "$CHECKOUT_PATH" ]; then
+            echo "Refusing unexpected OpenStack release metadata checkout path." >&2
+            exit 1
+          fi
+          git init --quiet "$CHECKOUT_PATH"
+          git -C "$CHECKOUT_PATH" remote add origin "$RELEASES_REPOSITORY"
+          git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
+          git -C "$CHECKOUT_PATH" checkout --quiet --detach FETCH_HEAD
+
+      - name: Validate aggregate catalog configuration
+        env:
+          RELEASE_METADATA_CHECKOUT: ${{ runner.temp }}/openstack-releases
+        run: >-
+          python3 scripts/validate-config.py
+          --branch main
+          --release-metadata-checkout "$RELEASE_METADATA_CHECKOUT"
+
+      - name: Generate catalog from GitHub Packages and GHCR
+        env:
+          CATALOG_PACKAGES_TOKEN: ${{ secrets.CATALOG_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site/assets
+          cp docs/catalog/index.html _site/index.html
+          cp docs/catalog/assets/styles.css _site/assets/styles.css
+          cp docs/catalog/assets/app.js _site/assets/app.js
+          touch _site/.nojekyll
+          python3 scripts/generate-image-catalog.py --output _site/catalog.json
+          cat > _site/README.md <<'EOF'
+          # Kolla container image catalog
+
+          Generated from the main catalog configuration and live GHCR manifests.
+          Do not edit this branch manually.
+          EOF
+          python3 -m json.tool _site/catalog.json >/dev/null
+          node --check _site/assets/app.js
+
+      - name: Upload immutable catalog snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: catalog-site
+          path: _site
+          if-no-files-found: error
+          retention-days: 7
+
+  sync-gh-pages:
+    name: Sync generated snapshot to gh-pages
+    needs: generate-catalog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download catalog snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: catalog-site
+          path: _site
+
+      - name: Commit changed generated snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PAGES_DIRECTORY: ${{ runner.temp }}/kolla-catalog-pages
+          SITE_DIRECTORY: ${{ github.workspace }}/_site
+        run: |
+          set -euo pipefail
+          if [ "$PAGES_DIRECTORY" != "$RUNNER_TEMP/kolla-catalog-pages" ] || [ ! -d "$SITE_DIRECTORY" ]; then
+            echo "Refusing unexpected Pages or staged-site directory." >&2
+            exit 1
+          fi
+          git init --quiet "$PAGES_DIRECTORY"
+          git -C "$PAGES_DIRECTORY" config user.name "github-actions[bot]"
+          git -C "$PAGES_DIRECTORY" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$PAGES_DIRECTORY" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          authorization="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git -C "$PAGES_DIRECTORY" config http.https://github.com/.extraheader "AUTHORIZATION: basic $authorization"
+          if git -C "$PAGES_DIRECTORY" ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git -C "$PAGES_DIRECTORY" fetch --depth=1 origin gh-pages
+            git -C "$PAGES_DIRECTORY" checkout --quiet -B gh-pages FETCH_HEAD
+          else
+            git -C "$PAGES_DIRECTORY" checkout --quiet --orphan gh-pages
+          fi
+          find "$PAGES_DIRECTORY" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf -- {} +
+          cp -R "$SITE_DIRECTORY"/. "$PAGES_DIRECTORY"/
+          git -C "$PAGES_DIRECTORY" add --all
+          if git -C "$PAGES_DIRECTORY" diff --cached --quiet; then
+            echo "Generated catalog is unchanged."
+            exit 0
+          fi
+          git -C "$PAGES_DIRECTORY" commit -m "docs: update published image catalog"
+          git -C "$PAGES_DIRECTORY" push origin HEAD:refs/heads/gh-pages
+
+  deploy-pages:
+    name: Deploy generated catalog to GitHub Pages
+    needs: sync-gh-pages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download catalog snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: catalog-site
+          path: _site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: _site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

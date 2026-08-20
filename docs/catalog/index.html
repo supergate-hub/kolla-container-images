@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Supergate Kolla Images — Image catalog</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <strong>supergate-hub</strong>
+      <span>kolla-container-images</span>
+    </header>
+
+    <main class="catalog-shell">
+      <aside class="release-sidebar" aria-label="OpenStack releases">
+        <p class="sidebar-label">OpenStack release</p>
+        <nav id="release-tabs" class="release-tabs" aria-label="OpenStack release"></nav>
+
+        <p id="catalog-status" class="sidebar-note" aria-live="polite"></p>
+      </aside>
+
+      <section class="catalog-content">
+        <section class="toolchain-bar" aria-label="Kolla-Ansible version">
+          <nav id="toolchain-tabs" class="toolchain-tabs" aria-label="Kolla-Ansible version"></nav>
+        </section>
+
+        <section id="top" class="release-heading" aria-labelledby="release-title">
+          <h1 id="release-title"></h1>
+        </section>
+
+        <section class="targets-section" aria-labelledby="targets-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Supported build targets</p>
+              <h2 id="targets-title">Operating systems and CPU architectures</h2>
+            </div>
+            <p class="quiet-copy">Availability is verified from live GHCR manifests.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="catalog-table">
+              <thead>
+                <tr><th>Operating system</th><th>Exact tag</th><th>Architectures</th></tr>
+              </thead>
+              <tbody id="target-list"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="images-section" aria-labelledby="images-title">
+          <div class="section-heading images-heading">
+            <div>
+              <p class="eyebrow">Supported images</p>
+              <h2 id="images-title">Images in this profile</h2>
+            </div>
+            <div class="image-controls">
+              <nav id="base-tabs" class="base-tabs" aria-label="Operating system"></nav>
+              <nav id="profile-tabs" class="profile-tabs" aria-label="Image profile"></nav>
+            </div>
+          </div>
+          <p id="profile-copy" class="image-table-summary" aria-live="polite"></p>
+          <div class="table-wrap image-table-wrap">
+            <table class="catalog-table image-table">
+              <thead>
+                <tr><th>Service area</th><th>Container image</th><th>AMD64</th><th>ARM64</th></tr>
+              </thead>
+              <tbody id="image-list"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <footer class="catalog-footer">
+          <span class="status-dot" aria-hidden="true"></span>
+          This catalog is generated from repository configuration and live GHCR manifests.
+        </footer>
+      </section>
+    </main>
+
+    <script src="catalog-data.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>
