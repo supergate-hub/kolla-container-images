@@ -1,0 +1,147 @@
+name: Synchronize publish stream dropdown
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    paths:
+      - config/build-matrix.json
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-publish-stream-options-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  synchronize:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !startsWith(github.event.pull_request.head.ref, 'automation/sync-publish-stream-options/')
+    name: Create dropdown synchronization stack PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted main tools
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.pull_request.stack.base.sha || github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Require catalog bot credentials
+        env:
+          APP_CLIENT_ID: ${{ vars.PUBLISH_DROPDOWN_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.PUBLISH_DROPDOWN_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_CLIENT_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "Configure PUBLISH_DROPDOWN_APP_CLIENT_ID and PUBLISH_DROPDOWN_APP_PRIVATE_KEY before changing config/build-matrix.json." >&2
+            exit 1
+          fi
+
+      - name: Create least-privilege catalog bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.PUBLISH_DROPDOWN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUBLISH_DROPDOWN_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Render dropdown from proposal data with trusted tools
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          TRUSTED_REPOSITORY: ${{ github.workspace }}/trusted
+        run: |
+          set -euo pipefail
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Pull request head must be an exact commit SHA." >&2
+            exit 1
+          fi
+          proposal_matrix="$RUNNER_TEMP/proposal-build-matrix.json"
+          proposal_workflow="$RUNNER_TEMP/proposal-publish.yml"
+          gh api --method GET \
+            -H "Accept: application/vnd.github.raw" \
+            "/repos/$GITHUB_REPOSITORY/contents/config/build-matrix.json?ref=$HEAD_SHA" \
+            > "$proposal_matrix"
+          gh api --method GET \
+            -H "Accept: application/vnd.github.raw" \
+            "/repos/$GITHUB_REPOSITORY/contents/.github/workflows/publish.yml?ref=$HEAD_SHA" \
+            > "$proposal_workflow"
+          cp "$proposal_workflow" "$proposal_workflow.original"
+          python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stream-options.py" \
+            --matrix "$proposal_matrix" \
+            --workflow "$proposal_workflow" \
+            --write
+
+      - name: Create or refresh dropdown synchronization stack PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SOURCE_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          TRUSTED_REPOSITORY: ${{ github.workspace }}/trusted
+        run: |
+          set -euo pipefail
+          proposal_workflow="$RUNNER_TEMP/proposal-publish.yml"
+          original_workflow="$RUNNER_TEMP/proposal-publish.yml.original"
+          bot_branch="automation/sync-publish-stream-options/pr-$PULL_REQUEST_NUMBER"
+          existing_pr="$(gh pr list --head "$bot_branch" --state open --json number --jq '.[0].number // empty')"
+          if cmp -s "$proposal_workflow" "$original_workflow"; then
+            if [ -n "$existing_pr" ]; then
+              gh pr close "$existing_pr" --delete-branch \
+                --comment "Dropdown is already synchronized by PR #$PULL_REQUEST_NUMBER."
+            fi
+            echo "The dropdown is already synchronized."
+            exit 0
+          fi
+
+          git -C "$TRUSTED_REPOSITORY" remote set-url origin \
+            "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$TRUSTED_REPOSITORY" fetch --no-tags origin \
+            "refs/pull/$PULL_REQUEST_NUMBER/head"
+          fetched_head="$(git -C "$TRUSTED_REPOSITORY" rev-parse FETCH_HEAD)"
+          if [ "$fetched_head" != "$HEAD_SHA" ]; then
+            echo "Fetched pull request head does not match the event SHA." >&2
+            exit 1
+          fi
+          git -C "$TRUSTED_REPOSITORY" -c core.hooksPath=/dev/null \
+            checkout --detach "$HEAD_SHA"
+          install -m 0644 "$proposal_workflow" \
+            "$TRUSTED_REPOSITORY/.github/workflows/publish.yml"
+          git -C "$TRUSTED_REPOSITORY" add .github/workflows/publish.yml
+          git -C "$TRUSTED_REPOSITORY" -c user.name="Kolla Catalog Bot" \
+            -c user.email="kolla-catalog-bot@users.noreply.github.com" \
+            -c core.hooksPath=/dev/null commit \
+            -m "chore: sync publish stream dropdown for #$PULL_REQUEST_NUMBER"
+
+          remote_tip="$(git ls-remote origin "refs/heads/$bot_branch" | awk 'NR == 1 {print $1}')"
+          if [ -n "$remote_tip" ]; then
+            git -C "$TRUSTED_REPOSITORY" push \
+              --force-with-lease="refs/heads/$bot_branch:$remote_tip" \
+              origin "HEAD:refs/heads/$bot_branch"
+          else
+            git -C "$TRUSTED_REPOSITORY" push origin "HEAD:refs/heads/$bot_branch"
+          fi
+
+          if [ -z "$existing_pr" ]; then
+            gh pr create \
+              --base "$SOURCE_BRANCH" \
+              --head "$bot_branch" \
+              --title "chore: sync publish stream dropdown for #$PULL_REQUEST_NUMBER" \
+              --body "Generated from #$PULL_REQUEST_NUMBER by the trusted main catalog synchronizer. Merge this top stack PR after validation to land both changes."
+          else
+            gh pr edit "$existing_pr" \
+              --title "chore: sync publish stream dropdown for #$PULL_REQUEST_NUMBER" \
+              --body "Generated from #$PULL_REQUEST_NUMBER by the trusted main catalog synchronizer. Merge this top stack PR after validation to land both changes."
+          fi

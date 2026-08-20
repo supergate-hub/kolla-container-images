@@ -38,6 +38,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          STACK_BASE_REF: ${{ github.event.pull_request.stack.base.ref }}
+          STACK_BASE_SHA: ${{ github.event.pull_request.stack.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           REF_NAME: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
@@ -45,15 +47,17 @@ jobs:
           set -euo pipefail
           baseline_sha=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-              echo "Pull request base SHA is required for source-set history validation." >&2
+            effective_base_ref="${STACK_BASE_REF:-$BASE_REF}"
+            effective_base_sha="${STACK_BASE_SHA:-$BASE_SHA}"
+            if [ -z "$effective_base_sha" ] || [ "$effective_base_sha" = "0000000000000000000000000000000000000000" ]; then
+              echo "Pull request effective base SHA is required for source-set history validation." >&2
               exit 1
             fi
-            if [ "$BASE_REF" != "main" ]; then
+            if [ "$effective_base_ref" != "main" ]; then
               echo "Pull requests must target main." >&2
               exit 1
             fi
-            baseline_sha="$BASE_SHA"
+            baseline_sha="$effective_base_sha"
           elif [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ]; then
             if [ "$REF_NAME" = "main" ]; then
               baseline_sha="$BEFORE_SHA"

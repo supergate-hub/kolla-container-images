@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
 BUILD_UNIT_WORKFLOW = ROOT / ".github" / "workflows" / "build-unit.yml"
 VALIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
+SYNC_STREAM_OPTIONS_WORKFLOW = (
+    ROOT / ".github" / "workflows" / "sync-publish-stream-options.yml"
+)
 README = ROOT / "README.md"
 BUILD_READINESS = ROOT / "docs" / "build-readiness.md"
 PUBLISH_DOC = ROOT / "docs" / "publish.md"
@@ -36,6 +39,10 @@ EXPECTED_ACTIONS = {
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7"),
     "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", "v8"),
     "actions/setup-python": ("ece7cb06caefa5fff74198d8649806c4678c61a1", "v6"),
+    "actions/create-github-app-token": (
+        "bcd2ba49218906704ab6c1aa796996da409d3eb1",
+        "v3",
+    ),
     "docker/setup-buildx-action": ("bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "v4"),
 }
 ACTION_RE = re.compile(
@@ -82,6 +89,9 @@ class PublishWorkflowTest(unittest.TestCase):
         cls.publish = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
         cls.build_unit = BUILD_UNIT_WORKFLOW.read_text(encoding="utf-8")
         cls.validate = VALIDATE_WORKFLOW.read_text(encoding="utf-8")
+        cls.sync_stream_options = SYNC_STREAM_OPTIONS_WORKFLOW.read_text(
+            encoding="utf-8"
+        )
         cls.readme = README.read_text(encoding="utf-8")
         cls.build_readiness = BUILD_READINESS.read_text(encoding="utf-8")
         cls.publish_doc = PUBLISH_DOC.read_text(encoding="utf-8")
@@ -122,7 +132,14 @@ class PublishWorkflowTest(unittest.TestCase):
             return result, outputs, output_bytes
 
     def test_workflows_use_only_reviewed_action_commits(self) -> None:
-        combined = self.publish + "\n" + self.build_unit + "\n" + self.validate
+        combined = "\n".join(
+            (
+                self.publish,
+                self.build_unit,
+                self.validate,
+                self.sync_stream_options,
+            )
+        )
         raw_uses = re.findall(r"(?m)^\s*uses:\s+.+$", combined)
         local_calls = [
             line for line in raw_uses
@@ -1033,15 +1050,25 @@ class PublishWorkflowTest(unittest.TestCase):
             "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
             context_step,
         )
+        self.assertIn(
+            "STACK_BASE_REF: ${{ github.event.pull_request.stack.base.ref }}",
+            context_step,
+        )
+        self.assertIn(
+            "STACK_BASE_SHA: ${{ github.event.pull_request.stack.base.sha }}",
+            context_step,
+        )
         self.assertIn("BEFORE_SHA: ${{ github.event.before }}", context_step)
         self.assertIn("REF_NAME: ${{ github.ref_name }}", context_step)
         self.assertIn("REF_TYPE: ${{ github.ref_type }}", context_step)
         self.assertIn('if [ "$EVENT_NAME" = "pull_request" ]', context_step)
-        self.assertIn('if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]', context_step)
-        self.assertIn("Pull request base SHA is required", context_step)
-        self.assertIn('if [ "$BASE_REF" != "main" ]', context_step)
+        self.assertIn('effective_base_ref="${STACK_BASE_REF:-$BASE_REF}"', context_step)
+        self.assertIn('effective_base_sha="${STACK_BASE_SHA:-$BASE_SHA}"', context_step)
+        self.assertIn('if [ -z "$effective_base_sha" ] || [ "$effective_base_sha" = "0000000000000000000000000000000000000000" ]', context_step)
+        self.assertIn("Pull request effective base SHA is required", context_step)
+        self.assertIn('if [ "$effective_base_ref" != "main" ]', context_step)
         self.assertIn("Pull requests must target main.", context_step)
-        self.assertIn('baseline_sha="$BASE_SHA"', context_step)
+        self.assertIn('baseline_sha="$effective_base_sha"', context_step)
         self.assertIn('elif [ "$EVENT_NAME" = "push" ] && [ "$REF_TYPE" = "branch" ]', context_step)
         self.assertIn('if [ "$REF_NAME" = "main" ]', context_step)
         self.assertIn('baseline_sha="$BEFORE_SHA"', context_step)
@@ -1114,6 +1141,71 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('"--image",\n                      "keystone"', self.validate)
         self.assertNotIn("--stream 2025.1-rocky-9", self.validate)
         self.assertIn("python3 -m unittest discover -s tests -v", self.validate)
+
+    def test_matrix_prs_receive_a_trusted_dropdown_stack_pr(self) -> None:
+        workflow = self.sync_stream_options
+        trigger = yaml_block(workflow, "on:")
+        self.assertIn("pull_request_target:", trigger)
+        self.assertIn("- main", trigger)
+        self.assertIn("- config/build-matrix.json", trigger)
+        for event_type in ("opened", "reopened", "synchronize"):
+            self.assertIn(f"- {event_type}", trigger)
+        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
+        self.assertIn(
+            "sync-publish-stream-options-${{ github.event.pull_request.number }}",
+            workflow,
+        )
+        self.assertIn("cancel-in-progress: true", workflow)
+        job = yaml_block(workflow, "  synchronize:")
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            job,
+        )
+        self.assertIn("automation/sync-publish-stream-options/", job)
+        trusted_checkout = yaml_block(job, "      - name: Check out trusted main tools")
+        self.assertIn(expected_action_use("actions/checkout"), trusted_checkout)
+        self.assertIn(
+            "ref: ${{ github.event.pull_request.stack.base.sha || "
+            "github.event.pull_request.base.sha }}",
+            trusted_checkout,
+        )
+        self.assertIn("path: trusted", trusted_checkout)
+        self.assertIn("persist-credentials: false", trusted_checkout)
+        self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", job)
+        token = yaml_block(job, "      - name: Create least-privilege catalog bot token")
+        self.assertIn(expected_action_use("actions/create-github-app-token"), token)
+        self.assertIn("PUBLISH_DROPDOWN_APP_CLIENT_ID", token)
+        self.assertIn("PUBLISH_DROPDOWN_APP_PRIVATE_KEY", token)
+        self.assertIn("permission-contents: write", token)
+        self.assertIn("permission-pull-requests: write", token)
+        render = yaml_block(
+            job,
+            "      - name: Render dropdown from proposal data with trusted tools",
+        )
+        self.assertIn("gh api --method GET", render)
+        self.assertIn("contents/config/build-matrix.json?ref=$HEAD_SHA", render)
+        self.assertIn("contents/.github/workflows/publish.yml?ref=$HEAD_SHA", render)
+        self.assertIn(
+            'python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stream-options.py"',
+            render,
+        )
+        create = yaml_block(
+            job,
+            "      - name: Create or refresh dropdown synchronization stack PR",
+        )
+        self.assertIn('"refs/pull/$PULL_REQUEST_NUMBER/head"', create)
+        self.assertIn('fetched_head="$(git -C "$TRUSTED_REPOSITORY" rev-parse FETCH_HEAD)"', create)
+        self.assertIn('if [ "$fetched_head" != "$HEAD_SHA" ]', create)
+        self.assertIn('checkout --detach "$HEAD_SHA"', create)
+        self.assertIn("core.hooksPath=/dev/null", create)
+        self.assertIn(
+            'git -C "$TRUSTED_REPOSITORY" add .github/workflows/publish.yml',
+            create,
+        )
+        self.assertIn("gh pr create", create)
+        self.assertIn('--base "$SOURCE_BRANCH"', create)
+        self.assertIn('--head "$bot_branch"', create)
+        self.assertIn("gh pr close", create)
 
 
 if __name__ == "__main__":
