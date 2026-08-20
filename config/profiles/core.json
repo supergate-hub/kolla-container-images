@@ -7,10 +7,10 @@
     "2025.1-ubuntu-24.04-20.4.0",
     "2025.1-rocky-10.2-20.5.0",
     "2025.1-ubuntu-24.04-20.5.0",
-    "2025.2-rocky-10.2-21.1.0",
-    "2025.2-ubuntu-24.04-21.1.0",
-    "2026.1-rocky-10.2-22.0.0",
-    "2026.1-ubuntu-24.04-22.0.0"
+    "2025.2-rocky-10.2-21.2.0",
+    "2025.2-ubuntu-24.04-21.2.0",
+    "2026.1-rocky-10.2-22.1.0",
+    "2026.1-ubuntu-24.04-22.1.0"
   ],
   "description": "Digest-lockable Kolla image profile for core OpenStack smoke validation.",
   "build_groups": [
@@ -64,10 +64,7 @@
       "parent": "neutron-base",
       "images": [
         "neutron-server",
-        "neutron-dhcp-agent",
-        "neutron-l3-agent",
-        "neutron-metadata-agent",
-        "neutron-openvswitch-agent"
+        "neutron-metadata-agent"
       ]
     },
     {
@@ -195,27 +192,9 @@
       ]
     },
     {
-      "name": "neutron-dhcp-agent",
-      "kolla_ansible_variables": [
-        "neutron_dhcp_agent_image_full"
-      ]
-    },
-    {
-      "name": "neutron-l3-agent",
-      "kolla_ansible_variables": [
-        "neutron_l3_agent_image_full"
-      ]
-    },
-    {
       "name": "neutron-metadata-agent",
       "kolla_ansible_variables": [
         "neutron_metadata_agent_image_full"
-      ]
-    },
-    {
-      "name": "neutron-openvswitch-agent",
-      "kolla_ansible_variables": [
-        "neutron_openvswitch_agent_image_full"
       ]
     },
     {

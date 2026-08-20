@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Render a plan or publish it after environment approval
+        description: "plan: render and validate only (no build or registry mutation); publish: build and publish after approval"
         required: true
         type: choice
         options:
@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       scope:
-        description: Reviewed image scope
+        description: "Validated image scope: keystone canary, core subset, or full deployment"
         required: true
         type: choice
         options:
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   publish-plan:
-    name: Render frozen publish plan
+    name: Render read-only frozen publish plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:

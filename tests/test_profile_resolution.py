@@ -103,9 +103,9 @@ def source_set_document(
 class ProfileResolutionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.ubuntu_2026 = {
-            "id": "2026.1-ubuntu-24.04-22.0.0",
+            "id": "2026.1-ubuntu-24.04-22.1.0",
             "release": "2026.1",
-            "toolchain": "22.0.0",
+            "toolchain": "22.1.0",
             "base": "ubuntu-24.04",
             "publish_enabled": True,
         }
@@ -121,7 +121,7 @@ class ProfileResolutionTest(unittest.TestCase):
             "releases": {
                 "2026.1": {
                     "series": "gazpacho",
-                    "source_set": "gazpacho-20260813-r1",
+                    "source_set": "gazpacho-20260820-r1",
                 },
                 "2025.1": {
                     "series": "epoxy",
@@ -129,7 +129,7 @@ class ProfileResolutionTest(unittest.TestCase):
                 },
             },
             "toolchains": {
-                "22.0.0": {
+                "22.1.0": {
                     "kolla": {
                         "repository": "https://opendev.org/openstack/kolla",
                         "commit": "a" * 40,
@@ -306,7 +306,7 @@ class ProfileResolutionTest(unittest.TestCase):
 
     def test_stream_resolution_joins_v4_references_without_mutating_matrix(self) -> None:
         self.assertEqual(stream_ids(self.matrix), [
-            "2026.1-ubuntu-24.04-22.0.0",
+            "2026.1-ubuntu-24.04-22.1.0",
             "2025.1-rocky-10.2-20.5.0",
         ])
         stream = find_stream(self.matrix, self.rocky_2025["id"])
@@ -334,7 +334,7 @@ class ProfileResolutionTest(unittest.TestCase):
             find_toolchain(self.matrix, "20.5.0"),
             self.matrix["toolchains"]["20.5.0"],
         )
-        with self.assertRaisesRegex(ValueError, "accepted versions: 20.5.0, 22.0.0"):
+        with self.assertRaisesRegex(ValueError, "accepted versions: 20.5.0, 22.1.0"):
             find_toolchain(self.matrix, "23.0.0")
 
     def test_resolved_stream_rejects_legacy_fields_and_malformed_pins(self) -> None:

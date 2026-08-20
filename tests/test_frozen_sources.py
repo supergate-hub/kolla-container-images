@@ -1002,8 +1002,8 @@ class BuildEngineLockTest(unittest.TestCase):
         for commit in (
             "99b84ab9b9223b10130e3b5da5c8dc00f6e01ef5",
             "d1c4dd49b92e68509a413c33667bbe87cc3d3a9e",
-            "436395ae3523ee925abac3338e63fc5822208744",
-            "dcc077f50eafc5849c7de3fdb800353684fe1210",
+            "422afe0d79511eafa3121547a7d5093096b6e0b6",
+            "e40da0d4a7a73212cb16698a12eaeb5799cc55c7",
         ):
             self.assertIn(commit, provenance)
         requirements = lock["requirements"]

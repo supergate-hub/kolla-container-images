@@ -35,16 +35,16 @@ EXPECTED_VERSION_PROVENANCE = {
         "module_sha256": "de2428c30f3030c17855103cbc491203d6025fa7427093e41e9cbfe091b6325d",
         "summary_method_sha256": EXPECTED_METHOD_SHA256,
     },
-    "21.1.0": {
-        "distribution": "kolla==21.1.0",
+    "21.2.0": {
+        "distribution": "kolla==21.2.0",
         "source_path": "kolla/image/kolla_worker.py",
-        "module_sha256": "fbaac910754a33c79490d781f9c137953d40ef6ed1624cdd74661970c0d86721",
+        "module_sha256": "d486a0e5e1084b4e2de03d4816869a4a2fc32cb9c2001c5eb370ad794255f833",
         "summary_method_sha256": EXPECTED_METHOD_SHA256,
     },
-    "22.0.0": {
-        "distribution": "kolla==22.0.0",
+    "22.1.0": {
+        "distribution": "kolla==22.1.0",
         "source_path": "kolla/image/kolla_worker.py",
-        "module_sha256": "a70c25776f2a10c73aa02fe90a9143fe269af1a1ca39bb2e6f989d737205ef9f",
+        "module_sha256": "cb377762f5bc5c46af46caa6571170fad2e77754164ae838fe5bdda4e3666ed7",
         "summary_method_sha256": EXPECTED_METHOD_SHA256,
     },
 }

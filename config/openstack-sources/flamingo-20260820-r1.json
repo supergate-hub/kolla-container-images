@@ -1,40 +1,53 @@
 {
   "schema_version": 3,
-  "id": "flamingo-20260813-r1",
+  "id": "flamingo-20260820-r1",
   "release": "2025.2",
   "series": "flamingo",
   "policy": "stable-head-snapshot",
-  "generated_at": "2026-08-13T04:21:17Z",
+  "generated_at": "2026-08-20T00:00:00Z",
   "kolla_source_inputs": {
-    "21.1.0": {
+    "21.2.0": {
       "kolla": {
         "repository": "https://opendev.org/openstack/kolla",
-        "commit": "436395ae3523ee925abac3338e63fc5822208744",
-        "sources_sha256": "3b03337c4b408ad13c2cc012b91172eb470358e13c10b724c1fe3f455408a8a2",
+        "commit": "422afe0d79511eafa3121547a7d5093096b6e0b6",
+        "sources_sha256": "2f46895cdea4ed064f0cfd197daac888135a607c19e8a35d281fbedb6f876f28",
         "closure_sha256": "ebcd1cd643b740624a4c4039945713560ca9537acbc642a012086f1484e1d5ec"
       },
       "kolla_ansible": {
         "repository": "https://opendev.org/openstack/kolla-ansible",
-        "commit": "ea3326dd085369383b5b02edc4ddd192e29aed52"
+        "commit": "34daacfbf2d5987f543787f57535b2bebe7dee19"
       }
     }
   },
   "direct_artifacts": {
     "ovn-ctl": {
       "repository": "https://github.com/ovn-org/ovn",
-      "commit": "20b9f0b9a771e07f15d2db270464965663d15f56",
+      "commit": "d760a1dc3e65671dc10971322326179f9166a96c",
       "path": "utilities/ovn-ctl",
-      "url": "https://raw.githubusercontent.com/ovn-org/ovn/20b9f0b9a771e07f15d2db270464965663d15f56/utilities/ovn-ctl",
+      "url": "https://raw.githubusercontent.com/ovn-org/ovn/d760a1dc3e65671dc10971322326179f9166a96c/utilities/ovn-ctl",
       "sha256": "9e4b6e9b8469248bd1a0099eb5b9fc599da14f695b09a3fccfd58a21b4ebf481",
-      "kolla_sections": ["ovn-sb-db-relay"]
+      "kolla_sections": [
+        "ovn-sb-db-relay"
+      ]
     }
   },
   "projects": {
+    "MariaDB/mariadb-docker": {
+      "repository": "https://github.com/MariaDB/mariadb-docker",
+      "track_ref": "master",
+      "kolla_sections": [
+        "mariadb-server-plugin-mariadb-docker"
+      ],
+      "build_commit": "7252cf37a0c4357b6de41d52e90fcd4bf7374249",
+      "nearest_release": null
+    },
     "openstack/blazar-dashboard": {
       "repository": "https://opendev.org/openstack/blazar-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-blazar-dashboard"
+      ],
       "build_commit": "e28aacba9b9851f4ae752275a5589650cf8907a0",
-      "kolla_sections": ["horizon-plugin-blazar-dashboard"],
       "nearest_release": {
         "version": "14.0.0",
         "commit": "cd836a85d993836539128ed9fa1641c6243f97ff"
@@ -43,8 +56,10 @@
     "openstack/blazar-nova": {
       "repository": "https://opendev.org/openstack/blazar-nova",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "nova-base-plugin-blazar"
+      ],
       "build_commit": "fc4b657f7e7f3438cb799ac2c8e9b44d4b82e802",
-      "kolla_sections": ["nova-base-plugin-blazar"],
       "nearest_release": {
         "version": "8.0.0",
         "commit": "1bc12095a2a1a6a66d1f56d30420c72eaaf0d667"
@@ -53,8 +68,10 @@
     "openstack/cinder": {
       "repository": "https://opendev.org/openstack/cinder",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "cinder-base"
+      ],
       "build_commit": "5d59ca2e9818ec6cbc7fffa4ae09d604f62912d3",
-      "kolla_sections": ["cinder-base"],
       "nearest_release": {
         "version": "27.0.0",
         "commit": "c36f40684e140a1492b00dd4812e8dce17fb2ebf"
@@ -63,8 +80,10 @@
     "openstack/cloudkitty-dashboard": {
       "repository": "https://opendev.org/openstack/cloudkitty-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-cloudkitty-dashboard"
+      ],
       "build_commit": "a9adcbae28128f97e59bf1b8f322776f326149e8",
-      "kolla_sections": ["horizon-plugin-cloudkitty-dashboard"],
       "nearest_release": {
         "version": "21.0.0",
         "commit": "a9040c4e567844ec46524a64279333e97f1205a2"
@@ -73,8 +92,10 @@
     "openstack/designate-dashboard": {
       "repository": "https://opendev.org/openstack/designate-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-designate-dashboard"
+      ],
       "build_commit": "9f1e7e9855dc58aa8d3a2ef24eea758a93963b90",
-      "kolla_sections": ["horizon-plugin-designate-dashboard"],
       "nearest_release": {
         "version": "21.0.0",
         "commit": "5ae88cbc9c0d728ce94acc568b7c9394ad49f175"
@@ -83,8 +104,10 @@
     "openstack/glance": {
       "repository": "https://opendev.org/openstack/glance",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "glance-base"
+      ],
       "build_commit": "e475f92b71edda56816855157e94d35ac0989834",
-      "kolla_sections": ["glance-base"],
       "nearest_release": {
         "version": "31.1.0",
         "commit": "fdfb958b6e948e8d7fd183999c026e7c71a050f9"
@@ -93,8 +116,10 @@
     "openstack/heat": {
       "repository": "https://opendev.org/openstack/heat",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "heat-base"
+      ],
       "build_commit": "8c019d44f4a1e0c483d593f87dc82f0e5296d822",
-      "kolla_sections": ["heat-base"],
       "nearest_release": {
         "version": "25.0.1",
         "commit": "8c019d44f4a1e0c483d593f87dc82f0e5296d822"
@@ -103,8 +128,10 @@
     "openstack/heat-dashboard": {
       "repository": "https://opendev.org/openstack/heat-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-heat-dashboard"
+      ],
       "build_commit": "7ee87d7504e97e0538697ba6d7f58884994db7ac",
-      "kolla_sections": ["horizon-plugin-heat-dashboard"],
       "nearest_release": {
         "version": "14.0.0",
         "commit": "c4385db36dac59d4eb394868d973b791b1af36c6"
@@ -113,8 +140,10 @@
     "openstack/horizon": {
       "repository": "https://opendev.org/openstack/horizon",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon"
+      ],
       "build_commit": "3e17252c504286c1528f172f87e55f5f78f11749",
-      "kolla_sections": ["horizon"],
       "nearest_release": {
         "version": "25.5.2",
         "commit": "25e47fc90ab429cf6be10e4c7770ce5b098c1c84"
@@ -123,8 +152,10 @@
     "openstack/ironic-ui": {
       "repository": "https://opendev.org/openstack/ironic-ui",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-ironic-ui"
+      ],
       "build_commit": "c537b9562addf2f61fcbb324959460d9fb5b885d",
-      "kolla_sections": ["horizon-plugin-ironic-ui"],
       "nearest_release": {
         "version": "6.6.0",
         "commit": "abd2400a0e40fff5b50d5b3490915b4a0f3ebcbd"
@@ -133,8 +164,10 @@
     "openstack/keystone": {
       "repository": "https://opendev.org/openstack/keystone",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "keystone-base"
+      ],
       "build_commit": "3dfbbe7b9bd11dcd64420da0e4eda48b637f4a70",
-      "kolla_sections": ["keystone-base"],
       "nearest_release": {
         "version": "28.0.2",
         "commit": "3dfbbe7b9bd11dcd64420da0e4eda48b637f4a70"
@@ -143,8 +176,10 @@
     "openstack/magnum-ui": {
       "repository": "https://opendev.org/openstack/magnum-ui",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-magnum-ui"
+      ],
       "build_commit": "c612216336fda310029aa41ed097d5c37573e1c4",
-      "kolla_sections": ["horizon-plugin-magnum-ui"],
       "nearest_release": {
         "version": "17.0.0",
         "commit": "8b85469c841a151d19b0f09eaf6bdc76f1d44f3b"
@@ -153,8 +188,10 @@
     "openstack/manila": {
       "repository": "https://opendev.org/openstack/manila",
       "track_ref": "stable/2025.2",
-      "build_commit": "5d770727aaef9ac737cad5afe520f5c29c0358dc",
-      "kolla_sections": ["manila-base"],
+      "kolla_sections": [
+        "manila-base"
+      ],
+      "build_commit": "6c5cca2e519c856db8ec3911120cf079ad79a914",
       "nearest_release": {
         "version": "21.0.1",
         "commit": "f0db62c9c2ac8f8ef6f446aefd0363c07e11d664"
@@ -163,8 +200,10 @@
     "openstack/manila-ui": {
       "repository": "https://opendev.org/openstack/manila-ui",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-manila-ui"
+      ],
       "build_commit": "141d62055d23c3f0dd829b5d04b1336b64bf9a90",
-      "kolla_sections": ["horizon-plugin-manila-ui"],
       "nearest_release": {
         "version": "14.0.0",
         "commit": "a915dfc2eb75542b765fd09dd910bcc1257da664"
@@ -173,8 +212,10 @@
     "openstack/masakari-dashboard": {
       "repository": "https://opendev.org/openstack/masakari-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-masakari-dashboard"
+      ],
       "build_commit": "9bf0bc6e4002db3490dccf714979b83888a9eb2d",
-      "kolla_sections": ["horizon-plugin-masakari-dashboard"],
       "nearest_release": {
         "version": "13.0.0",
         "commit": "6ba6cb624135dbda7dd4808c10454cdff26cf38f"
@@ -183,8 +224,10 @@
     "openstack/mistral-dashboard": {
       "repository": "https://opendev.org/openstack/mistral-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-mistral-dashboard"
+      ],
       "build_commit": "98abef7043ec3c119c45669dde1b2a3b7429c154",
-      "kolla_sections": ["horizon-plugin-mistral-dashboard"],
       "nearest_release": {
         "version": "21.0.0",
         "commit": "65db4b54f114106032012eea637f58ddb71606a8"
@@ -193,8 +236,10 @@
     "openstack/networking-baremetal": {
       "repository": "https://opendev.org/openstack/networking-baremetal",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "neutron-base-plugin-networking-baremetal"
+      ],
       "build_commit": "c1c1308e2ed8dfb835570d2eca8a0afae3533179",
-      "kolla_sections": ["neutron-base-plugin-networking-baremetal"],
       "nearest_release": {
         "version": "7.0.0",
         "commit": "b691bda6563579767c54698f5ced87c076257cb6"
@@ -203,8 +248,10 @@
     "openstack/networking-generic-switch": {
       "repository": "https://opendev.org/openstack/networking-generic-switch",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "neutron-base-plugin-networking-generic-switch"
+      ],
       "build_commit": "16315b1b1043b07d88bb147b800c75d88633bd20",
-      "kolla_sections": ["neutron-base-plugin-networking-generic-switch"],
       "nearest_release": {
         "version": "8.0.0",
         "commit": "734eb2588df4683bfd50a26f319555c4bdd10853"
@@ -213,8 +260,10 @@
     "openstack/networking-sfc": {
       "repository": "https://opendev.org/openstack/networking-sfc",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "neutron-base-plugin-networking-sfc"
+      ],
       "build_commit": "861013d2f6172a168897e5863caeb44fa298d760",
-      "kolla_sections": ["neutron-base-plugin-networking-sfc"],
       "nearest_release": {
         "version": "21.0.0",
         "commit": "4a9c570891135768d1e3b17454ea6927822c2c89"
@@ -223,8 +272,10 @@
     "openstack/neutron": {
       "repository": "https://opendev.org/openstack/neutron",
       "track_ref": "stable/2025.2",
-      "build_commit": "be6f741318e1e84de14956791a85c3b79787d1e1",
-      "kolla_sections": ["neutron-base"],
+      "kolla_sections": [
+        "neutron-base"
+      ],
+      "build_commit": "946b7a846190fbd6a392fbd7adf37eea01aba9b7",
       "nearest_release": {
         "version": "27.0.3",
         "commit": "6e846c1a2d5ad40f767e87b6c8ddb14b509ba5d7"
@@ -233,8 +284,10 @@
     "openstack/neutron-dynamic-routing": {
       "repository": "https://opendev.org/openstack/neutron-dynamic-routing",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "neutron-server-plugin-neutron-dynamic-routing"
+      ],
       "build_commit": "229ef20405f7767ebcb7a4e865ee11f874026306",
-      "kolla_sections": ["neutron-server-plugin-neutron-dynamic-routing"],
       "nearest_release": {
         "version": "27.0.0",
         "commit": "9f21d9aa96427ca714b898ff966a33c09ff80696"
@@ -243,8 +296,10 @@
     "openstack/neutron-fwaas": {
       "repository": "https://opendev.org/openstack/neutron-fwaas",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "neutron-base-plugin-neutron-fwaas"
+      ],
       "build_commit": "d5f3489152be1bde7529cad9719fed1551066fbf",
-      "kolla_sections": ["neutron-base-plugin-neutron-fwaas"],
       "nearest_release": {
         "version": "23.0.0",
         "commit": "e87ead131903f8d1baea2f651e504d27e2ae210b"
@@ -253,8 +308,10 @@
     "openstack/neutron-fwaas-dashboard": {
       "repository": "https://opendev.org/openstack/neutron-fwaas-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-fwaas-dashboard"
+      ],
       "build_commit": "3d1bc46f7ad2107e85adf0528c396c19b22188ea",
-      "kolla_sections": ["horizon-plugin-fwaas-dashboard"],
       "nearest_release": {
         "version": "10.0.0",
         "commit": "72d764485279768be8fc9ac9cc5297054a13c871"
@@ -263,8 +320,10 @@
     "openstack/neutron-vpnaas": {
       "repository": "https://opendev.org/openstack/neutron-vpnaas",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "neutron-base-plugin-vpnaas-agent"
+      ],
       "build_commit": "7fbb8f3fa469d831beee216dae1c1829f0173be5",
-      "kolla_sections": ["neutron-base-plugin-vpnaas-agent"],
       "nearest_release": {
         "version": "27.0.0",
         "commit": "e0b5e2001b594edd350f0d87869e117b8bb464a1"
@@ -273,8 +332,10 @@
     "openstack/neutron-vpnaas-dashboard": {
       "repository": "https://opendev.org/openstack/neutron-vpnaas-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-neutron-vpnaas-dashboard"
+      ],
       "build_commit": "9bf310507187b7e0d4be71a56e47ce1d103b7f23",
-      "kolla_sections": ["horizon-plugin-neutron-vpnaas-dashboard"],
       "nearest_release": {
         "version": "13.0.0",
         "commit": "823399e6187a8c365b1d64b9620f99fd949aadc1"
@@ -283,8 +344,10 @@
     "openstack/nova": {
       "repository": "https://opendev.org/openstack/nova",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "nova-base"
+      ],
       "build_commit": "7a1a8a2325172a2f2a07b4447243b46e6959ed70",
-      "kolla_sections": ["nova-base"],
       "nearest_release": {
         "version": "32.2.1",
         "commit": "0e969c5246e3f99b48ed99b58438fc11891b1caa"
@@ -293,8 +356,10 @@
     "openstack/octavia": {
       "repository": "https://opendev.org/openstack/octavia",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "octavia-base"
+      ],
       "build_commit": "1f510b5ed847440e1b79efe9fb878d0e7ec63b91",
-      "kolla_sections": ["octavia-base"],
       "nearest_release": {
         "version": "17.0.0",
         "commit": "fa44598bd8e410222a2c47b08196a2af3012fbfa"
@@ -303,8 +368,10 @@
     "openstack/octavia-dashboard": {
       "repository": "https://opendev.org/openstack/octavia-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-octavia-dashboard"
+      ],
       "build_commit": "eb21635a5196342f06a78c39f81fa0dff43ec2aa",
-      "kolla_sections": ["horizon-plugin-octavia-dashboard"],
       "nearest_release": {
         "version": "16.0.0",
         "commit": "3386566c7c98a055a4e42797f6843f5a44f9e48e"
@@ -313,8 +380,11 @@
     "openstack/ovn-octavia-provider": {
       "repository": "https://opendev.org/openstack/ovn-octavia-provider",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "octavia-api-plugin-ovn-octavia-provider",
+        "octavia-driver-agent-plugin-ovn-octavia-provider"
+      ],
       "build_commit": "1c17bfe45fff4277165f9e580eb3f2f64c048a83",
-      "kolla_sections": ["octavia-api-plugin-ovn-octavia-provider", "octavia-driver-agent-plugin-ovn-octavia-provider"],
       "nearest_release": {
         "version": "9.0.0",
         "commit": "45e9394992478316450c919c873f4fa5d76b8744"
@@ -323,8 +393,10 @@
     "openstack/placement": {
       "repository": "https://opendev.org/openstack/placement",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "placement-base"
+      ],
       "build_commit": "7d5ca9d08377adb8df71d8d1b4a84f4a27878e80",
-      "kolla_sections": ["placement-base"],
       "nearest_release": {
         "version": "14.0.0",
         "commit": "a4644b2799b6de4f4cf69a6bce529a993e97fb71"
@@ -333,16 +405,20 @@
     "openstack/requirements": {
       "repository": "https://opendev.org/openstack/requirements",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "openstack-base"
+      ],
       "build_commit": "0e88245f541e4c82e3b0cf4b63cf50d7b7322d46",
-      "kolla_sections": ["openstack-base"],
       "nearest_release": null,
       "upper_constraints_sha256": "e9d07562064153c10af35ad61a69080ea9f9fa1f5776dcb83ad6446c36fffb36"
     },
     "openstack/tacker-horizon": {
       "repository": "https://opendev.org/openstack/tacker-horizon",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-tacker-dashboard"
+      ],
       "build_commit": "714c5d65dc6f6ccf197a42daf48685d92663e1dc",
-      "kolla_sections": ["horizon-plugin-tacker-dashboard"],
       "nearest_release": {
         "version": "12.0.0",
         "commit": "714c5d65dc6f6ccf197a42daf48685d92663e1dc"
@@ -351,8 +427,10 @@
     "openstack/trove-dashboard": {
       "repository": "https://opendev.org/openstack/trove-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-trove-dashboard"
+      ],
       "build_commit": "5d9174ae75937615041bbb73effa03c624482162",
-      "kolla_sections": ["horizon-plugin-trove-dashboard"],
       "nearest_release": {
         "version": "25.0.0",
         "commit": "dc43b3f2a1299ea0eb4da1c221c20f5c78c27b12"
@@ -361,8 +439,10 @@
     "openstack/watcher-dashboard": {
       "repository": "https://opendev.org/openstack/watcher-dashboard",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-watcher-dashboard"
+      ],
       "build_commit": "7f2a8050c6afeac008481df43ab20da59b457959",
-      "kolla_sections": ["horizon-plugin-watcher-dashboard"],
       "nearest_release": {
         "version": "14.0.0",
         "commit": "4a0f64b5cbd48af7c44788e0f86e313a6e7865a5"
@@ -371,19 +451,14 @@
     "openstack/zun-ui": {
       "repository": "https://opendev.org/openstack/zun-ui",
       "track_ref": "stable/2025.2",
+      "kolla_sections": [
+        "horizon-plugin-zun-ui"
+      ],
       "build_commit": "84a4c81b1a93023ab6b1ec5cc5a5c808f112dea9",
-      "kolla_sections": ["horizon-plugin-zun-ui"],
       "nearest_release": {
         "version": "16.0.0",
         "commit": "a500ef467894718bd8e8c4de8abbeb8342266239"
       }
-    },
-    "MariaDB/mariadb-docker": {
-      "repository": "https://github.com/MariaDB/mariadb-docker",
-      "track_ref": "master",
-      "build_commit": "f8552c80b5104868ff1bb88851ca976bd99029ee",
-      "kolla_sections": ["mariadb-server-plugin-mariadb-docker"],
-      "nearest_release": null
     }
   }
 }

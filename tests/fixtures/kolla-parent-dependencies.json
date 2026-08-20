@@ -203,8 +203,8 @@
       }
     },
     {
-      "id": "2025.2-rocky-10.2-21.1.0",
-      "kolla_version": "21.1.0",
+      "id": "2025.2-rocky-10.2-21.2.0",
+      "kolla_version": "21.2.0",
       "scopes": {
         "core/keystone": [
           "base",
@@ -241,8 +241,8 @@
       }
     },
     {
-      "id": "2025.2-ubuntu-24.04-21.1.0",
-      "kolla_version": "21.1.0",
+      "id": "2025.2-ubuntu-24.04-21.2.0",
+      "kolla_version": "21.2.0",
       "scopes": {
         "core/keystone": [
           "base",
@@ -279,8 +279,8 @@
       }
     },
     {
-      "id": "2026.1-rocky-10.2-22.0.0",
-      "kolla_version": "22.0.0",
+      "id": "2026.1-rocky-10.2-22.1.0",
+      "kolla_version": "22.1.0",
       "scopes": {
         "core/keystone": [
           "base",
@@ -317,8 +317,8 @@
       }
     },
     {
-      "id": "2026.1-ubuntu-24.04-22.0.0",
-      "kolla_version": "22.0.0",
+      "id": "2026.1-ubuntu-24.04-22.1.0",
+      "kolla_version": "22.1.0",
       "scopes": {
         "core/keystone": [
           "base",

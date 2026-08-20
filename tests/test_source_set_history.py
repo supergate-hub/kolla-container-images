@@ -142,7 +142,7 @@ class SourceSetHistoryTest(unittest.TestCase):
         all_streams = [
             "2025.1-rocky-10.2-20.4.0",
             "2025.1-ubuntu-24.04-20.4.0",
-            "2025.2-rocky-10.2-21.1.0",
+            "2025.2-rocky-10.2-21.2.0",
         ]
         self.write_catalog(
             releases=["2025.1", "2025.2"],
@@ -151,7 +151,7 @@ class SourceSetHistoryTest(unittest.TestCase):
         )
         self.write_source_set("epoxy-20260812-r1", "2025.1")
         self.write_source_set("epoxy-20260813-r2", "2025.1")
-        self.write_source_set("flamingo-20260813-r1", "2025.2")
+        self.write_source_set("flamingo-20260820-r1", "2025.2")
         return self.commit(), all_streams
 
     def project_2025_1(self, all_streams: list[str]) -> None:
@@ -163,7 +163,7 @@ class SourceSetHistoryTest(unittest.TestCase):
             streams=owned_streams,
             reviewed_streams=all_streams,
         )
-        (self.repository / "config" / "openstack-sources" / "flamingo-20260813-r1.json").unlink()
+        (self.repository / "config" / "openstack-sources" / "flamingo-20260820-r1.json").unlink()
 
     def test_release_projection_preserves_owned_history_and_may_remove_foreign_files(
         self,
@@ -209,13 +209,13 @@ class SourceSetHistoryTest(unittest.TestCase):
 
     def test_aggregate_catalog_protects_each_active_release_history(self) -> None:
         baseline, _ = self.create_aggregate_baseline()
-        (self.repository / "config" / "openstack-sources" / "flamingo-20260813-r1.json").unlink()
+        (self.repository / "config" / "openstack-sources" / "flamingo-20260820-r1.json").unlink()
 
         result = self.run_validator(baseline=baseline, branch="main")
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must not be deleted", result.stderr)
-        self.assertIn("flamingo-20260813-r1.json", result.stderr)
+        self.assertIn("flamingo-20260820-r1.json", result.stderr)
 
     def test_main_cannot_drop_an_entire_release_and_all_of_its_history(self) -> None:
         baseline, all_streams = self.create_aggregate_baseline()
@@ -231,14 +231,14 @@ class SourceSetHistoryTest(unittest.TestCase):
             self.repository
             / "config"
             / "openstack-sources"
-            / "flamingo-20260813-r1.json"
+            / "flamingo-20260820-r1.json"
         ).unlink()
 
         result = self.run_validator(baseline=baseline, branch="main")
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must not be deleted", result.stderr)
-        self.assertIn("flamingo-20260813-r1.json", result.stderr)
+        self.assertIn("flamingo-20260820-r1.json", result.stderr)
 
     def test_baseline_must_be_an_exact_commit_sha_not_a_ref_or_path_expression(self) -> None:
         _, all_streams = self.create_aggregate_baseline()
@@ -297,7 +297,7 @@ class SourceSetHistoryTest(unittest.TestCase):
         reviewed = [
             "2025.1-rocky-10.2-20.4.0",
             "2025.1-ubuntu-24.04-20.4.0",
-            "2025.2-rocky-10.2-21.1.0",
+            "2025.2-rocky-10.2-21.2.0",
         ]
         self.write_catalog(
             releases=["2025.1"],

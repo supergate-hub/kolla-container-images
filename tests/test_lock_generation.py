@@ -30,8 +30,8 @@ PARSER_CONTRACT_PATH = (
 PINNED_KOLLA_PARSER_MODULE_SHA256 = {
     "20.4.0": "3a22d2f70e8e3f3eea47be1b755ec5c37ed11d282e96db3094cd63846b01549f",
     "20.5.0": "3a22d2f70e8e3f3eea47be1b755ec5c37ed11d282e96db3094cd63846b01549f",
-    "21.1.0": "1c4251075d6ee4987b8fc7bd0429064ef42c905a141f9c863c57d1a0b822d7a0",
-    "22.0.0": "0cc53ffa96081cf6744bbe705652df381b3c4b4547728d01a471fbc0956ddfac",
+    "21.2.0": "1c4251075d6ee4987b8fc7bd0429064ef42c905a141f9c863c57d1a0b822d7a0",
+    "22.1.0": "0cc53ffa96081cf6744bbe705652df381b3c4b4547728d01a471fbc0956ddfac",
 }
 PARSER_CONTRACT_ALIASES = {"20.5.0": "20.4.0"}
 ROOT_ASSIGNMENT_RE = re.compile(r'^([a-z0-9_]+): "([^"]+)"$')
@@ -629,19 +629,19 @@ class LockGenerationTest(unittest.TestCase):
                 {"tgtd_image_full"},
                 NEW_NEUTRON_ALIASES | NEW_EXPORTER_ALIASES,
             ),
-            "2025.2-rocky-10.2-21.1.0": (
+            "2025.2-rocky-10.2-21.2.0": (
                 NEW_NEUTRON_ALIASES,
                 NEW_EXPORTER_ALIASES | {"tgtd_image_full"},
             ),
-            "2025.2-ubuntu-24.04-21.1.0": (
+            "2025.2-ubuntu-24.04-21.2.0": (
                 NEW_NEUTRON_ALIASES | {"tgtd_image_full"},
                 NEW_EXPORTER_ALIASES,
             ),
-            "2026.1-rocky-10.2-22.0.0": (
+            "2026.1-rocky-10.2-22.1.0": (
                 NEW_NEUTRON_ALIASES | NEW_EXPORTER_ALIASES,
                 {"tgtd_image_full"},
             ),
-            "2026.1-ubuntu-24.04-22.0.0": (
+            "2026.1-ubuntu-24.04-22.1.0": (
                 NEW_NEUTRON_ALIASES
                 | NEW_EXPORTER_ALIASES
                 | {"tgtd_image_full"},

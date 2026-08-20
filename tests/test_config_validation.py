@@ -38,20 +38,20 @@ EXPECTED_STREAMS = {
     "2025.1-ubuntu-24.04-20.5.0": (
         "2025.1", "20.5.0", "20.5.0", "ubuntu", "24.04", "24.04"
     ),
-    "2025.2-rocky-10.2-21.1.0": ("2025.2", "21.1.0", "21.1.0", "rocky", "10.2", "10.2"),
-    "2025.2-ubuntu-24.04-21.1.0": (
+    "2025.2-rocky-10.2-21.2.0": ("2025.2", "21.2.0", "21.2.0", "rocky", "10.2", "10.2"),
+    "2025.2-ubuntu-24.04-21.2.0": (
         "2025.2",
-        "21.1.0",
-        "21.1.0",
+        "21.2.0",
+        "21.2.0",
         "ubuntu",
         "24.04",
         "24.04",
     ),
-    "2026.1-rocky-10.2-22.0.0": ("2026.1", "22.0.0", "22.0.0", "rocky", "10.2", "10.2"),
-    "2026.1-ubuntu-24.04-22.0.0": (
+    "2026.1-rocky-10.2-22.1.0": ("2026.1", "22.1.0", "22.1.0", "rocky", "10.2", "10.2"),
+    "2026.1-ubuntu-24.04-22.1.0": (
         "2026.1",
-        "22.0.0",
-        "22.0.0",
+        "22.1.0",
+        "22.1.0",
         "ubuntu",
         "24.04",
         "24.04",
@@ -59,7 +59,7 @@ EXPECTED_STREAMS = {
 }
 EXPECTED_RELEASE_METADATA = {
     "repository": "https://opendev.org/openstack/releases",
-    "commit": "b52dca944f47a401baa8f93a6994217d2a93ea56",
+    "commit": "f5cbd773fd453f59d7002a0c34c5871d71ed8868",
 }
 EXPECTED_TOOLCHAINS = {
     "20.4.0": {
@@ -82,31 +82,31 @@ EXPECTED_TOOLCHAINS = {
             "commit": "18f731b2ef55a7dfb43182682458b1c8053c9cc2",
         },
     },
-    "21.1.0": {
+    "21.2.0": {
         "kolla": {
             "repository": "https://opendev.org/openstack/kolla",
-            "commit": "436395ae3523ee925abac3338e63fc5822208744",
+            "commit": "422afe0d79511eafa3121547a7d5093096b6e0b6",
         },
         "kolla_ansible": {
             "repository": "https://opendev.org/openstack/kolla-ansible",
-            "commit": "ea3326dd085369383b5b02edc4ddd192e29aed52",
+            "commit": "34daacfbf2d5987f543787f57535b2bebe7dee19",
         },
     },
-    "22.0.0": {
+    "22.1.0": {
         "kolla": {
             "repository": "https://opendev.org/openstack/kolla",
-            "commit": "dcc077f50eafc5849c7de3fdb800353684fe1210",
+            "commit": "e40da0d4a7a73212cb16698a12eaeb5799cc55c7",
         },
         "kolla_ansible": {
             "repository": "https://opendev.org/openstack/kolla-ansible",
-            "commit": "e9e3c092a7b3c308581e7597404c72fcfd4dd485",
+            "commit": "dcd07540af662e1283ca77ab5d3b92996f4f992d",
         },
     },
 }
 EXPECTED_RELEASES = {
     "2025.1": {"series": "epoxy", "source_set": "epoxy-20260813-r1"},
-    "2025.2": {"series": "flamingo", "source_set": "flamingo-20260813-r1"},
-    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20260813-r1"},
+    "2025.2": {"series": "flamingo", "source_set": "flamingo-20260820-r1"},
+    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20260820-r1"},
 }
 EXPECTED_BASES = {
     "rocky-9.8": {
@@ -151,10 +151,10 @@ DEPLOYMENT_EXPECTED_COUNTS = {
     "2025.1-ubuntu-24.04-20.4.0": 64,
     "2025.1-rocky-10.2-20.5.0": 63,
     "2025.1-ubuntu-24.04-20.5.0": 64,
-    "2025.2-rocky-10.2-21.1.0": 63,
-    "2025.2-ubuntu-24.04-21.1.0": 64,
-    "2026.1-rocky-10.2-22.0.0": 65,
-    "2026.1-ubuntu-24.04-22.0.0": 66,
+    "2025.2-rocky-10.2-21.2.0": 63,
+    "2025.2-ubuntu-24.04-21.2.0": 64,
+    "2026.1-rocky-10.2-22.1.0": 65,
+    "2026.1-ubuntu-24.04-22.1.0": 66,
 }
 REQUIRED_CINDER = {
     "cinder-api",
@@ -895,12 +895,29 @@ class ConfigValidationTest(unittest.TestCase):
 
     def test_runtime_validator_rejects_coherent_core_leaf_removal(self) -> None:
         profile = copy.deepcopy(load_json(PROFILES_DIR / "core.json"))
-        self.remove_image(profile, "neutron-dhcp-agent")
+        self.remove_image(profile, "neutron-metadata-agent")
 
         errors = self.validate_profile("core", profile)
 
         self.assertTrue(
             any("resolved image set must be exactly" in error for error in errors),
+            errors,
+        )
+
+    def test_core_profile_must_remain_a_deployment_subset(self) -> None:
+        core = copy.deepcopy(load_json(PROFILES_DIR / "core.json"))
+        deployment = copy.deepcopy(load_json(PROFILES_DIR / "deployment.json"))
+        self.remove_image(deployment, "neutron-metadata-agent")
+
+        errors: list[str] = []
+        self.validator["validate_core_subset"](
+            self.matrix,
+            {"core": core, "deployment": deployment},
+            errors,
+        )
+
+        self.assertTrue(
+            any("must be a subset of deployment" in error for error in errors),
             errors,
         )
 
