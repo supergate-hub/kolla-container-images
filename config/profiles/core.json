@@ -64,10 +64,7 @@
       "parent": "neutron-base",
       "images": [
         "neutron-server",
-        "neutron-dhcp-agent",
-        "neutron-l3-agent",
-        "neutron-metadata-agent",
-        "neutron-openvswitch-agent"
+        "neutron-metadata-agent"
       ]
     },
     {
@@ -195,27 +192,9 @@
       ]
     },
     {
-      "name": "neutron-dhcp-agent",
-      "kolla_ansible_variables": [
-        "neutron_dhcp_agent_image_full"
-      ]
-    },
-    {
-      "name": "neutron-l3-agent",
-      "kolla_ansible_variables": [
-        "neutron_l3_agent_image_full"
-      ]
-    },
-    {
       "name": "neutron-metadata-agent",
       "kolla_ansible_variables": [
         "neutron_metadata_agent_image_full"
-      ]
-    },
-    {
-      "name": "neutron-openvswitch-agent",
-      "kolla_ansible_variables": [
-        "neutron_openvswitch_agent_image_full"
       ]
     },
     {

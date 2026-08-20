@@ -895,12 +895,29 @@ class ConfigValidationTest(unittest.TestCase):
 
     def test_runtime_validator_rejects_coherent_core_leaf_removal(self) -> None:
         profile = copy.deepcopy(load_json(PROFILES_DIR / "core.json"))
-        self.remove_image(profile, "neutron-dhcp-agent")
+        self.remove_image(profile, "neutron-metadata-agent")
 
         errors = self.validate_profile("core", profile)
 
         self.assertTrue(
             any("resolved image set must be exactly" in error for error in errors),
+            errors,
+        )
+
+    def test_core_profile_must_remain_a_deployment_subset(self) -> None:
+        core = copy.deepcopy(load_json(PROFILES_DIR / "core.json"))
+        deployment = copy.deepcopy(load_json(PROFILES_DIR / "deployment.json"))
+        self.remove_image(deployment, "neutron-metadata-agent")
+
+        errors: list[str] = []
+        self.validator["validate_core_subset"](
+            self.matrix,
+            {"core": core, "deployment": deployment},
+            errors,
+        )
+
+        self.assertTrue(
+            any("must be a subset of deployment" in error for error in errors),
             errors,
         )
 
