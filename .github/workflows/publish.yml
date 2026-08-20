@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Render a plan or publish it from main after environment approval
+        description: "plan: render and validate only; publish: build and publish from main after environment approval"
         required: true
         type: choice
         options:
@@ -29,7 +29,7 @@ on:
           - 2026.1-ubuntu-24.04-22.0.0
           # END GENERATED STREAM OPTIONS
       scope:
-        description: Reviewed image scope
+        description: "Validated image scope: keystone canary, core subset, or full deployment"
         required: true
         type: choice
         options:
@@ -47,7 +47,7 @@ permissions:
 
 jobs:
   publish-plan:
-    name: Render frozen publish plan
+    name: Render read-only frozen publish plan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
