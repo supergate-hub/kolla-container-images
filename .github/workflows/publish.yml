@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Render a plan or publish it after environment approval
+        description: Render a plan or publish it from main after environment approval
         required: true
         type: choice
         options:
@@ -62,13 +62,18 @@ jobs:
       leaf_stage_1_count: ${{ steps.publish-matrices.outputs.leaf_stage_1_count }}
 
     steps:
-      - name: Require repository-owned invocation
+      - name: Require repository-owned main invocation
         env:
           CALLER_REPOSITORY: ${{ github.repository }}
+          CALLER_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           if [ "$CALLER_REPOSITORY" != "supergate-hub/kolla-container-images" ]; then
             echo "This publish workflow only accepts repository-owned dispatches." >&2
+            exit 1
+          fi
+          if [ "$CALLER_REF" != "refs/heads/main" ]; then
+            echo "This publish workflow may run only from the main branch." >&2
             exit 1
           fi
 

@@ -29,6 +29,10 @@ JSON. When an enabled stream changes, run
 `python3 scripts/sync-publish-stream-options.py --write` in the same change;
 validation rejects a stale dropdown.
 
+Dispatch this workflow from `main` only. GitHub may display the form for another
+branch that contains the workflow file, but its first job rejects that ref before
+checkout or any networked planning work.
+
 ### Automatic stack PRs
 
 When an internal PR targeting `main` changes `config/build-matrix.json`,
