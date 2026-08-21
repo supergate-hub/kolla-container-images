@@ -1044,6 +1044,23 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertNotRegex(self.publish.lower(), r"\b(?:dev|stg|prod)\b")
 
     def test_validation_ci_parses_all_json_and_exercises_required_plans(self) -> None:
+        trigger = yaml_block(self.validate, "on:")
+        self.assertEqual(
+            [
+                line.strip()
+                for line in trigger.splitlines()[1:]
+                if line.strip() and len(line) - len(line.lstrip()) == 2
+            ],
+            ["push:", "pull_request:"],
+        )
+        self.assertEqual(
+            yaml_block(trigger, "  push:"),
+            "  push:\n    branches:\n      - main",
+        )
+        self.assertEqual(
+            yaml_block(trigger, "  pull_request:"),
+            "  pull_request:\n    branches:\n      - main",
+        )
         self.assertIn("find . -type f -name '*.json' -print0", self.validate)
         self.assertIn("python3 -m json.tool", self.validate)
         self.assertIn("set -euo pipefail", self.validate)
