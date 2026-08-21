@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "configuration_digest": "sha256:888fcc7cce652d482fad5d7e15a9809945009f8fa6d79b263d00de09264d8767",
+  "configuration_digest": "sha256:af2311071e081b65de6d3e5d2335c0e496eb15cc5dcc266a45e5c9f0c07d4f52",
   "registry": "ghcr.io",
   "owner": "supergate-hub",
   "repository": "kolla-container-images",
@@ -30,7 +30,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -293,46 +293,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "missing",
@@ -340,26 +300,6 @@
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
                       },
                       "architectures": {
                         "amd64": {
@@ -1734,7 +1674,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -1997,46 +1937,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "missing",
@@ -2044,26 +1944,6 @@
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
                       },
                       "architectures": {
                         "amd64": {
@@ -3438,7 +3318,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -3701,46 +3581,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "missing",
@@ -3748,26 +3588,6 @@
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
                       },
                       "architectures": {
                         "amd64": {
@@ -5171,7 +4991,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -5434,46 +5254,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "published",
-                      "manifest_digest": "sha256:94b768af1e7356b7768bf735fcbdf61d425aab5911e1b4a93bff81694b5b46d9",
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "published",
-                          "digest": "sha256:db3c1daeb863f024f20b1bcc267acd621274f1b875b5aed24310af62354c8694"
-                        },
-                        "arm64": {
-                          "status": "published",
-                          "digest": "sha256:64bdc599eb415618daa921b722911ee1caaa6ca4305ca2adad6f1bfc4d15cdd8"
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "published",
-                      "manifest_digest": "sha256:9725c7d702cae6506915e4b0630807c6f84b94fefe8f063524102ce6eb182710",
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "published",
-                          "digest": "sha256:be051f7d7e449b0e1db4a1abf8ef7e57cbf28b8a56890f798d899c5764ef9191"
-                        },
-                        "arm64": {
-                          "status": "published",
-                          "digest": "sha256:f8d610a4f656fe33bd741015f9c082a857985368abcaf0acfe8334114d439b3f"
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "published",
@@ -5490,26 +5270,6 @@
                         "arm64": {
                           "status": "published",
                           "digest": "sha256:150bc2e27ea766a9976c926d2159931b256b3a683afe51d120cb78b5d8cf6c82"
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "published",
-                      "manifest_digest": "sha256:c9b52dbc25bd7d196498fc12db34ea877a5cd826ba71b0b3bf266a4756b71a41",
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "published",
-                          "digest": "sha256:ca6eba50453fb5aea569238a57c744b8fd9e47433dff2696293c8dcf305a45e7"
-                        },
-                        "arm64": {
-                          "status": "published",
-                          "digest": "sha256:822565cc903bcffca7bc79d1a935d3c18907024297616a7d786a219e40cf98fd"
                         }
                       }
                     },
@@ -6877,7 +6637,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -7140,46 +6900,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "published",
@@ -7196,26 +6916,6 @@
                         "arm64": {
                           "status": "published",
                           "digest": "sha256:ac5a4e3fb02f06e89a3e81e627127e12ed832e7a3ebc3f020c1782eb04e1c66f"
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
                         }
                       }
                     },
@@ -8614,7 +8314,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -8877,46 +8577,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "published",
@@ -8933,26 +8593,6 @@
                         "arm64": {
                           "status": "published",
                           "digest": "sha256:f7f373bfbee272adcda32e8a02485a4b9b5dcaaae48ce1f65488ed566f04f37e"
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
                         }
                       }
                     },
@@ -10318,7 +9958,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -10581,46 +10221,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "missing",
@@ -10628,26 +10228,6 @@
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
                       },
                       "architectures": {
                         "amd64": {
@@ -12055,7 +11635,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -12318,46 +11898,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "missing",
@@ -12365,26 +11905,6 @@
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
                       },
                       "architectures": {
                         "amd64": {
@@ -13799,7 +13319,7 @@
               "profiles": [
                 {
                   "name": "core",
-                  "image_count": 21,
+                  "image_count": 18,
                   "images": [
                     {
                       "name": "keystone",
@@ -14062,46 +13582,6 @@
                       }
                     },
                     {
-                      "name": "neutron-dhcp-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-dhcp-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-dhcp-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-l3-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-l3-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-l3-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
                       "status": "missing",
@@ -14109,26 +13589,6 @@
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
-                      },
-                      "architectures": {
-                        "amd64": {
-                          "status": "missing",
-                          "digest": null
-                        },
-                        "arm64": {
-                          "status": "missing",
-                          "digest": null
-                        }
-                      }
-                    },
-                    {
-                      "name": "neutron-openvswitch-agent",
-                      "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
-                      "package": {
-                        "name": "kolla-container-images/neutron-openvswitch-agent",
-                        "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-openvswitch-agent"
                       },
                       "architectures": {
                         "amd64": {
