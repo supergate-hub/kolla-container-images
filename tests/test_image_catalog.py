@@ -164,7 +164,7 @@ class ImageCatalogTest(unittest.TestCase):
         self.assertEqual(keystone["status"], "partial")
         self.assertEqual(keystone["architectures"]["arm64"]["status"], "missing")
 
-    def test_packages_inventory_paginates_and_reports_unmanaged_packages(self) -> None:
+    def test_packages_inventory_paginates_for_a_separate_diagnostic_consumer(self) -> None:
         generator = self.generator
         requests: list[str] = []
 
@@ -197,6 +197,10 @@ class ImageCatalogTest(unittest.TestCase):
         self.assertEqual(len(packages), 101)
         self.assertEqual(len(requests), 2)
 
+    def test_full_catalog_never_enumerates_every_organization_package(self) -> None:
+        generator = self.generator
+        package_lookups: list[str] = []
+
         class EmptyRegistry:
             def list_tags(self, repository: str) -> set[str]:
                 return set()
@@ -204,23 +208,24 @@ class ImageCatalogTest(unittest.TestCase):
             def fetch_manifest(self, repository: str, tag: str):
                 raise AssertionError("missing tags do not request manifests")
 
-        catalog = self.generator.build_catalog(
+        class ManagedPackagesOnly:
+            def list_container_packages(self, owner: str):
+                raise AssertionError("catalog rendering must not enumerate organization packages")
+
+            def get_container_package(self, owner: str, name: str):
+                package_lookups.append(name)
+                return None
+
+        catalog = generator.build_catalog(
             load_matrix(),
             stream_ids=[STREAM_ID],
             profile_names=["core"],
             registry_client=EmptyRegistry(),
-            package_client=client,
+            package_client=ManagedPackagesOnly(),
         )
-        inventory = catalog["package_inventory"]
-        self.assertEqual(inventory["status"], "complete")
-        self.assertIn(
-            {
-                "name": "kolla-container-images/unmanaged",
-                "html_url": "https://example.test/unmanaged",
-                "status": "unmanaged",
-            },
-            inventory["unmanaged"],
-        )
+
+        self.assertEqual(catalog["package_inventory"], {"status": "managed-only", "unmanaged": []})
+        self.assertIn("kolla-container-images/keystone", package_lookups)
 
     def test_incremental_lookup_reads_only_the_new_container_package(self) -> None:
         generator = self.generator

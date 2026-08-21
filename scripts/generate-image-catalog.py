@@ -503,7 +503,6 @@ def build_catalog(
     manifest_digest_cache: dict[tuple[str, str], str | None] = {}
     package_cache: dict[str, Package | None] = {}
     releases: dict[str, dict[str, Any]] = {}
-    expected_packages: set[str] = set()
 
     for raw_stream in matrix["streams"]:
         stream_id = raw_stream.get("id") if isinstance(raw_stream, dict) else None
@@ -552,7 +551,6 @@ def build_catalog(
                     f"{matrix['owner']}/{matrix['repository']}/{image['name']}"
                 )
                 package_name = f"{matrix['repository']}/{image['name']}"
-                expected_packages.add(package_name)
                 previous = previous_images.get((stream["id"], name, image["name"]))
                 must_refresh = (
                     mode == "full"
@@ -598,7 +596,7 @@ def build_catalog(
                                 f"{image['name']}:{alias}"
                             )
                     package_html_url = None
-                    if mode != "full" and package_client is not None:
+                    if package_client is not None:
                         if package_name not in package_cache:
                             package_cache[package_name] = package_client.get_container_package(
                                 matrix["owner"], package_name
@@ -646,33 +644,10 @@ def build_catalog(
         if missing:
             raise CatalogError(f"requested streams are not configured: {', '.join(missing)}")
 
-    if package_client is None or mode != "full":
-        if mode != "full" and isinstance(baseline, dict):
-            package_inventory = copy.deepcopy(
-                baseline.get("package_inventory", {"status": "registry-only", "unmanaged": []})
-            )
-        else:
-            package_inventory = {"status": "registry-only", "unmanaged": []}
-        packages: dict[str, Package] = {}
-    else:
-        packages = package_client.list_container_packages(matrix["owner"])
-        package_inventory = {
-            "status": "complete",
-            "unmanaged": [
-                {"name": package.name, "html_url": package.html_url, "status": "unmanaged"}
-                for name, package in sorted(packages.items())
-                if name not in expected_packages
-            ],
-        }
-
-    for release in releases.values():
-        for toolchain in release["toolchains"].values():
-            for target in toolchain["targets"]:
-                for profile in target["profiles"]:
-                    for image in profile["images"]:
-                        package = packages.get(image["package"]["name"])
-                        if package is not None:
-                            image["package"]["html_url"] = package.html_url
+    package_inventory = {
+        "status": "managed-only" if package_client is not None else "registry-only",
+        "unmanaged": [],
+    }
 
     return {
         "schema_version": 2,
