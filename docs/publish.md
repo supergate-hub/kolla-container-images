@@ -20,7 +20,7 @@ The form contains exactly three inputs:
 
 | Input | Contract |
 | --- | --- |
-| `operation` | Choice `plan` or `publish`; default `plan` |
+| `operation` | Choice `plan` (render and validate only; no build or registry mutation) or `publish` (build and publish from `main` after approval); default `plan` |
 | `stream` | Dropdown generated from enabled IDs in the aggregate schema-v4 matrix |
 | `scope` | Choice `keystone`, `core`, or `deployment`; default `keystone` |
 
