@@ -11640,360 +11640,360 @@
                     {
                       "name": "keystone",
                       "service_area": "identity",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:98bbbd3102a85cd0fa0117f961ac2a39dad4a1cb1053f12f7ed0a665b8276f10",
                       "package": {
                         "name": "kolla-container-images/keystone",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeystone"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:f0f498aa52805d05697cc20e1594bf229d08850c9ea73ba10541b0b102b71557"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9267ef1328e503e8f8c9542b03f5279a92fa0579fb29d21fb33404c60d5706d0"
                         }
                       }
                     },
                     {
                       "name": "keystone-fernet",
                       "service_area": "identity",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:9148832f295296e4e7d12eae4f36dcb83ff86bafe65baab975f214965c3f7fa4",
                       "package": {
                         "name": "kolla-container-images/keystone-fernet",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeystone-fernet"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b0530413ed484c004a75661cdec8ff8fc4ab358213a38e8b5f4e00f662ca9823"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:bda55ceb2ab510c55b0c8e05d00ddb6059c604002be9d3aa4d1c47f31f1e6667"
                         }
                       }
                     },
                     {
                       "name": "keystone-ssh",
                       "service_area": "identity",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:c55e7ca3c4dde7c9a9b47155d86cffa3ac4d4dc99473863d8bc8cee61ded0f18",
                       "package": {
                         "name": "kolla-container-images/keystone-ssh",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeystone-ssh"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:70d7f3e81083e18f8db541e63e02ba2913670857f29a6ef94f00569127112734"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:010cb854df1555af5e27e6b2a6241e91c239b3e1f8683ba1aee2071d824320d8"
                         }
                       }
                     },
                     {
                       "name": "glance-api",
                       "service_area": "glance",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:0d4de828527b47be32b7617d523a22c2433e2a409b30c6655e66256db387d7fe",
                       "package": {
                         "name": "kolla-container-images/glance-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fglance-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7fd2f877bc9c656af90e706d88308ddd13776dfe846fd2312a44a2a2f1bfc8ea"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:f08775932ef5fb9fe9039efa5a2d41c1cb6d1dd14696aac3d7eaf8ab9b359074"
                         }
                       }
                     },
                     {
                       "name": "placement-api",
                       "service_area": "placement",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:d4a8f564267ede1cbc1e8904ea4a8abe3c4bcf886f0d1103ba935ec8d967a75e",
                       "package": {
                         "name": "kolla-container-images/placement-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fplacement-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:ad355eba557e1524decd1330ba0bde56e89c9c1ed7fb1eec8fa06f1c96ce86eb"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:44334ba7ee92607bb438b4c99fed401f9c1ec1c707c3f14c6b5262f59493fc49"
                         }
                       }
                     },
                     {
                       "name": "nova-api",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:07ea73c1a1315377ba875111d10ecaae4f110c88c24318c1ac86454e6dc39bbf",
                       "package": {
                         "name": "kolla-container-images/nova-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7c228a0735ea61c7948e71b2c0a3ea47e5e353044e94328ed42027b3fe8ac8d6"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:dc4f03c695864bbc089d55a8013827fc86615c0107d3100292ba437cb234b3f8"
                         }
                       }
                     },
                     {
                       "name": "nova-scheduler",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:c46f40f00224b5d8b7af16f056aac254b43684f1ba0b48b8bfb3ce38211c5cb4",
                       "package": {
                         "name": "kolla-container-images/nova-scheduler",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-scheduler"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:abfd17533ac181645d03e27a94eadfa268e07aacc37de4a75ecda86dc816928d"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:aec50feec2f76cef66f3ef6b16bbd3146dffe84af03520534df2616c96061013"
                         }
                       }
                     },
                     {
                       "name": "nova-conductor",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:f47b49d34dc22c21d67db175d46767aad2f4406170835e9478acec9301c4d6de",
                       "package": {
                         "name": "kolla-container-images/nova-conductor",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-conductor"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2ed5311578a40b8dcbf3802744e8de64c1ac7fcb695d61d8aaba3f1df942a5f0"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2313488f7ab16b7af72e1541a97fd2c3306c9118b6a2dc75d9c644cc0db65e55"
                         }
                       }
                     },
                     {
                       "name": "nova-compute",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:3a03dfd06b9f482a8acc4100bc615ed56e7f45f3c965c91e2650afc3d7a8f6d3",
                       "package": {
                         "name": "kolla-container-images/nova-compute",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-compute"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:60207b8f4b5de2f1f31c09fc5fb759ba5c22c7c2731094c5d8cd395ef72a0ecd"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:697bb043a55a7273b2ac439b16109ddc1ee8d40db19b8fa3bed0ed7ad0b5c9a3"
                         }
                       }
                     },
                     {
                       "name": "nova-libvirt",
                       "service_area": "compute-runtime",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:db9be86b2e36dd2ad4af13117ec5f69e5636e3fcb0ca861613ad571c63647131",
                       "package": {
                         "name": "kolla-container-images/nova-libvirt",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-libvirt"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:57a0f024832e3d24a88f8890cf752a292d9fe7ef47f0acf1d99d97be1d9e4831"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:4f694bf47d7503132c35b35366d05d52bf0f41d78b76893f5b098aa448aae7c8"
                         }
                       }
                     },
                     {
                       "name": "nova-ssh",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:00dfff4239258af85c97aa1fbbe98fc0eb803c7e369f8e539d0dd59988ab603e",
                       "package": {
                         "name": "kolla-container-images/nova-ssh",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-ssh"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:d3e10b5bab2e1fbbec44d90ba2b888752ac19ed7a9c1e0d55ea3f845f6ed2743"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:54961a4c85cdaabc51e72b934fe09b5bedf9614be2891a1e6052e66c01ad46ff"
                         }
                       }
                     },
                     {
                       "name": "nova-novncproxy",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:efdaa6efc78fd297552510fc2c710d8d3311138e063ad8decebe3d092bf69d4f",
                       "package": {
                         "name": "kolla-container-images/nova-novncproxy",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-novncproxy"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:79d6b5dfb7f2363e33ae710be66e9f0f141fe0c9c942612dd13e403ebf810e65"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:e25e2aa5fe4d8347093a732d8d372f5cbda510e67908ab19e7a94101a5ec8aa7"
                         }
                       }
                     },
                     {
                       "name": "neutron-server",
                       "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:0f8af25c27b82ee9cf1acbf33f6a98c728dd1c5c43d5b746cf87648345298889",
                       "package": {
                         "name": "kolla-container-images/neutron-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:4021d494e092772e29f95ffbb4f23263331cabc8c9832108d03877b8d999f5ad"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9614ff26ef9ebd61125029a9815e43bc1b3864018cd752f2ea0c2aef8e322d9c"
                         }
                       }
                     },
                     {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:34af62c7470a2b9a9dd2b2e9b04323e1d8a114d0c934823d263c05a3f5623106",
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:892fddfb6f0a42b99ed1e7ded1fa60e046f576d550b8444a9c25f2f747fa2301"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:c0650e3a8360c1c3044ef3d3ae97cc72e201e42e190c046b87346a3c0f8990b9"
                         }
                       }
                     },
                     {
                       "name": "heat-api",
                       "service_area": "orchestration",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:a75275a57c6de2845886ad7161aad2059f6851c26de89106741219fd3d9637a2",
                       "package": {
                         "name": "kolla-container-images/heat-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fheat-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:944d8eba70090251fb411626337f35fffc6e0d419fa1f8d046fb048fe97c27c8"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9eb34fe3d14c00a1a623524137cce0848e60fc04cf6b455c6e6043467bd773c7"
                         }
                       }
                     },
                     {
                       "name": "heat-api-cfn",
                       "service_area": "orchestration",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:29d447720b76595731a6f0d88158d9148b92b89d0f2cb8fe8ba67d4cc7ef248d",
                       "package": {
                         "name": "kolla-container-images/heat-api-cfn",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fheat-api-cfn"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:e6678e03864182b3f89c0c85767b7a2215bc9ddfa836620d208c1a3e404e10ec"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:0afb0f29b5a6d1ae45c1938e992ef0da949fadcf70e0d7843904a64ead1520f0"
                         }
                       }
                     },
                     {
                       "name": "heat-engine",
                       "service_area": "orchestration",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:da8d555d2435be40330063b980698a751e5061712d53f131502b787721bb865b",
                       "package": {
                         "name": "kolla-container-images/heat-engine",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fheat-engine"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:cff7dfdc0dc7243c06c238739b3800b3a41b0d3e0740be17cb5f169b82954dcf"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b217f6e9810a65a68070ae7486b4b0e449e9cd9c4081da104c06cde8e2be8140"
                         }
                       }
                     },
                     {
                       "name": "horizon",
                       "service_area": "dashboard",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:3d81bfae2df596617b15f2e43704987f8f0604f1e4010d8697ff86732688725f",
                       "package": {
                         "name": "kolla-container-images/horizon",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fhorizon"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2b318e76a87cb8a92141bac974700342d7e7e6552651ce5a5bb3e6c3ba31d9e4"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5053120c30bd49ee99944c89125310aa152632dede7286312cca8e6e53a3b22a"
                         }
                       }
                     }
@@ -12006,1300 +12006,1300 @@
                     {
                       "name": "cron",
                       "service_area": "common",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:e0b4acad2872a404e8730399f903b3378ce5462752a48bb58e7cacc1c7589e2d",
                       "package": {
                         "name": "kolla-container-images/cron",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fcron"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:48f62511ff8950e3804e106ea7d07363d60586c6844f41aaee663a97ecda5f71"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:18b1a64664e062fc5bb62ad43f0dc2669a947be6bf16f817e36cfefcefc83f15"
                         }
                       }
                     },
                     {
                       "name": "fluentd",
                       "service_area": "common",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:b2e0048696b911a1fdc9d86b27cd057577d8b08079492854aeed5e1f4d6eb8aa",
                       "package": {
                         "name": "kolla-container-images/fluentd",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Ffluentd"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:441a30b124c96f40da5d152b4e76a4f9bba982ada822bdee62a1a8698ba21c62"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:27d9508651c8dad7ed6aa167c9e1d70ff46bda8fb82cd83140b93c40f7777615"
                         }
                       }
                     },
                     {
                       "name": "glance-api",
                       "service_area": "glance",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:0d4de828527b47be32b7617d523a22c2433e2a409b30c6655e66256db387d7fe",
                       "package": {
                         "name": "kolla-container-images/glance-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fglance-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7fd2f877bc9c656af90e706d88308ddd13776dfe846fd2312a44a2a2f1bfc8ea"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:f08775932ef5fb9fe9039efa5a2d41c1cb6d1dd14696aac3d7eaf8ab9b359074"
                         }
                       }
                     },
                     {
                       "name": "grafana",
                       "service_area": "search-ui",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:4b6bdd21279991455b1f31e2b18580c06991b3e4a1b94efdc2a12f5a41cf6552",
                       "package": {
                         "name": "kolla-container-images/grafana",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fgrafana"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:68c69c65b3fddf2c9938fbb03e217ad1d2df81ee503bdee74639c333ba3b6cb9"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2296bf7d22e650d92f4fda0ecbb287ff137f000f68e5f05f6bcf8f500f21bdfc"
                         }
                       }
                     },
                     {
                       "name": "haproxy",
                       "service_area": "loadbalancer",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:dccb38b328ff1e201c5f1b9361121d69f496b75aaae25209a11b35706de23d9e",
                       "package": {
                         "name": "kolla-container-images/haproxy",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fhaproxy"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:c431177a88956b2bc8f9ded5278c36f448da2bbf1bb4e76e0dd700523b10d35c"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:3c4efd99f0666f8c0a20253eb759d3389d3e39bd901a3c762ed74060e2a148d6"
                         }
                       }
                     },
                     {
                       "name": "heat-api",
                       "service_area": "orchestration",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:a75275a57c6de2845886ad7161aad2059f6851c26de89106741219fd3d9637a2",
                       "package": {
                         "name": "kolla-container-images/heat-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fheat-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:944d8eba70090251fb411626337f35fffc6e0d419fa1f8d046fb048fe97c27c8"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9eb34fe3d14c00a1a623524137cce0848e60fc04cf6b455c6e6043467bd773c7"
                         }
                       }
                     },
                     {
                       "name": "heat-api-cfn",
                       "service_area": "orchestration",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:29d447720b76595731a6f0d88158d9148b92b89d0f2cb8fe8ba67d4cc7ef248d",
                       "package": {
                         "name": "kolla-container-images/heat-api-cfn",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fheat-api-cfn"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:e6678e03864182b3f89c0c85767b7a2215bc9ddfa836620d208c1a3e404e10ec"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:0afb0f29b5a6d1ae45c1938e992ef0da949fadcf70e0d7843904a64ead1520f0"
                         }
                       }
                     },
                     {
                       "name": "heat-engine",
                       "service_area": "orchestration",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:da8d555d2435be40330063b980698a751e5061712d53f131502b787721bb865b",
                       "package": {
                         "name": "kolla-container-images/heat-engine",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fheat-engine"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:cff7dfdc0dc7243c06c238739b3800b3a41b0d3e0740be17cb5f169b82954dcf"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b217f6e9810a65a68070ae7486b4b0e449e9cd9c4081da104c06cde8e2be8140"
                         }
                       }
                     },
                     {
                       "name": "horizon",
                       "service_area": "dashboard",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:3d81bfae2df596617b15f2e43704987f8f0604f1e4010d8697ff86732688725f",
                       "package": {
                         "name": "kolla-container-images/horizon",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fhorizon"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2b318e76a87cb8a92141bac974700342d7e7e6552651ce5a5bb3e6c3ba31d9e4"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5053120c30bd49ee99944c89125310aa152632dede7286312cca8e6e53a3b22a"
                         }
                       }
                     },
                     {
                       "name": "keepalived",
                       "service_area": "loadbalancer",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:e12e678da1def3de52778b65834438ab995e7e6f62920b2fe17783efefdf4c92",
                       "package": {
                         "name": "kolla-container-images/keepalived",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeepalived"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:344361e20e16bf4d5efdf9b6ca67368730b8cf7cacf312de0384e479476b227a"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:6d13a1ee66a7e3f9d0f7e0f9a3c4d50a9365391767c9238c867593f76cbcc536"
                         }
                       }
                     },
                     {
                       "name": "keystone",
                       "service_area": "identity",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:98bbbd3102a85cd0fa0117f961ac2a39dad4a1cb1053f12f7ed0a665b8276f10",
                       "package": {
                         "name": "kolla-container-images/keystone",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeystone"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:f0f498aa52805d05697cc20e1594bf229d08850c9ea73ba10541b0b102b71557"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9267ef1328e503e8f8c9542b03f5279a92fa0579fb29d21fb33404c60d5706d0"
                         }
                       }
                     },
                     {
                       "name": "keystone-fernet",
                       "service_area": "identity",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:9148832f295296e4e7d12eae4f36dcb83ff86bafe65baab975f214965c3f7fa4",
                       "package": {
                         "name": "kolla-container-images/keystone-fernet",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeystone-fernet"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b0530413ed484c004a75661cdec8ff8fc4ab358213a38e8b5f4e00f662ca9823"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:bda55ceb2ab510c55b0c8e05d00ddb6059c604002be9d3aa4d1c47f31f1e6667"
                         }
                       }
                     },
                     {
                       "name": "keystone-ssh",
                       "service_area": "identity",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:c55e7ca3c4dde7c9a9b47155d86cffa3ac4d4dc99473863d8bc8cee61ded0f18",
                       "package": {
                         "name": "kolla-container-images/keystone-ssh",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkeystone-ssh"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:70d7f3e81083e18f8db541e63e02ba2913670857f29a6ef94f00569127112734"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:010cb854df1555af5e27e6b2a6241e91c239b3e1f8683ba1aee2071d824320d8"
                         }
                       }
                     },
                     {
                       "name": "kolla-toolbox",
                       "service_area": "common",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:f1034500e5bd3c6e520531c1b539aa32ed009c1dc153aecf4d09bc419d997efb",
                       "package": {
                         "name": "kolla-container-images/kolla-toolbox",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fkolla-toolbox"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:67f9942994caf6a1c62449f838daf3969f147c7987ea39f51da45404e0cf7dc0"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:60dfc90d67a11a0043a78404370c624f3a7cff586299080e816e8177d84c8333"
                         }
                       }
                     },
                     {
                       "name": "mariadb-server",
                       "service_area": "database-modern",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:29f86b63627d7572b57a890da9e36b47735be91d51877fcedce80289b7e8e650",
                       "package": {
                         "name": "kolla-container-images/mariadb-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fmariadb-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:479f3547b6ef58a70384c8f9760ba131d6c7d83267cdf2bdf09c8b7ba0cefa2b"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:8fa89de804bacf0ec72e29974fa9c8bf4bea1c934b4bf861005e5ef1bcaea4da"
                         }
                       }
                     },
                     {
                       "name": "memcached",
                       "service_area": "messaging-cache",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:c5a97e4e1ede9939c4bc1634e29b4cfa50d7bfa9dc7cfb0e36f6476aa6179c24",
                       "package": {
                         "name": "kolla-container-images/memcached",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fmemcached"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5d014ce70652883cc19e1b566f5fabae8e4a38c0572eb789a03a6fa72b7125e3"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:580bff38bfb3dbc2f52554e0fe140970a899655deda5ecb4b02ff0a0f03ba3dc"
                         }
                       }
                     },
                     {
                       "name": "neutron-metadata-agent",
                       "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:34af62c7470a2b9a9dd2b2e9b04323e1d8a114d0c934823d263c05a3f5623106",
                       "package": {
                         "name": "kolla-container-images/neutron-metadata-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-metadata-agent"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:892fddfb6f0a42b99ed1e7ded1fa60e046f576d550b8444a9c25f2f747fa2301"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:c0650e3a8360c1c3044ef3d3ae97cc72e201e42e190c046b87346a3c0f8990b9"
                         }
                       }
                     },
                     {
                       "name": "neutron-server",
                       "service_area": "network",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:0f8af25c27b82ee9cf1acbf33f6a98c728dd1c5c43d5b746cf87648345298889",
                       "package": {
                         "name": "kolla-container-images/neutron-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fneutron-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:4021d494e092772e29f95ffbb4f23263331cabc8c9832108d03877b8d999f5ad"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9614ff26ef9ebd61125029a9815e43bc1b3864018cd752f2ea0c2aef8e322d9c"
                         }
                       }
                     },
                     {
                       "name": "nova-api",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:07ea73c1a1315377ba875111d10ecaae4f110c88c24318c1ac86454e6dc39bbf",
                       "package": {
                         "name": "kolla-container-images/nova-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7c228a0735ea61c7948e71b2c0a3ea47e5e353044e94328ed42027b3fe8ac8d6"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:dc4f03c695864bbc089d55a8013827fc86615c0107d3100292ba437cb234b3f8"
                         }
                       }
                     },
                     {
                       "name": "nova-compute",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:3a03dfd06b9f482a8acc4100bc615ed56e7f45f3c965c91e2650afc3d7a8f6d3",
                       "package": {
                         "name": "kolla-container-images/nova-compute",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-compute"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:60207b8f4b5de2f1f31c09fc5fb759ba5c22c7c2731094c5d8cd395ef72a0ecd"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:697bb043a55a7273b2ac439b16109ddc1ee8d40db19b8fa3bed0ed7ad0b5c9a3"
                         }
                       }
                     },
                     {
                       "name": "nova-conductor",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:f47b49d34dc22c21d67db175d46767aad2f4406170835e9478acec9301c4d6de",
                       "package": {
                         "name": "kolla-container-images/nova-conductor",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-conductor"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2ed5311578a40b8dcbf3802744e8de64c1ac7fcb695d61d8aaba3f1df942a5f0"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:2313488f7ab16b7af72e1541a97fd2c3306c9118b6a2dc75d9c644cc0db65e55"
                         }
                       }
                     },
                     {
                       "name": "nova-libvirt",
                       "service_area": "compute-runtime",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:db9be86b2e36dd2ad4af13117ec5f69e5636e3fcb0ca861613ad571c63647131",
                       "package": {
                         "name": "kolla-container-images/nova-libvirt",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-libvirt"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:57a0f024832e3d24a88f8890cf752a292d9fe7ef47f0acf1d99d97be1d9e4831"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:4f694bf47d7503132c35b35366d05d52bf0f41d78b76893f5b098aa448aae7c8"
                         }
                       }
                     },
                     {
                       "name": "nova-novncproxy",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:efdaa6efc78fd297552510fc2c710d8d3311138e063ad8decebe3d092bf69d4f",
                       "package": {
                         "name": "kolla-container-images/nova-novncproxy",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-novncproxy"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:79d6b5dfb7f2363e33ae710be66e9f0f141fe0c9c942612dd13e403ebf810e65"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:e25e2aa5fe4d8347093a732d8d372f5cbda510e67908ab19e7a94101a5ec8aa7"
                         }
                       }
                     },
                     {
                       "name": "nova-scheduler",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:c46f40f00224b5d8b7af16f056aac254b43684f1ba0b48b8bfb3ce38211c5cb4",
                       "package": {
                         "name": "kolla-container-images/nova-scheduler",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-scheduler"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:abfd17533ac181645d03e27a94eadfa268e07aacc37de4a75ecda86dc816928d"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:aec50feec2f76cef66f3ef6b16bbd3146dffe84af03520534df2616c96061013"
                         }
                       }
                     },
                     {
                       "name": "nova-ssh",
                       "service_area": "compute",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:00dfff4239258af85c97aa1fbbe98fc0eb803c7e369f8e539d0dd59988ab603e",
                       "package": {
                         "name": "kolla-container-images/nova-ssh",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fnova-ssh"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:d3e10b5bab2e1fbbec44d90ba2b888752ac19ed7a9c1e0d55ea3f845f6ed2743"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:54961a4c85cdaabc51e72b934fe09b5bedf9614be2891a1e6052e66c01ad46ff"
                         }
                       }
                     },
                     {
                       "name": "octavia-api",
                       "service_area": "octavia",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:e2f07bc95a2b7788c4d8edeed0ba2039a52dea5189da1c5972cc5d7bb1ceff72",
                       "package": {
                         "name": "kolla-container-images/octavia-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Foctavia-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:03d986da3e5030783759826d7087803e566c2f4646ae8385e792cc6d63d69ac8"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:4e56890c9442a6ad9bb32d5ec9a6305740950668b2ec37fb2dae2a8a5dc0a944"
                         }
                       }
                     },
                     {
                       "name": "octavia-driver-agent",
                       "service_area": "octavia",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:1dfddfbf2edaedd32e2dbc53c421b144153e9bf6b3db24600e13b2d9caee4328",
                       "package": {
                         "name": "kolla-container-images/octavia-driver-agent",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Foctavia-driver-agent"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:8058e137c3ceb26c68477c9b9d8ef4bb628fbd77a740affe8ddff4d094f07030"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:4af60fc02070b1e2bafa50c5c389e8ad404d8e313c63e2e50369b6874c856d07"
                         }
                       }
                     },
                     {
                       "name": "octavia-health-manager",
                       "service_area": "octavia",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:5a00a1718d49f5267a4613de9347809dc3a274bbd417defdad0138c77ff6ceac",
                       "package": {
                         "name": "kolla-container-images/octavia-health-manager",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Foctavia-health-manager"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:d154a4400079b68b2315c63313a0b38f3ed4b846863e4768fe717ecacee6dbde"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:db68f55de3708aa1e2ff4555025e31156bdbcfb55d22b9420a83e5e3c1b509b2"
                         }
                       }
                     },
                     {
                       "name": "octavia-housekeeping",
                       "service_area": "octavia",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:468e13fb4b9d011431d0785f62dbb32c332a2166c35ffce70185b21e02962849",
                       "package": {
                         "name": "kolla-container-images/octavia-housekeeping",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Foctavia-housekeeping"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:6e5748f789cf002fab79544bbd00242ab905c1d58e344c8365bd23c480c83a0d"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:283c81581c6f7c211dad0983010b2d41df28614ee64e2e70ffeaa731927dccae"
                         }
                       }
                     },
                     {
                       "name": "octavia-worker",
                       "service_area": "octavia",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:982f5ebea2cf4e47a9f9b03c39d54118431e5a7d7c24dd50ab34fa8fda6ae5ec",
                       "package": {
                         "name": "kolla-container-images/octavia-worker",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Foctavia-worker"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:3e6210dd49f5e24a2de0e744d74ae83e90286633b0015f4c99d9addb0cd2c6fa"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:1ae66b721405f0b9f932caf159ceb8d2bc641d500a02a041e9c1ce17ce69dc44"
                         }
                       }
                     },
                     {
                       "name": "opensearch",
                       "service_area": "search-ui",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:973b14b4105f787ae76197a54abc89ba8bdfd1d929cb03cd726defe1530358d0",
                       "package": {
                         "name": "kolla-container-images/opensearch",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fopensearch"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:1b85ca80a0220881cd0b40dc70487bf3cdc2cd10528484e155d5ca170120f969"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:47a6f89109bd82c9b3a7e7049ef94bf5d65b88099c909ccc752f5780471a04c9"
                         }
                       }
                     },
                     {
                       "name": "opensearch-dashboards",
                       "service_area": "search-ui",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:13fabd6b9fc21a6ab9f76d2af8e6915e04ed981ef1a8301e42813276d566d29a",
                       "package": {
                         "name": "kolla-container-images/opensearch-dashboards",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fopensearch-dashboards"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:178faeda6d0410fa9c24c0180460bedae1c3b8fdfa0a4cdc5aeac104db0ccee6"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b21fed336166d3ccc4b9001f72f0eebf4a2d4addb5b7b1b652341bef0fc786e3"
                         }
                       }
                     },
                     {
                       "name": "openvswitch-db-server",
                       "service_area": "openvswitch",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:0634540d3b2e8c83ce55f3b965bdab025aab1adb1078b5adf75165d2b7465ccc",
                       "package": {
                         "name": "kolla-container-images/openvswitch-db-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fopenvswitch-db-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b306ea4a075b2ddd8d67f85cde1b773e83c8e2ddc45c6605762cbf23b8276c4a"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:19dc61fbb57bd5316c09418e3b19fd5ab040166466887548c2988c47a734da19"
                         }
                       }
                     },
                     {
                       "name": "openvswitch-vswitchd",
                       "service_area": "openvswitch",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:98cfe2ed80f9109c354d1c271e2eec8326685543369731d2542498e7a81acaee",
                       "package": {
                         "name": "kolla-container-images/openvswitch-vswitchd",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fopenvswitch-vswitchd"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:ade9bad64c147088eb4a5890aeb31885d34ef9136fc69baca1586181bb89f473"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:465b1b0e750f0146dc8e33d4cd2361a8802038cd41cacdbd8682402d8eaaf2a2"
                         }
                       }
                     },
                     {
                       "name": "ovn-controller",
                       "service_area": "ovn",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:78d6852b47cbeb463cb07cecd3b195fc0162ffc041681045012b52a64e436c54",
                       "package": {
                         "name": "kolla-container-images/ovn-controller",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fovn-controller"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:686fd90646d58fdb47617e4a837b950a7760577601e43177d9748b4c80b86a29"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:0e71a97aed76c7e6389dd80c9c8300183858ad87ec95d0eaaf1d227df17d304d"
                         }
                       }
                     },
                     {
                       "name": "ovn-nb-db-server",
                       "service_area": "ovn",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:1ed4b49b971bb39120c24187de427ecfdd3f6a347b0278d79c0ed34c0cdae653",
                       "package": {
                         "name": "kolla-container-images/ovn-nb-db-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fovn-nb-db-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7151b7d8e57bfb8cba3bf3ba1cb0a395716a5959f9e05d34e3647bfc4b394266"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:fa0eb731694a43052ec55aa7db698d87fda0c6230b536b9160f618765ec001dd"
                         }
                       }
                     },
                     {
                       "name": "ovn-northd",
                       "service_area": "ovn",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:23e58a11f11217c4eda18823fe1bba29c29972678162d7ce1bedb33eb1914dc6",
                       "package": {
                         "name": "kolla-container-images/ovn-northd",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fovn-northd"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:dfcadd6578f2d37f84b873971a4259ea9869f78176a33d11bb6ee342fe970000"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:fc2bae64ebeba01bee07cec677b4764a49b76d36a6ec5cca7cd6013f1ab903c8"
                         }
                       }
                     },
                     {
                       "name": "ovn-sb-db-relay",
                       "service_area": "ovn-sb-db-relay",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:768c23c2693c08fc1bc746e185ac73b69e0030d9223f8beccf6e0298b89cc4c3",
                       "package": {
                         "name": "kolla-container-images/ovn-sb-db-relay",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fovn-sb-db-relay"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:75636bdbaeb2a5b7a8df1f373adb13a348125d2cd8381e4dd2bc6b625fc72f84"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b82f0452cde29a132d1947ff1ca8e5fe42dc8dd0dc89998889e3a56a1a071646"
                         }
                       }
                     },
                     {
                       "name": "ovn-sb-db-server",
                       "service_area": "ovn",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:88feb8b94aa080243070449ae2b988d01c02486b9272a39a4e768c1e7551ac76",
                       "package": {
                         "name": "kolla-container-images/ovn-sb-db-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fovn-sb-db-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:47a85f4d9ee6a595ce93486d68303bb740659c1f2e82399dfe0c0cbce0f9174b"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9df7eaf5e643ec13da4abccce9b63e0829f336f05873d48c0dbf23011a66d7c7"
                         }
                       }
                     },
                     {
                       "name": "placement-api",
                       "service_area": "placement",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:d4a8f564267ede1cbc1e8904ea4a8abe3c4bcf886f0d1103ba935ec8d967a75e",
                       "package": {
                         "name": "kolla-container-images/placement-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fplacement-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:ad355eba557e1524decd1330ba0bde56e89c9c1ed7fb1eec8fa06f1c96ce86eb"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:44334ba7ee92607bb438b4c99fed401f9c1ec1c707c3f14c6b5262f59493fc49"
                         }
                       }
                     },
                     {
                       "name": "prometheus-alertmanager",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:4d72d63ed8324450fb156ab75b65a8828bf975b192de1f7477dabe7091642420",
                       "package": {
                         "name": "kolla-container-images/prometheus-alertmanager",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-alertmanager"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:59981129717800f3b0aaa2e5ca69ac8f8bcba11c7e6b64e70b46cee9066e37ac"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7e741521ba08f99e4137fd5789be7ff14c3115d90e55886b6aef1867b7cab00b"
                         }
                       }
                     },
                     {
                       "name": "prometheus-blackbox-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:a3822d162a747e4ac11a686560f87de702671032762bd25d59abd75f47f5be16",
                       "package": {
                         "name": "kolla-container-images/prometheus-blackbox-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-blackbox-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:ef280fbb510c7b85ed839c11807442b8bd7e9676ede02a249c5fd0bfb8417651"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b3719744c460516c8cc08b60243f7518a293c94727dffff1b254c03a50ad30dc"
                         }
                       }
                     },
                     {
                       "name": "prometheus-cadvisor",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:8e246251e34526f2ba63a64159ffe794f42a03f870e83ee06b2ed88e69495337",
                       "package": {
                         "name": "kolla-container-images/prometheus-cadvisor",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-cadvisor"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:091404f3e33a7ef561944742e4ddf6eadd91209522f8f02cd931da604ae774dd"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9b4c660176143e437904f2c29b968ff457dd1b0a943406909767c44e226dd80f"
                         }
                       }
                     },
                     {
                       "name": "prometheus-elasticsearch-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:7d50fa4279d7a87fe78e3dd4906e4796a2137a51ccfdfca4daa4c1b9e8389446",
                       "package": {
                         "name": "kolla-container-images/prometheus-elasticsearch-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-elasticsearch-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:cd148aaa7de51f9bacbbce642c44b6c42fbf532929bd9c874256c4f57e52f7da"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:620dc16a5d5bcb7abe3d07d4d0f03dffa8a9f22e5c21c8a71bc935ac8f8047c8"
                         }
                       }
                     },
                     {
                       "name": "prometheus-libvirt-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:2fe16d8913868ba59fd4baed8d07226f5e60ea9ed325062aad483f63e0377342",
                       "package": {
                         "name": "kolla-container-images/prometheus-libvirt-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-libvirt-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:be3742588cbe6fead9334006e262b3c8572000dec193a4ad64633fedbae7bfdb"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:98f85863ae99fe9e6ec3d0ee7c789946be698d8538074d3c7c60c5b71d7db1ec"
                         }
                       }
                     },
                     {
                       "name": "prometheus-memcached-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:9535f933ca162f8392419e188a3601fb28670bcdceb6041536388342aaa06f48",
                       "package": {
                         "name": "kolla-container-images/prometheus-memcached-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-memcached-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:9d39670b18686194b090a6401039fb4ead28ab5d8a3ca2cd2669327e30d7c0ef"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:8c8c783d71f6f2e47c252b03150ffc55fc19373dc251648b2f264a5fa391b6bb"
                         }
                       }
                     },
                     {
                       "name": "prometheus-mysqld-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:41244a7ce127a6078e8cf8ba8d84f455ec7ceb4349fb385f8d9ab031d088a729",
                       "package": {
                         "name": "kolla-container-images/prometheus-mysqld-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-mysqld-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:457f931051a86a15f4e0cef89c1345d0e2b4a82124376308daab9309bf358f5a"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:3cc25649b7d43e4abb87658a91ecf361df247ebf9cf9d63a9042a577341c6051"
                         }
                       }
                     },
                     {
                       "name": "prometheus-node-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:10abd11226d10023d012a3141bd4e4d65cdafee2546c993bfed4a3bf566b7f31",
                       "package": {
                         "name": "kolla-container-images/prometheus-node-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-node-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:3f1167037a130c917e80d39f4e5db21024a5b4cdcce610595dbfaa5ed5642046"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:87662a16f55225cd4d6654ef68471c461b838d1ef2e4e4e46b8bc1a86ab24821"
                         }
                       }
                     },
                     {
                       "name": "prometheus-openstack-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:6866e1a3e453f6b6990a17d410bfe9e820e6e6178a179391e68d2b547a2bc915",
                       "package": {
                         "name": "kolla-container-images/prometheus-openstack-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-openstack-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:d67ad32933ab4ccc48b34d084e4a00c32918658cacd1030239c7f93d3acdbd7b"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:134ac2f29a48845c70bbaa081f558b66a0458b96ddda23b10b69d26f9e59d0f1"
                         }
                       }
                     },
                     {
                       "name": "prometheus-server",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:a2c9c829719136b98a8fc7c6dca0bdd017269b2d9f25dfdedea46d989ade6790",
                       "package": {
                         "name": "kolla-container-images/prometheus-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:49541128f52b96af9d48e16991e69e5f6c7127f3a2143eb298ff19a3c5ff3be6"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:fbdb600cd49d314052d9d82bf2f5e213b8fc8b912088ef3041c8c642f5970c90"
                         }
                       }
                     },
                     {
                       "name": "proxysql",
                       "service_area": "loadbalancer",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:4c0ee229c9b85c1f9e4b2edc5270e4d86d67c4e087c0a40d188d1287b920d72a",
                       "package": {
                         "name": "kolla-container-images/proxysql",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fproxysql"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:0e17c50f1ee15f443a7909f1c2066df3e5b6f26bd8c2696ebc5c07b16978a665"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:6e0cc874d4415f5e9a0099afebe17b5d889dd1b39d73676aa8036bc04478d0f1"
                         }
                       }
                     },
                     {
                       "name": "rabbitmq",
                       "service_area": "messaging-cache",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:345688552f8a495bc2d98995e96176a3c0323c72b90b4743f03c0afb0fd3c285",
                       "package": {
                         "name": "kolla-container-images/rabbitmq",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Frabbitmq"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:131f3642b815d44cf01b5474d1e651e7e43a28f713f5fa3ba5d7075e478b8f63"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:be7a34adbcf9beae08e502150e3783cc2c881ef4c70302dd9e57d146fefbab2b"
                         }
                       }
                     },
                     {
                       "name": "cinder-api",
                       "service_area": "cinder",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:dc6844e5e55d0b70d6ba44a0f91148c1fbd646e09a1b3e88b09c2dd3bf6bf4d8",
                       "package": {
                         "name": "kolla-container-images/cinder-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fcinder-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:80ca2b2e85059dc673c8c82d13d6a7035913f5e0229f9c705758f6478540c204"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:b246a2417a5de01185599fc5a665ff7e069e343c96ee6d7d1829b16cbd6d70eb"
                         }
                       }
                     },
                     {
                       "name": "cinder-backup",
                       "service_area": "cinder",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:6abd1329e3ff44bb0f500e5d3924bb279026faf7ee26cee9a40f50ea3b919910",
                       "package": {
                         "name": "kolla-container-images/cinder-backup",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fcinder-backup"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:706102dcb05747b8d35ed3480e1db095ddf0cec85bed336ffba43ab1555362fd"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:eb545734412d400027a6a47dfa767453033647f0ab3b462c47e69b33fc143167"
                         }
                       }
                     },
                     {
                       "name": "cinder-scheduler",
                       "service_area": "cinder",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:5d6551fd3c4c2772138d52b4b7e397bfc9a5d515d30d51f4aef53549cec8b40a",
                       "package": {
                         "name": "kolla-container-images/cinder-scheduler",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fcinder-scheduler"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:570c2b668f859dc71cff1bc1ad563977bbacfa39d7d7a8789127d9a122de7466"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:88180bf3b265838e15b5a98432db03a3b69ae33bee78fcf3b0919325c38bb8f3"
                         }
                       }
                     },
                     {
                       "name": "cinder-volume",
                       "service_area": "cinder",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:f6c88148236b9633837c6d74b4e7b65bdf5fbc9d1f1dc9f89211879cb5861238",
                       "package": {
                         "name": "kolla-container-images/cinder-volume",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fcinder-volume"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:3162fe703d05aee0da84c7e9ef7dc7900c9bbe550ef3cbb0776de024096e0e8e"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:6f15c81a21bd903171e6b41b0e2dbde815de77b08f95c423a691933e04600054"
                         }
                       }
                     },
                     {
                       "name": "iscsid",
                       "service_area": "storage-runtime",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:42ef4e1c4b37c04a22eb2b0d8d756a4ca8bb5d675a4f549060315c259b87cd8d",
                       "package": {
                         "name": "kolla-container-images/iscsid",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fiscsid"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:22bdb69a82702b22262f405a851551e2c9113c90b98a00c50c65f3e803d9f4d4"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5367668b3e95bb986fd6d490677e94bb7370ff2dd1391fb9b5150128813b9880"
                         }
                       }
                     },
                     {
                       "name": "manila-api",
                       "service_area": "manila",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:c89559d264f643e76db90b65df815eb86e615e908d0f15db680a9777d2e1e8fe",
                       "package": {
                         "name": "kolla-container-images/manila-api",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fmanila-api"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:62f1fdac2af017f938b8f14298242fe5197899cc587de4a473af1750ecd7ce27"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:dcaa3cc1722753ceede1ba8ad5310191adf2568fa85b0e068e43da70a97cd590"
                         }
                       }
                     },
                     {
                       "name": "manila-data",
                       "service_area": "manila",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:b9b6b987559e9bef7ebdf416447e2adf361c1a2812e79405ff2dcbc01d74eb95",
                       "package": {
                         "name": "kolla-container-images/manila-data",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fmanila-data"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:487af246f78e247da196c16d1224024e6d7e120d289276aee42d2e9e29233535"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:bcc3cb37dd12a013e8b8c58b42651c1b64cb12dc3e20433777f20624b804a391"
                         }
                       }
                     },
                     {
                       "name": "manila-scheduler",
                       "service_area": "manila",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:1915f1ea9d2d777a15146ae97ef88328c354a90dbbaf690fa009b15bdf0b0e76",
                       "package": {
                         "name": "kolla-container-images/manila-scheduler",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fmanila-scheduler"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:28580a02f32e37c1ab3b3cb4ce548c73729f46e3333edb832b51d33c23b64d1f"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:531349d682ccf99c5518884fa1380515778fb4cc3978ab37e89e834dfe54591a"
                         }
                       }
                     },
                     {
                       "name": "manila-share",
                       "service_area": "manila",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:aaea1a3eefd9714f86ed28d9d9ef35b636116e34e12b758b3176841fac0675f0",
                       "package": {
                         "name": "kolla-container-images/manila-share",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fmanila-share"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5c74f5b6d991f901715b7e59cc3ce0e6bc0dfd10566957a154a8b0d310a06023"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:c63786b610c3792826ff0b7fe5d0922578e9cca87c77801eee4bdfc562f10a72"
                         }
                       }
                     },
                     {
                       "name": "valkey-server",
                       "service_area": "coordination",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:67687091644194e10ad7409a910d5db26d77e10201ca699f88304d568110dbbe",
                       "package": {
                         "name": "kolla-container-images/valkey-server",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fvalkey-server"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5645004a5207228ae10a6eca14d8557df0f28ce57c878b5d7c224921e6484742"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:07a75ff5a9f949a614dd1a49ac0f6c4a2c527db28d6dfa9b800a59a140386567"
                         }
                       }
                     },
                     {
                       "name": "valkey-sentinel",
                       "service_area": "coordination",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:2be30133e01649336e974f023d6a968c65530f87501c2501088a6753a30d208c",
                       "package": {
                         "name": "kolla-container-images/valkey-sentinel",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fvalkey-sentinel"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:7f9bce3917349525d9ff01cad4ea6fddde5d53dda8b38f2e896407bf75f99714"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:5b40387d6acf968208db5783d8156875eb2cf6db9edc2121f7ab84a488b9cc5a"
                         }
                       }
                     },
                     {
                       "name": "prometheus-openstack-network-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:84b5eca36de274523788192951d93acb4c0afd2b62f6dbf41616944937b62947",
                       "package": {
                         "name": "kolla-container-images/prometheus-openstack-network-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-openstack-network-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:1aacc4a3320a54425fe131a74950f85b1d452b2fcb6d76ef9268921aad9ff230"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:f111ae72128b415c400bf602e3125a5c7b252990e276479959b389bb7f3dd5c6"
                         }
                       }
                     },
                     {
                       "name": "prometheus-valkey-exporter",
                       "service_area": "monitoring",
-                      "status": "missing",
-                      "manifest_digest": null,
+                      "status": "published",
+                      "manifest_digest": "sha256:5a2780ff1c7db619c7d1e88f913e7ec1c6e1cc62c97414be25d298603f65e5da",
                       "package": {
                         "name": "kolla-container-images/prometheus-valkey-exporter",
                         "html_url": "https://github.com/orgs/supergate-hub/packages/container/package/kolla-container-images%2Fprometheus-valkey-exporter"
                       },
                       "architectures": {
                         "amd64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:fb08fabe8657a5327d3311f06ca912d6b8d9add7f837980d8a1f20c3934b972e"
                         },
                         "arm64": {
-                          "status": "missing",
-                          "digest": null
+                          "status": "published",
+                          "digest": "sha256:c3a3a52451e5425c832980ad415d1b4f1d984fff4f34feca850be2b9289e8a4d"
                         }
                       }
                     }
