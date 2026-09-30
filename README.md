@@ -240,6 +240,25 @@ also requires protected `main` and the `ghcr-publish` environment approval. See
 [docs/publish.md](docs/publish.md) for the operator contract and
 [docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
 
+The repository keeps four workflows:
+
+| Workflow | Purpose |
+| --- | --- |
+| `validate.yml` | Check configuration, source history, generated dropdown, and tests on pushes and PRs |
+| `publish.yml` | Manually plan or publish images, with recovery from verified completed units |
+| `build-unit.yml` | Reusable native image build called by the publish workflow |
+| `update-catalog.yml` | Refresh the Pages catalog after configuration changes or successful publication, or on manual request |
+
+Pages serves the `gh-pages` branch. The catalog workflow updates `catalog.json`
+and `catalog-data.js`; GitHub's Pages deployment publishes that snapshot. A
+successful plan does not change the catalog. See
+[catalog updates](docs/publish.md#catalog-updates) for refresh modes and manual
+reconciliation.
+
+To prepare a new immutable OpenStack source-set revision, use
+`python3 scripts/generate-openstack-source-set.py --help`. This is a manual
+maintenance tool; it is not part of each image build.
+
 ## Repository layout
 
 ```text
@@ -256,6 +275,7 @@ scripts/generate-lock.py              Generic candidate-lock schema-v3 renderer
 .github/workflows/validate.yml        Repository validation
 .github/workflows/publish.yml         Dispatch-only plan/publish workflow
 .github/workflows/build-unit.yml      Reusable one-target native build job
+.github/workflows/update-catalog.yml  Configuration, publish, and manual catalog refresh
 ```
 
 ## Local validation

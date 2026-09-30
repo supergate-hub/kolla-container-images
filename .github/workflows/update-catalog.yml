@@ -1,6 +1,21 @@
-name: Update catalog after image publish
+name: Update image catalog
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - config/build-matrix.json
+      - config/profiles/**
+  workflow_dispatch:
+    inputs:
+      refresh_mode:
+        description: Reconcile the catalog from the aggregate configuration
+        required: true
+        type: choice
+        options:
+          - incremental
+          - full
+        default: full
   workflow_run:
     workflows: ["Publish Kolla images"]
     types: [completed]
@@ -11,10 +26,14 @@ concurrency:
 
 jobs:
   update-catalog:
-    name: Refresh and commit published catalog entries
+    name: Refresh and commit image catalog
     if: >-
-      ${{ github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.event == 'workflow_dispatch' }}
+      ${{ (github.event_name == 'workflow_run' &&
+           github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'workflow_dispatch' &&
+           github.event.workflow_run.head_branch == 'main') ||
+          ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+           github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -40,7 +59,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate aggregate catalog configuration
+        run: python3 scripts/validate-config.py --branch main
+
       - name: List triggering workflow artifacts
+        if: ${{ github.event_name == 'workflow_run' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -52,6 +75,7 @@ jobs:
 
       - name: Select terminal publish artifact
         id: artifact
+        if: ${{ github.event_name == 'workflow_run' }}
         env:
           PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
           PUBLISH_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
@@ -72,10 +96,9 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
-      - name: Validate terminal summary and commit changed catalog entries
+      - name: Validate terminal publish summary
+        id: summary
         if: ${{ steps.artifact.outputs.should_refresh == 'true' }}
-        env:
-          CATALOG_PACKAGES_TOKEN: ${{ secrets.CATALOG_PACKAGES_TOKEN || github.token }}
         run: |
           set -euo pipefail
           mapfile -t summaries < <(find publish-artifact -type f -name 'publish-summary-*.json' -print)
@@ -110,12 +133,30 @@ jobs:
               command.extend(["--allow-partial", "--image", scope["image"]])
           subprocess.run(command, check=True)
           PY
+          printf 'path=%s\n' "$SUMMARY_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Render and commit changed catalog data
+        if: ${{ github.event_name != 'workflow_run' || steps.artifact.outputs.should_refresh == 'true' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_MODE: ${{ inputs.refresh_mode }}
+          PUBLISH_SUMMARY: ${{ steps.summary.outputs.path }}
+          CATALOG_PACKAGES_TOKEN: ${{ secrets.CATALOG_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          catalog_args=(--baseline pages/catalog.json --output generated/catalog.json)
+          case "$EVENT_NAME" in
+            push) mode=incremental ;;
+            workflow_dispatch) mode="$REQUESTED_MODE" ;;
+            workflow_run)
+              mode=publish
+              catalog_args+=(--publish-summary "$PUBLISH_SUMMARY")
+              ;;
+            *) echo "Unsupported catalog event: $EVENT_NAME" >&2; exit 1 ;;
+          esac
           mkdir -p generated
           python3 scripts/generate-image-catalog.py \
-            --mode publish \
-            --baseline pages/catalog.json \
-            --publish-summary "$SUMMARY_PATH" \
-            --output generated/catalog.json
+            --mode "$mode" "${catalog_args[@]}"
           python3 -m json.tool generated/catalog.json >/dev/null
           node --check pages/assets/app.js
           if cmp -s generated/catalog.json pages/catalog.json && \
@@ -137,6 +178,6 @@ jobs:
             git -C pages push origin HEAD:refs/heads/gh-pages
 
       - name: Mark successful plan run as a no-op
-        if: ${{ steps.artifact.outputs.should_refresh != 'true' }}
+        if: ${{ github.event_name == 'workflow_run' && steps.artifact.outputs.should_refresh != 'true' }}
         run: |
           echo "The successful workflow run was a plan; no catalog data changed."

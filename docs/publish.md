@@ -220,6 +220,40 @@ These recovery rules apply to runs started with this workflow version. GitHub
 reruns retain the original workflow commit, so an older failed run must be
 replaced by a new dispatch to use the updated recovery behavior.
 
+## Catalog updates
+
+`.github/workflows/update-catalog.yml` is the single catalog writer. It reads the
+aggregate configuration from `main` and serializes refreshes with the
+`catalog-pages` concurrency group, without cancelling an active refresh.
+
+| Trigger | Refresh behavior |
+| --- | --- |
+| A `main` push changes `config/build-matrix.json` or `config/profiles/**` | `incremental`: reconcile configuration and inspect new or changed stream/profile entries |
+| A successful `Publish Kolla images` dispatch from `main` completes | `publish`: select the terminal artifact for that exact run and attempt, validate its publish summary, and refresh its published images |
+| Manual dispatch from `main` | `full` by default, or `incremental` when explicitly selected |
+
+A successful `operation=plan` run has no terminal publish artifact and does not
+change the catalog. Failed or cancelled publish runs do not run the refresh job.
+Malformed publish artifacts or summaries fail validation before catalog changes.
+
+The workflow generates both `catalog.json` and `catalog-data.js`, validates the
+JSON and site JavaScript, and commits the data to `gh-pages` only if it changed. GitHub Pages continues
+to deploy from the root of that branch. Its generated `pages-build-deployment`
+workflow is managed by GitHub and is not an additional workflow file to remove.
+The website displays the last catalog snapshot; opening the page does not query
+GHCR live.
+
+To reconcile all catalog entries against the registry:
+
+```bash
+gh workflow run update-catalog.yml --ref main --field refresh_mode=full
+```
+
+Use `--field refresh_mode=incremental` for a configuration reconciliation that
+preserves unchanged baseline entries. The optional `CATALOG_PACKAGES_TOKEN`
+continues to fall back to `github.token`. Transient network failures use the
+shared retry policy, including retries of the same `gh-pages` push.
+
 ## Tags, summary, and lock
 
 For candidate `123456789-1`, the Nova Compute refs of
