@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -205,6 +206,27 @@ class FakeRunner:
 
 
 class BuildUnitTest(unittest.TestCase):
+    def test_command_runner_retries_only_docker_network_operations(self):
+        command = ["docker", "pull", "--platform", "linux/arm64", "registry/image@sha256:" + "a" * 64]
+        error = subprocess.CalledProcessError(1, command, stderr="unexpected EOF")
+        done = subprocess.CompletedProcess(command, 0, "Downloaded\n", "")
+        with patch.object(BUILD_UNIT.subprocess, "run", side_effect=[error, done]) as run, \
+             patch("time.sleep") as sleep:
+            result = BUILD_UNIT.CommandRunner().run(command, capture_output=True)
+        self.assertIs(result, done)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+        self.assertEqual(run.call_args.kwargs["timeout"], 900)
+        sleep.assert_called_once_with(5)
+        for command, message in [(["docker", "run", "--rm", "image", "/bin/true"], "connection reset"),
+                                 (["docker", "pull", "image"], "unauthorized")]:
+            with patch.object(BUILD_UNIT.subprocess, "run", side_effect=subprocess.CalledProcessError(
+                    1, command, stderr=message)) as run, patch("time.sleep") as sleep:
+                with self.assertRaises(subprocess.CalledProcessError):
+                    BUILD_UNIT.CommandRunner().run(command)
+            run.assert_called_once()
+            sleep.assert_not_called()
+
     def setUp(self) -> None:
         self.plan = candidate_plan()
 

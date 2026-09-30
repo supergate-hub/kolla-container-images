@@ -19,6 +19,11 @@ from typing import Any, Sequence
 from urllib.parse import unquote, urlparse
 
 try:
+    from scripts.network_retry import RETRY_DELAYS_SECONDS, retry_network
+except ModuleNotFoundError:
+    from network_retry import RETRY_DELAYS_SECONDS, retry_network
+
+try:
     from scripts.openstack_source_set import (
         FrozenKollaSources,
         OpenStackSourceSetError,
@@ -532,21 +537,32 @@ def _git_environment() -> dict[str, str]:
     return environment
 
 
+GIT_FETCH_RETRY_DELAYS = RETRY_DELAYS_SECONDS
+GIT_FETCH_TIMEOUT_SECONDS = 300
+
+
 def _run_git(path: Path, arguments: Sequence[str]) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(path), *arguments],
-        env=_git_environment(),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
-        raise FrozenSourceError(
-            f"git {' '.join(arguments)} failed for {path}: {detail}"
+    is_fetch = bool(arguments) and arguments[0] == "fetch"
+    command = ["git", "-C", str(path), *arguments]
+
+    def run():
+        result = subprocess.run(
+            command, env=_git_environment(), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            **({"timeout": GIT_FETCH_TIMEOUT_SECONDS} if is_fetch else {}),
         )
-    return result.stdout.strip()
+        if result.returncode:
+            raise subprocess.CalledProcessError(result.returncode, command,
+                                                output=result.stdout, stderr=result.stderr)
+        return result.stdout.strip()
+
+    try:
+        return retry_network(run, label="Git fetch", delays=GIT_FETCH_RETRY_DELAYS if is_fetch else ())
+    except subprocess.CalledProcessError as error:
+        detail = error.stderr.strip() or error.stdout.strip() or "unknown git error"
+        raise FrozenSourceError(f"git {' '.join(arguments)} failed for {path}: {detail}") from error
+    except subprocess.TimeoutExpired as error:
+        raise FrozenSourceError(f"git fetch timed out after {GIT_FETCH_TIMEOUT_SECONDS}s for {path}") from error
 
 
 def checkout_exact_repository(path: Path, *, repository: str, commit: str) -> None:

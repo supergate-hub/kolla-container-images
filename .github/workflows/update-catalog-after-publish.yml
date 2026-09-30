@@ -46,7 +46,7 @@ jobs:
           PUBLISH_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
-          gh api --paginate --slurp \
+          python3 scripts/network_retry.py --timeout 60 -- gh api --paginate --slurp \
             "/repos/${GITHUB_REPOSITORY}/actions/runs/${PUBLISH_RUN_ID}/artifacts?per_page=100" \
             > "$RUNNER_TEMP/publish-artifacts.json"
 
@@ -133,7 +133,8 @@ jobs:
           git -C pages config user.name "github-actions[bot]"
           git -C pages config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C pages commit -m "docs: update published image catalog"
-          git -C pages push origin HEAD:refs/heads/gh-pages
+          python3 scripts/network_retry.py --timeout 300 -- \
+            git -C pages push origin HEAD:refs/heads/gh-pages
 
       - name: Mark successful plan run as a no-op
         if: ${{ steps.artifact.outputs.should_refresh != 'true' }}

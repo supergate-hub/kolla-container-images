@@ -110,7 +110,8 @@ jobs:
           fi
           git init --quiet "$CHECKOUT_PATH"
           git -C "$CHECKOUT_PATH" remote add origin "$RELEASES_REPOSITORY"
-          git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
+          python3 scripts/network_retry.py --timeout 300 -- \
+            git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
           git -C "$CHECKOUT_PATH" checkout --quiet --detach FETCH_HEAD
 
       - name: Validate repository configuration

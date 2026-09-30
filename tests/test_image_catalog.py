@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+from http.client import IncompleteRead
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
 from scripts.profile_resolver import load_matrix
@@ -33,6 +37,39 @@ class ImageCatalogTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.generator = load_generator()
+
+    def test_catalog_download_retries_body_interruption_and_keeps_digest_header(self):
+        raw = self.index()
+
+        class Response(io.BytesIO):
+            headers = {"Docker-Content-Digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+
+        broken = Response(b"partial")
+        broken.read = Mock(side_effect=IncompleteRead(b"partial"))
+        recovered = Response(raw)
+        opener = Mock(side_effect=[broken, recovered])
+        client = self.generator.GhcrRegistryClient(opener=opener)
+        client._tokens["repo"] = "cached-token"
+        with patch("time.sleep") as sleep:
+            manifest = client.fetch_manifest("repo", TAG)
+        self.assertEqual(manifest.raw, raw)
+        self.assertEqual(manifest.digest, Response.headers["Docker-Content-Digest"])
+        self.assertTrue(broken.closed and recovered.closed)
+        self.assertEqual(opener.call_args_list[0], opener.call_args_list[1])
+        sleep.assert_called_once_with(5)
+
+    def test_catalog_permanent_http_and_malformed_json_do_not_retry(self):
+        class Response(io.BytesIO):
+            headers = {}
+
+        for response in [HTTPError("https://ghcr.io", 401, "unauthorized", {}, None),
+                         Response(b"not json")]:
+            opener = Mock(side_effect=[response])
+            client = self.generator.GhcrRegistryClient(opener=opener)
+            with patch("time.sleep") as sleep, self.assertRaises(self.generator.CatalogError):
+                client.list_tags("repo")
+            opener.assert_called_once()
+            sleep.assert_not_called()
 
     def index(self) -> bytes:
         return json.dumps(
@@ -169,6 +206,7 @@ class ImageCatalogTest(unittest.TestCase):
         requests: list[str] = []
 
         class Response:
+            headers = {}
             def __init__(self, body: bytes):
                 self.body = body
 
@@ -232,6 +270,7 @@ class ImageCatalogTest(unittest.TestCase):
         requested: list[str] = []
 
         class Response:
+            headers = {}
             def read(self) -> bytes:
                 return json.dumps(
                     {"name": "kolla-container-images/keystone", "html_url": "https://example.test"}
@@ -259,6 +298,7 @@ class ImageCatalogTest(unittest.TestCase):
         requested: list[str] = []
 
         class Response:
+            headers = {}
             def __init__(self, body: bytes, *, headers: dict[str, str] | None = None):
                 self.body = body
                 self.headers = headers or {}

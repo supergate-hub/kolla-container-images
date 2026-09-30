@@ -196,6 +196,31 @@ and revision identity, so partial reruns fail closed against a mixed evidence
 set. Use **Re-run all jobs**, which creates a new candidate ID and a coherent
 revision.
 
+Repository-managed network operations retry transient connection/TLS interruption,
+DNS, timeout, HTTP 408/429 and HTTP 500/502/503/504 failures up to three times after
+5, 15 and 30 seconds. This covers Git fetch/ref lookup, Docker login/pull,
+base-manifest resolution, revision/alias manifest publication, GitHub artifact
+lookup, source/constraints downloads, catalog HTTP reads and the same catalog
+Git push. A manifest write reuses the same tag and frozen digest inputs, then
+performs the existing digest/content verification. HTTP body interruptions
+restart the GET; incomplete bytes never enter verification. HTTP `Retry-After`
+is honored up to 60 seconds (including explicit HTTP 403 throttling responses);
+a longer server wait fails this attempt instead of retrying prematurely.
+
+Each subprocess attempt has a timeout: 60 seconds for login, registry reads and
+API/ref lookups; 300 seconds for Git fetch/push and manifest writes; 900 seconds
+for Docker pull. HTTP downloads have a 30-second socket timeout. Newly published
+manifest visibility retains its separate 1/2/4/8/15-second retry schedule,
+including temporary missing manifests. Ordinary missing refs/HTTP 404,
+authentication, certificate, disk and verification errors are not retried by
+these wrappers. The exact commit, release ancestry and digest verification
+remain mandatory.
+
+Kolla 22.2.0 already retries individual build and push tasks three times by
+default, including failures inside Dockerfile package/download steps; pip and
+the pinned GitHub artifact actions also retain their own retry handling. We do
+not wrap the whole Kolla build/job in another retry loop.
+
 ## Tags, summary, and lock
 
 For candidate `123456789-1`, the Nova Compute refs of

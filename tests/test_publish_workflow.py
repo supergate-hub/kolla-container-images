@@ -835,6 +835,7 @@ class PublishWorkflowTest(unittest.TestCase):
             "      - name: Create and verify final multi-architecture manifests",
         )
         self.assertIn('child_ref = f"{repository}@{record[\'digest\']}"', job)
+        self.assertIn('run_network_command(create_command, label="Publish revision manifest")', manifest_step)
         self.assertRegex(
             job,
             r'"imagetools",\s+"create",\s+"--tag",\s+revision_ref',
@@ -919,6 +920,7 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("revision_raw = inspect_raw_manifest(immutable_ref)", alias_python)
         self.assertIn("semantic_raw = inspect_raw_manifest(semantic_ref)", alias_python)
         self.assertIn("alias_raw = inspect_raw_manifest(alias_ref)", alias_python)
+        self.assertEqual(alias_python.count("run_network_command("), 2)
         self.assertIn("if semantic_raw != revision_raw:", alias_step)
 
     def test_finalize_binds_summary_digest_to_exact_immutable_manifest_bytes(self) -> None:

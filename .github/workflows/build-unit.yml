@@ -210,7 +210,10 @@ jobs:
       - name: Log in to GHCR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        run: >-
+          printf '%s' "$GITHUB_TOKEN" |
+          python3 scripts/network_retry.py --timeout 60 --stdin --
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Build, push, inspect, and smoke one unit
         env:

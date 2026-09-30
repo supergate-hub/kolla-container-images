@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 try:
+    from scripts.network_retry import is_transient_network_error, retry_network, run_network_command
+except ModuleNotFoundError:
+    from network_retry import is_transient_network_error, retry_network, run_network_command
+
+try:
     from scripts.openstack_source_set import validate_frozen_source_contract
 except ModuleNotFoundError:
     from openstack_source_set import validate_frozen_source_contract
@@ -433,12 +438,19 @@ class CommandRunner:
     def run(self, argv: Sequence[str], *, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
         if not isinstance(argv, (list, tuple)) or not all(isinstance(part, str) for part in argv):
             raise BuildUnitError("command must be structured string argv")
+        if list(argv[:2]) == ["docker", "pull"]:
+            result = run_network_command(list(argv), label="Docker pull", timeout=900)
+            if not capture_output:
+                print(result.stdout, end="")
+                print(result.stderr, end="", file=sys.stderr)
+            return result
         return subprocess.run(
             list(argv),
             check=True,
             text=True,
             capture_output=capture_output,
             shell=False,
+            **({"timeout": 60} if list(argv[:4]) == ["docker", "buildx", "imagetools", "inspect"] else {}),
         )
 
     def run_monitored(
@@ -541,29 +553,7 @@ def verify_local_digest(runner: CommandRunner, ref: str, expected_immutable_ref:
 
 
 def is_transient_remote_descriptor_error(error: subprocess.CalledProcessError) -> bool:
-    output = "\n".join(
-        value
-        for value in (error.stdout, error.stderr)
-        if isinstance(value, str)
-    ).lower()
-    if any(marker in output for marker in ("unauthorized", "denied", "invalid reference")):
-        return False
-    return any(
-        marker in output
-        for marker in (
-            "manifest unknown",
-            "not found",
-            "too many requests",
-            "429",
-            "500",
-            "502",
-            "503",
-            "504",
-            "timeout",
-            "connection reset",
-            "temporary failure",
-        )
-    )
+    return is_transient_network_error(error, allow_missing_manifest=True)
 
 
 def remote_descriptor(
@@ -582,22 +572,11 @@ def remote_descriptor(
         "--format",
         "{{json .Manifest}}",
     ]
-    for attempt, delay in enumerate(REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS, start=1):
-        try:
-            result = runner.run(command, capture_output=True)
-            break
-        except subprocess.CalledProcessError as exc:
-            if not is_transient_remote_descriptor_error(exc):
-                raise
-            print(
-                f"Remote manifest for {arch_ref} is not visible yet; "
-                f"retry {attempt}/{len(REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS)} "
-                f"in {delay}s.",
-                file=sys.stderr,
-            )
-            sleep(delay)
-    else:
-        result = runner.run(command, capture_output=True)
+    result = retry_network(
+        lambda: runner.run(command, capture_output=True),
+        label="Remote manifest inspection", delays=REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS,
+        sleep=sleep, allow_missing_manifest=True,
+    )
     try:
         descriptor = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -882,9 +861,11 @@ def main() -> int:
         OSError,
         ValueError,
         json.JSONDecodeError,
-        subprocess.CalledProcessError,
+        subprocess.SubprocessError,
     ) as exc:
         print(f"Build unit failed: {exc}", file=sys.stderr)
+        for note in getattr(exc, "__notes__", ()):
+            print(note, file=sys.stderr)
         return 1
     print(
         f"Build unit passed: {evidence['unit_id']} -> {evidence['immutable_ref']}"

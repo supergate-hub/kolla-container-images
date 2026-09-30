@@ -114,7 +114,8 @@ jobs:
           fi
           git init --quiet "$CHECKOUT_PATH"
           git -C "$CHECKOUT_PATH" remote add origin "$RELEASES_REPOSITORY"
-          git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
+          python3 scripts/network_retry.py --timeout 300 -- \
+            git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
           git -C "$CHECKOUT_PATH" checkout --quiet --detach FETCH_HEAD
 
       - name: Validate repository configuration
@@ -575,7 +576,10 @@ jobs:
       - name: Log in to GHCR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        run: >-
+          printf '%s' "$GITHUB_TOKEN" |
+          python3 scripts/network_retry.py --timeout 60 --stdin --
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Create and verify final multi-architecture manifests
         run: |
@@ -587,6 +591,7 @@ jobs:
           import subprocess
 
           from scripts.registry_manifest import inspect_raw_manifest
+          from scripts.network_retry import run_network_command
 
           DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
           MULTIARCH_MEDIA_TYPES = {
@@ -806,7 +811,8 @@ jobs:
                   str(metadata_path),
                   *child_refs,
               ]
-              subprocess.run(create_command, check=True)
+              # Replaying this write uses the same frozen child digests and tag.
+              run_network_command(create_command, label="Publish revision manifest")
 
               manifest_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
               if not isinstance(manifest_metadata, dict):
@@ -1029,6 +1035,7 @@ jobs:
           import subprocess
 
           from scripts.registry_manifest import inspect_raw_manifest
+          from scripts.network_retry import run_network_command
 
           DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
           plan = json.loads(
@@ -1081,7 +1088,7 @@ jobs:
                   or len(alias_refs) != len(set(alias_refs))
               ):
                   raise SystemExit(f"frozen alias refs are invalid: {image_name}")
-              subprocess.run(
+              run_network_command(
                   [
                       "docker",
                       "buildx",
@@ -1091,7 +1098,7 @@ jobs:
                       semantic_ref,
                       immutable_ref,
                   ],
-                  check=True,
+                  label="Publish semantic alias",
               )
               semantic_raw = inspect_raw_manifest(semantic_ref)
               if semantic_raw != revision_raw:
@@ -1099,7 +1106,7 @@ jobs:
               for alias_ref in alias_refs:
                   if alias_ref in {semantic_ref, revision_ref, immutable_ref}:
                       raise SystemExit(f"alias ref collides with revision ref: {image_name}")
-                  subprocess.run(
+                  run_network_command(
                       [
                           "docker",
                           "buildx",
@@ -1109,7 +1116,7 @@ jobs:
                           alias_ref,
                           immutable_ref,
                       ],
-                      check=True,
+                      label="Publish alias",
                   )
                   alias_raw = inspect_raw_manifest(alias_ref)
                   if alias_raw != revision_raw:
