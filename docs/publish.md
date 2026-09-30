@@ -28,30 +28,13 @@ The form contains exactly three inputs:
 GitHub Actions renders `choice` inputs from committed YAML, not dynamically from
 JSON. When an enabled stream changes, run
 `python3 scripts/sync-publish-stream-options.py --write` in the same change;
-validation rejects a stale dropdown.
+commit the generated `.github/workflows/publish.yml` update together with the
+matrix. Validation rejects a stale dropdown. No dropdown bot or GitHub App is
+required.
 
 Dispatch this workflow from `main` only. GitHub may display the form for another
 branch that contains the workflow file, but its first job rejects that ref before
 checkout or any networked planning work.
-
-### Automatic stack PRs
-
-When an internal PR targeting `main` changes `config/build-matrix.json`,
-`.github/workflows/sync-publish-stream-options.yml` reads the proposal as data,
-runs the trusted `main` synchronizer, and opens or refreshes a child stack PR
-that changes only `.github/workflows/publish.yml`. It never executes scripts
-from the proposal branch.
-
-Install a repository-scoped GitHub App with only **Contents: read/write** and
-**Pull requests: read/write** permissions. Store its client ID as the repository
-variable `PUBLISH_DROPDOWN_APP_CLIENT_ID` and its private key as the repository
-secret `PUBLISH_DROPDOWN_APP_PRIVATE_KEY`. The workflow obtains a short-lived,
-repository-scoped installation token; it does not use a package-write token.
-
-Review the original matrix PR and its generated child PR normally. Merge the
-**top child PR** after both pass: GitHub lands the complete same-repository stack
-atomically on `main`. Do not merge the lower matrix PR separately. Fork PRs and
-bot-generated child PRs are deliberately ignored by the synchronizer.
 
 The scope mapping is fixed:
 

@@ -226,9 +226,8 @@ the local planner CLI.
 The `stream` choices are generated from enabled matrix entries because GitHub
 Actions cannot populate a dispatch form dynamically. Update them with
 `python3 scripts/sync-publish-stream-options.py --write` whenever streams
-change; CI rejects a stale option block. Internal matrix PRs additionally get a
-bot-generated child stack PR that applies this update with trusted `main`
-tools. See [docs/publish.md](docs/publish.md#automatic-stack-prs).
+change, and include the generated `.github/workflows/publish.yml` update in the
+same change as the matrix. CI rejects a stale option block.
 
 For runs using the current workflow, **Re-run failed jobs** resumes the original
 plan and preserves completed image evidence. **Re-run all jobs** starts a fresh
@@ -256,7 +255,6 @@ scripts/validate-publish-summary.py   Publish-summary schema-v3 validator
 scripts/generate-lock.py              Generic candidate-lock schema-v3 renderer
 .github/workflows/validate.yml        Repository validation
 .github/workflows/publish.yml         Dispatch-only plan/publish workflow
-.github/workflows/sync-publish-stream-options.yml  Generated dropdown stack-PR bot
 .github/workflows/build-unit.yml      Reusable one-target native build job
 ```
 

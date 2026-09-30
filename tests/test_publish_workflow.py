@@ -14,9 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
 BUILD_UNIT_WORKFLOW = ROOT / ".github" / "workflows" / "build-unit.yml"
 VALIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
-SYNC_STREAM_OPTIONS_WORKFLOW = (
-    ROOT / ".github" / "workflows" / "sync-publish-stream-options.yml"
-)
 README = ROOT / "README.md"
 BUILD_READINESS = ROOT / "docs" / "build-readiness.md"
 PUBLISH_DOC = ROOT / "docs" / "publish.md"
@@ -39,10 +36,6 @@ EXPECTED_ACTIONS = {
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7"),
     "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", "v8"),
     "actions/setup-python": ("ece7cb06caefa5fff74198d8649806c4678c61a1", "v6"),
-    "actions/create-github-app-token": (
-        "bcd2ba49218906704ab6c1aa796996da409d3eb1",
-        "v3",
-    ),
     "docker/setup-buildx-action": ("bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "v4"),
 }
 ACTION_RE = re.compile(
@@ -89,9 +82,6 @@ class PublishWorkflowTest(unittest.TestCase):
         cls.publish = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
         cls.build_unit = BUILD_UNIT_WORKFLOW.read_text(encoding="utf-8")
         cls.validate = VALIDATE_WORKFLOW.read_text(encoding="utf-8")
-        cls.sync_stream_options = SYNC_STREAM_OPTIONS_WORKFLOW.read_text(
-            encoding="utf-8"
-        )
         cls.readme = README.read_text(encoding="utf-8")
         cls.build_readiness = BUILD_READINESS.read_text(encoding="utf-8")
         cls.publish_doc = PUBLISH_DOC.read_text(encoding="utf-8")
@@ -137,7 +127,6 @@ class PublishWorkflowTest(unittest.TestCase):
                 self.publish,
                 self.build_unit,
                 self.validate,
-                self.sync_stream_options,
             )
         )
         raw_uses = re.findall(r"(?m)^\s*uses:\s+.+$", combined)
@@ -1206,62 +1195,6 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('"--image",\n                      "keystone"', self.validate)
         self.assertNotIn("--stream 2025.1-rocky-9", self.validate)
         self.assertIn("python3 -m unittest discover -s tests -v", self.validate)
-
-    def test_matrix_prs_receive_a_trusted_dropdown_stack_pr(self) -> None:
-        workflow = self.sync_stream_options
-        trigger = yaml_block(workflow, "on:")
-        self.assertIn("pull_request_target:", trigger)
-        self.assertIn("- main", trigger)
-        self.assertIn("- config/build-matrix.json", trigger)
-        for event_type in ("opened", "reopened", "synchronize"):
-            self.assertIn(f"- {event_type}", trigger)
-        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
-        self.assertIn(
-            "sync-publish-stream-options-${{ github.event.pull_request.number }}",
-            workflow,
-        )
-        self.assertIn("cancel-in-progress: true", workflow)
-        job = yaml_block(workflow, "  synchronize:")
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            job,
-        )
-        self.assertIn("automation/sync-publish-stream-options/", job)
-        trusted_checkout = yaml_block(job, "      - name: Check out trusted main tools")
-        self.assertIn(expected_action_use("actions/checkout"), trusted_checkout)
-        self.assertIn(
-            "ref: ${{ github.event.pull_request.stack.base.sha || "
-            "github.event.pull_request.base.sha }}",
-            trusted_checkout,
-        )
-        self.assertIn("path: trusted", trusted_checkout)
-        self.assertIn("persist-credentials: false", trusted_checkout)
-        self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", job)
-        token = yaml_block(job, "      - name: Create least-privilege catalog bot token")
-        self.assertIn(expected_action_use("actions/create-github-app-token"), token)
-        self.assertIn("PUBLISH_DROPDOWN_APP_CLIENT_ID", token)
-        self.assertIn("PUBLISH_DROPDOWN_APP_PRIVATE_KEY", token)
-        self.assertIn("permission-contents: write", token)
-        self.assertIn("permission-pull-requests: write", token)
-        create = yaml_block(
-            job,
-            "      - name: Create or refresh dropdown synchronization stack PR",
-        )
-        self.assertIn(
-            'python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stack-pr.py"',
-            create,
-        )
-        for argument in (
-            '--repository "$GITHUB_REPOSITORY"',
-            '--head-sha "$HEAD_SHA"',
-            '--source-branch "$SOURCE_BRANCH"',
-            '--pull-request-number "$PULL_REQUEST_NUMBER"',
-            '--repository-dir "$TRUSTED_REPOSITORY"',
-        ):
-            self.assertIn(argument, create)
-        self.assertNotIn("gh api", create)
-        self.assertNotIn("gh pr", create)
-        self.assertNotIn("git -C", create)
 
 
 if __name__ == "__main__":
