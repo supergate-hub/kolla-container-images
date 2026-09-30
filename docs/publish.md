@@ -4,8 +4,9 @@
 planning or publishing exact-version Kolla image streams. CI starts a separate
 workflow run with a repository-scoped GitHub App token (or equivalent
 short-lived credential) that has `Actions: write` and no package-write
-permission. Candidate identity is always derived from
-`github.run_id`-`github.run_attempt`; callers cannot provide it.
+permission. The plan producer derives candidate identity from its
+`github.run_id`-`github.run_attempt`; callers cannot provide it. Downstream
+reruns retain that producer candidate and its frozen inputs.
 
 ```text
 freeze plan -> environment authorization -> native revision children
@@ -191,10 +192,19 @@ tag is absent, and then uses `--skip-existing` to skip only those proven
 ancestors. `--skip-parents` is forbidden because it can also skip the selected
 target. There is no parent-index artifact.
 
-Do not use **Re-run failed jobs**. The run attempt participates in candidate
-and revision identity, so partial reruns fail closed against a mixed evidence
-set. Use **Re-run all jobs**, which creates a new candidate ID and a coherent
-revision.
+Use **Re-run failed jobs** to resume the same frozen plan. Successful jobs
+keep their original unit evidence and revision images; retried jobs consume the
+plan producer's candidate ID, not the new execution attempt. If a unit already
+uploaded its completed checkpoint, its source/base/toolchain identity, parent
+digests, build summary, registry digest, native platform and leaf smoke are
+verified before reusing it without rebuilding. Checkpoints are never overwritten.
+A different candidate, changed digest or invalid checkpoint fails closed.
+
+Use **Re-run all jobs** for a fresh plan and new candidate ID/revision, including
+when required plan/evidence artifacts have expired or been deleted. Plan and
+unit evidence are retained seven days. Automatic reuse applies only within the
+same workflow run and original plan; it is not a cross-run image cache. A pushed
+image without a completed evidence artifact is not accepted as a checkpoint.
 
 Repository-managed network operations retry transient connection/TLS interruption,
 DNS, timeout, HTTP 408/429 and HTTP 500/502/503/504 failures up to three times after
@@ -219,7 +229,13 @@ remain mandatory.
 Kolla 22.2.0 already retries individual build and push tasks three times by
 default, including failures inside Dockerfile package/download steps; pip and
 the pinned GitHub artifact actions also retain their own retry handling. We do
-not wrap the whole Kolla build/job in another retry loop.
+not wrap the whole Kolla build/job in another retry loop. Cancellation, runner
+loss, exhausted retries and persistent errors still require **Re-run failed
+jobs**; successful unit checkpoints remain reusable as described above.
+
+These recovery rules apply to runs started with this workflow version. GitHub
+reruns retain the original workflow commit, so an older failed run must be
+replaced by a new dispatch to use the updated recovery behavior.
 
 ## Tags, summary, and lock
 
@@ -259,10 +275,15 @@ Artifact names and terminal paths are deterministic:
 | --- | --- |
 | `publish-plan-<candidate-id>` | `artifacts/plan/publish-plan.json` |
 | `unit-evidence-<arch>-<kind>-<target>-<candidate-id>` | One unit's schema-v3 evidence |
-| `unit-diagnostics-<unit-id>-<candidate-id>` | One-day failure-only logs and local build diagnostics for a failed unit |
-| `native-amd64-<candidate-id>` | `artifacts/arch/native-amd64.json` |
-| `native-arm64-<candidate-id>` | `artifacts/arch/native-arm64.json` |
-| `publish-<stream>-<candidate-id>` | `artifacts/publish-summary-<stream>.json`, `artifacts/manifests/`, and an eligible `artifacts/kolla-ansible-image-lock-<stream>.yml` |
+| `unit-diagnostics-<unit-id>-<execution-id>` | One-day failure-only logs and local build diagnostics for a failed unit |
+| `native-amd64-<collection-execution-id>` | `artifacts/arch/native-amd64.json` |
+| `native-arm64-<collection-execution-id>` | `artifacts/arch/native-arm64.json` |
+| `publish-<stream>-<finalization-execution-id>` | `artifacts/publish-summary-<stream>.json`, `artifacts/manifests/`, and an eligible `artifacts/kolla-ansible-image-lock-<stream>.yml` |
+
+An execution ID is the executing job's `<run_id>-<run_attempt>`. The collector
+exports its artifact names to the finalizer, so a finalizer-only retry can use
+the earlier collection. Terminal artifact names use the finalizer's execution
+ID for catalog discovery; their summary and lock keep the original candidate ID.
 
 Only `deployment/all` may produce the generic candidate lock. Keystone, core,
 partial deployment, incomplete evidence, or invalid provenance cannot produce

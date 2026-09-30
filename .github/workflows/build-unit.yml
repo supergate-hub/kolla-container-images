@@ -3,12 +3,16 @@ name: Build one native Kolla image unit
 on:
   workflow_call:
     inputs:
+      candidate_id:
+        description: Candidate ID emitted by the frozen plan producer
+        required: true
+        type: string
       unit:
         description: Frozen build-unit object from the publish plan
         required: true
         type: string
       publish_plan_artifact:
-        description: Exact current-attempt publish-plan artifact name
+        description: Exact original publish-plan artifact name for this candidate
         required: true
         type: string
       input_evidence_artifact_pattern:
@@ -23,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   packages: write
 
 jobs:
@@ -81,13 +86,38 @@ jobs:
 
       - name: Revalidate frozen publish context
         env:
-          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
           PUBLISH_SCOPE: ${{ inputs.publish_scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --workflow-run-id "$GITHUB_RUN_ID"
+          --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
           --expected-scope "$PUBLISH_SCOPE"
+
+      - name: Find completed unit checkpoint
+        id: checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          UNIT_ID: ${{ fromJSON(inputs.unit).id }}
+        run: >-
+          python3 scripts/publish_resume.py
+          --candidate-id "$CANDIDATE_ID"
+          --run-id "$GITHUB_RUN_ID"
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+          --repository "$GITHUB_REPOSITORY"
+          --unit-id "$UNIT_ID"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Download completed unit checkpoint
+        if: ${{ steps.checkpoint.outputs.found == 'true' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: ${{ steps.checkpoint.outputs.artifact_id }}
+          path: artifacts/completed-unit
+          merge-multiple: true
 
       - name: Verify native hosted runner and Docker storage
         env:
@@ -130,11 +160,13 @@ jobs:
           df -h "$(docker info --format '{{.DockerRootDir}}')"
 
       - name: Set up Python
+        if: ${{ steps.checkpoint.outputs.found != 'true' }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Check out and install the frozen Kolla source
+        if: ${{ steps.checkpoint.outputs.found != 'true' }}
         env:
           UNIT_ID: ${{ fromJSON(inputs.unit).id }}
         run: |
@@ -217,13 +249,19 @@ jobs:
 
       - name: Build, push, inspect, and smoke one unit
         env:
+          REUSE_COMPLETED: ${{ steps.checkpoint.outputs.found }}
           UNIT_ID: ${{ fromJSON(inputs.unit).id }}
         run: |
           set -euo pipefail
-          export PATH="$PWD/.venv/bin:$PATH"
-          test "$(command -v kolla-build)" = "$PWD/.venv/bin/kolla-build"
+          reuse_args=()
+          if [ "$REUSE_COMPLETED" = "true" ]; then
+            reuse_args=(--reuse-evidence "artifacts/completed-unit/$UNIT_ID.json")
+          else
+            export PATH="$PWD/.venv/bin:$PATH"
+            test "$(command -v kolla-build)" = "$PWD/.venv/bin/kolla-build"
+          fi
           mkdir -p artifacts/input-evidence artifacts/unit-evidence artifacts/unit-diagnostics
-          python3 scripts/run-build-unit.py \
+          python3 scripts/run-build-unit.py "${reuse_args[@]}" \
             --publish-plan artifacts/plan/publish-plan.json \
             --unit-id "$UNIT_ID" \
             --input-evidence-dir artifacts/input-evidence \
@@ -231,9 +269,10 @@ jobs:
             2>&1 | tee "artifacts/unit-diagnostics/$UNIT_ID.txt"
 
       - name: Upload unit evidence
+        if: ${{ steps.checkpoint.outputs.found != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: unit-evidence-${{ fromJSON(inputs.unit).id }}-${{ inputs.candidate_id }}
           path: artifacts/unit-evidence/${{ fromJSON(inputs.unit).id }}.json
           if-no-files-found: error
           retention-days: 7

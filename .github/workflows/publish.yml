@@ -56,6 +56,7 @@ jobs:
       group: ${{ inputs.operation == 'plan' && format('kolla-plan-{0}-{1}', github.ref_name, inputs.stream) || format('kolla-publish-plan-{0}', github.run_id) }}
       cancel-in-progress: ${{ inputs.operation == 'plan' }}
     outputs:
+      candidate_id: ${{ steps.frozen-plan.outputs.candidate_id }}
       parent_tier_0_matrix: ${{ steps.publish-matrices.outputs.parent_tier_0_matrix }}
       parent_tier_1_matrix: ${{ steps.publish-matrices.outputs.parent_tier_1_matrix }}
       parent_tier_2_matrix: ${{ steps.publish-matrices.outputs.parent_tier_2_matrix }}
@@ -126,6 +127,7 @@ jobs:
           --release-metadata-checkout "$RELEASE_METADATA_CHECKOUT"
 
       - name: Render frozen publish plan
+        id: frozen-plan
         env:
           STREAM: ${{ inputs.stream }}
           SCOPE: ${{ inputs.scope }}
@@ -161,6 +163,7 @@ jobs:
             plan_args+=(--image "$image")
           fi
           python3 scripts/plan-publish.py "${plan_args[@]}" > artifacts/plan/publish-plan.json
+          printf 'candidate_id=%s\n' "$CANDIDATE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Bind frozen plan to protected main
         if: ${{ inputs.operation == 'publish' }}
@@ -328,7 +331,7 @@ jobs:
       - name: Download publish plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
           path: artifacts/plan
 
       - name: Validate protected main publication context
@@ -345,12 +348,14 @@ jobs:
 
       - name: Validate frozen publish context
         env:
-          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          CANDIDATE_ID: ${{ needs.publish-plan.outputs.candidate_id }}
           PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --workflow-run-id "$GITHUB_RUN_ID"
+          --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
           --expected-scope "$PUBLISH_SCOPE"
 
   build-parent-tier-0:
@@ -363,11 +368,13 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.parent_tier_0_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-parent-tier-1:
@@ -380,12 +387,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.parent_tier_1_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-parent-tier-2:
@@ -398,12 +407,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.parent_tier_2_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-leaf-stage-0:
@@ -416,12 +427,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.leaf_stage_0_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-leaf-stage-1:
@@ -434,12 +447,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.leaf_stage_1_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   collect-native-evidence:
@@ -451,6 +466,9 @@ jobs:
            (needs.build-leaf-stage-1.result == 'skipped' &&
             needs.publish-plan.outputs.leaf_stage_1_count == '0')) }}
     needs: [publish-plan, build-leaf-stage-0, build-leaf-stage-1]
+    outputs:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
+      artifact_suffix: ${{ github.run_id }}-${{ github.run_attempt }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -465,13 +483,13 @@ jobs:
       - name: Download publish plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
           path: artifacts/plan
 
       - name: Download all unit evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: unit-evidence-*-${{ needs.publish-plan.outputs.candidate_id }}
           path: artifacts/unit-evidence
           merge-multiple: true
 
@@ -519,19 +537,19 @@ jobs:
       - name: Download publish plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: publish-plan-${{ needs.collect-native-evidence.outputs.candidate_id }}
           path: artifacts/plan
 
       - name: Download amd64 evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: native-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          name: native-amd64-${{ needs.collect-native-evidence.outputs.artifact_suffix }}
           path: artifacts/arch
 
       - name: Download arm64 evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: native-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          name: native-arm64-${{ needs.collect-native-evidence.outputs.artifact_suffix }}
           path: artifacts/arch
 
       - name: Revalidate protected main publication context
@@ -548,12 +566,14 @@ jobs:
 
       - name: Revalidate frozen publish context
         env:
-          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          CANDIDATE_ID: ${{ needs.collect-native-evidence.outputs.candidate_id }}
           PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --workflow-run-id "$GITHUB_RUN_ID"
+          --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
           --expected-scope "$PUBLISH_SCOPE"
 
       - name: Prepare ephemeral Docker client state
@@ -1160,6 +1180,7 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           STREAM: ${{ inputs.stream }}
           SCOPE: ${{ inputs.scope }}
+          CANDIDATE_ID: ${{ needs.publish-plan.outputs.candidate_id }}
           PLAN_RESULT: ${{ needs.publish-plan.result }}
           AUTHORIZATION_RESULT: ${{ needs.authorize-publish.result }}
           FINALIZE_RESULT: ${{ needs.finalize-publish.result }}
@@ -1171,9 +1192,14 @@ jobs:
             echo "- Stream: \`$STREAM\`"
             echo "- Scope: \`$SCOPE\`"
             echo "- Plan: \`$PLAN_RESULT\`"
+            echo "- Candidate: \`$CANDIDATE_ID\`"
+            echo "- Execution attempt: \`$GITHUB_RUN_ATTEMPT\`"
             if [ "$OPERATION" = "publish" ]; then
               echo "- Authorization: \`$AUTHORIZATION_RESULT\`"
               echo "- Finalize: \`$FINALIZE_RESULT\`"
+              if [ "$FINALIZE_RESULT" != "success" ]; then
+                echo "- Recovery: Re-run failed jobs preserves completed units. Re-run all jobs creates a new candidate."
+              fi
             else
               echo "- Registry mutation: \`skipped\`"
             fi

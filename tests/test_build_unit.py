@@ -260,6 +260,76 @@ class BuildUnitTest(unittest.TestCase):
             "amd64-leaf-keystone",
         )
 
+    def test_completed_unit_is_verified_without_rebuilding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, unit, plan_path, inputs = self.prepare_unit(root, self.plan, 'amd64-leaf-keystone')
+            output = root / 'completed.json'
+            first = BUILD_UNIT.execute_build_unit(
+                plan_path, unit['id'], inputs, output,
+                runner=FakeRunner(unit), disk_sampler=lambda: TEN_GIB, machine='x86_64')
+            resumed = FakeRunner(unit)
+            result = BUILD_UNIT.execute_build_unit(
+                plan_path, unit['id'], inputs, root / 'reused.json',
+                runner=resumed, disk_sampler=lambda: TEN_GIB, machine='x86_64',
+                reuse_evidence=output)
+            self.assertEqual(result, first)
+            self.assertFalse(any(cmd[0] == 'kolla-build' for cmd in resumed.commands))
+            self.assertFalse(any(cmd[:3] == ['docker', 'system', 'prune'] for cmd in resumed.commands))
+            self.assertIn(['docker', 'pull', '--platform', unit['platform'], first['immutable_ref']], resumed.commands)
+            self.assertTrue(any(cmd[:2] == ['docker', 'run'] for cmd in resumed.commands))
+
+    def test_completed_checkpoint_requires_matching_identity_and_successful_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, unit, plan_path, inputs = self.prepare_unit(root, self.plan, 'amd64-leaf-keystone')
+            output = root / 'completed.json'
+            record = BUILD_UNIT.execute_build_unit(
+                plan_path, unit['id'], inputs, output,
+                runner=FakeRunner(unit), disk_sampler=lambda: TEN_GIB, machine='x86_64')
+            replacements = [
+                ('candidate_id', '123456789-2'), ('arch', 'arm64'),
+                ('kolla', {**record['kolla'], 'commit': '0' * 40}),
+                ('summary', {'built': [], 'skipped': unit['ancestor_chain']}),
+                ('smoke', {**record['smoke'], 'passed': 1}),
+                ('disk_free_bytes', {**record['disk_free_bytes'], 'after_build': 0}),
+            ]
+            for key, value in replacements:
+                with self.subTest(key=key):
+                    output.write_text(json.dumps({**record, key: value}))
+                    runner = FakeRunner(unit)
+                    with self.assertRaises(BUILD_UNIT.BuildUnitError):
+                        BUILD_UNIT.execute_build_unit(
+                            plan_path, unit['id'], inputs, root / 'reused.json',
+                            runner=runner, disk_sampler=lambda: TEN_GIB, machine='x86_64',
+                            reuse_evidence=output)
+                    self.assertFalse(any(cmd[0] == 'kolla-build' for cmd in runner.commands))
+                    self.assertFalse((root / 'reused.json').exists())
+
+    def test_completed_unit_rejects_changed_parent_and_remote_digests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, unit, plan_path, inputs = self.prepare_unit(root, self.plan, 'amd64-leaf-keystone')
+            output = root / 'completed.json'
+            record = BUILD_UNIT.execute_build_unit(
+                plan_path, unit['id'], inputs, output,
+                runner=FakeRunner(unit), disk_sampler=lambda: TEN_GIB, machine='x86_64')
+            changed = copy.deepcopy(record)
+            changed['ancestors'][0]['digest'] = 'sha256:' + '0' * 64
+            output.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, 'ancestor'):
+                BUILD_UNIT.execute_build_unit(plan_path, unit['id'], inputs, root / 'reused.json',
+                    runner=FakeRunner(unit), machine='x86_64', disk_sampler=lambda: TEN_GIB,
+                    reuse_evidence=output)
+            output.write_text(json.dumps(record))
+            runner = FakeRunner(unit)
+            runner.target_digest = 'sha256:' + '0' * 64
+            with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, 'digest'):
+                BUILD_UNIT.execute_build_unit(plan_path, unit['id'], inputs, root / 'reused.json',
+                    runner=runner, machine='x86_64', disk_sampler=lambda: TEN_GIB,
+                    reuse_evidence=output)
+            self.assertFalse((root / 'reused.json').exists())
+
     def test_remote_descriptor_retries_a_transient_missing_manifest(self) -> None:
         unit = planned_target(self.plan, "amd64", "keystone")
         runner = FakeRunner(unit, remote_inspect_failures=1)

@@ -391,15 +391,30 @@ class PublishWorkflowTest(unittest.TestCase):
             job.index(expected_action_use("actions/checkout")),
         )
 
-    def test_workflow_candidate_id_comes_only_from_run_context(self) -> None:
-        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
-        self.assertIn(f"CANDIDATE_ID: {candidate}", self.publish)
-        self.assertIn(f"CANDIDATE_ID: {candidate}", self.build_unit)
-        self.assertNotIn("candidate_id:", self.build_unit)
-        self.assertNotIn("candidate_id:", self.publish)
+    def test_workflow_candidate_id_comes_only_from_the_plan_producer(self) -> None:
+        producer = self.publish_job("publish-plan")
+        self.assertIn("CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}", producer)
+        self.assertIn("candidate_id: ${{ steps.frozen-plan.outputs.candidate_id }}", producer)
+        self.assertIn("CANDIDATE_ID: ${{ inputs.candidate_id }}", self.build_unit)
+        for name in ("build-parent-tier-0", "build-parent-tier-1", "build-parent-tier-2",
+                     "build-leaf-stage-0", "build-leaf-stage-1"):
+            self.assertIn("candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}", self.publish_job(name))
+        for workflow in (self.publish, self.build_unit):
+            self.assertIn('--workflow-run-id "$GITHUB_RUN_ID"', workflow)
+            self.assertIn('--workflow-run-attempt "$GITHUB_RUN_ATTEMPT"', workflow)
         dispatch = yaml_block(self.publish, "  workflow_dispatch:")
         self.assertNotIn("candidate_id:", dispatch)
         self.assertNotIn("workflow_call:", self.publish)
+
+    def test_completed_checkpoint_skips_source_install_and_upload_but_rechecks_image(self) -> None:
+        for name in ("Set up Python", "Check out and install the frozen Kolla source", "Upload unit evidence"):
+            step = yaml_block(self.build_unit, "      - name: " + name)
+            self.assertIn("if: ${{ steps.checkpoint.outputs.found != 'true' }}", step)
+        self.assertIn("--reuse-evidence", self.build_unit)
+        self.assertIn("artifact-ids: ${{ steps.checkpoint.outputs.artifact_id }}", self.build_unit)
+        self.assertLess(self.build_unit.index("Revalidate frozen publish context"),
+                        self.build_unit.index("Find completed unit checkpoint"))
+        self.assertIn("actions: read", self.build_unit)
 
     def test_artifacts_are_unique_short_lived_and_build_artifacts_are_small(self) -> None:
         candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
@@ -412,7 +427,7 @@ class PublishWorkflowTest(unittest.TestCase):
             self.assertIn(f"name: {name}", self.publish)
         self.assertIn(
             "name: unit-evidence-${{ fromJSON(inputs.unit).id }}-"
-            "${{ github.run_id }}-${{ github.run_attempt }}",
+            "${{ inputs.candidate_id }}",
             self.build_unit,
         )
         self.assertIn(
@@ -663,7 +678,7 @@ class PublishWorkflowTest(unittest.TestCase):
         )
 
     def test_build_stages_download_only_the_evidence_available_to_them(self) -> None:
-        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
+        candidate = "${{ needs.publish-plan.outputs.candidate_id }}"
         parent_pattern = f"unit-evidence-*-parent-*-{candidate}"
         all_units_pattern = f"unit-evidence-*-{candidate}"
 
@@ -767,7 +782,7 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("retention-days: 1", failure)
 
         native = self.publish_job("collect-native-evidence")
-        self.assertIn("pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}", native)
+        self.assertIn("pattern: unit-evidence-*-${{ needs.publish-plan.outputs.candidate_id }}", native)
         self.assertIn("merge-multiple: true", native)
         self.assertNotIn("--mode", native)
         self.assertNotIn("--parent-evidence", native)
@@ -814,9 +829,9 @@ class PublishWorkflowTest(unittest.TestCase):
         job = self.publish_job("finalize-publish")
         self.assertIn("needs: collect-native-evidence", job)
         self.assertIn(expected_action_use("actions/checkout"), job)
-        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
-        for artifact in ("publish-plan", "native-amd64", "native-arm64"):
-            self.assertIn(f"name: {artifact}-{candidate}", job)
+        self.assertIn("name: publish-plan-${{ needs.collect-native-evidence.outputs.candidate_id }}", job)
+        for artifact in ("native-amd64", "native-arm64"):
+            self.assertIn(f"name: {artifact}-${{{{ needs.collect-native-evidence.outputs.artifact_suffix }}}}", job)
         self.assertNotIn("pattern:", job)
         self.assertNotIn("merge-multiple:", job)
         approval_validator = "python3 scripts/validate-publish-approval.py"

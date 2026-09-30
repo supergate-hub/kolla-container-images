@@ -275,9 +275,9 @@ class RepositoryBoundaryTest(unittest.TestCase):
         self.assert_tokens(
             document,
             "publish-plan-<candidate-id>",
-            "native-amd64-<candidate-id>",
-            "native-arm64-<candidate-id>",
-            "publish-<stream>-<candidate-id>",
+            "native-amd64-<collection-execution-id>",
+            "native-arm64-<collection-execution-id>",
+            "publish-<stream>-<finalization-execution-id>",
             "artifacts/plan/publish-plan.json",
             "artifacts/publish-summary-<stream>.json",
             "artifacts/kolla-ansible-image-lock-<stream>.yml",
