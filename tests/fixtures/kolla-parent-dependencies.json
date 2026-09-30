@@ -353,6 +353,82 @@
           "manila-base"
         ]
       }
+    },
+    {
+      "id": "2026.1-rocky-10.2-22.2.0",
+      "kolla_version": "22.2.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
+    },
+    {
+      "id": "2026.1-ubuntu-24.04-22.2.0",
+      "kolla_version": "22.2.0",
+      "scopes": {
+        "core/keystone": [
+          "base",
+          "openstack-base",
+          "keystone-base"
+        ],
+        "core/all": [
+          "base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base"
+        ],
+        "deployment/all": [
+          "base",
+          "openvswitch-base",
+          "ovn-base",
+          "openstack-base",
+          "keystone-base",
+          "glance-base",
+          "placement-base",
+          "nova-base",
+          "neutron-base",
+          "heat-base",
+          "octavia-base",
+          "prometheus-base",
+          "valkey-base",
+          "cinder-base",
+          "manila-base"
+        ]
+      }
     }
   ]
 }

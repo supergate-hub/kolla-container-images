@@ -55,7 +55,7 @@ Schema v4 separates four concerns:
 
 ## Supported streams
 
-The aggregate `main` catalog contains exactly these nine active streams:
+The aggregate `main` catalog contains exactly these eleven active streams:
 
 | Stream ID / semantic tag | Toolchain | Configured base | Deployment leaves |
 | --- | --- | --- | ---: |
@@ -68,6 +68,8 @@ The aggregate `main` catalog contains exactly these nine active streams:
 | `2025.2-ubuntu-24.04-21.1.0` | Kolla / Kolla-Ansible `21.1.0` | Ubuntu `24.04` | 64 |
 | `2026.1-rocky-10.2-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
 | `2026.1-ubuntu-24.04-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 66 |
+| `2026.1-rocky-10.2-22.2.0` | Kolla / Kolla-Ansible `22.2.0` | Rocky `10.2` | 65 |
+| `2026.1-ubuntu-24.04-22.2.0` | Kolla / Kolla-Ansible `22.2.0` | Ubuntu `24.04` | 66 |
 
 The `core` profile resolves to 18 leaves for every stream. It is a strict
 subset of `deployment`: legacy ML2 agents (`neutron-dhcp-agent`,
@@ -114,6 +116,8 @@ rewrite an existing revision. Active source-set schema v3 records
 Kolla-Ansible pins, the pinned `sources.py` digest, and the normalized source
 closure digest. Stream resolution rejects a toolchain that is absent or differs
 from this record, so adding a toolchain requires a new source-set revision.
+
+The active 2026.1 source-set, [gazpacho-20260930-r1](config/openstack-sources/gazpacho-20260930-r1.json), pins the September 30 service and requirements snapshot from `stable/2026.1` for both 22.0.0 and 22.2.0 toolchains. Because source-sets are selected per release, future builds of either toolchain use this snapshot. The [August snapshot](config/openstack-sources/gazpacho-20260813-r1.json) and previously published revision images and locks retain their original provenance.
 
 Validation and publish planning also check out the matrix-pinned
 `openstack/releases` commit and compare every Kolla/Kolla-Ansible version and

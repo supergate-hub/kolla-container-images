@@ -253,6 +253,10 @@ class SourceSetLoadingTest(unittest.TestCase):
             "epoxy-20260813-r1": ("2025.1", "epoxy", 36, 37),
             "flamingo-20260813-r1": ("2025.2", "flamingo", 36, 37),
             "gazpacho-20260813-r1": ("2026.1", "gazpacho", 35, 37),
+            "gazpacho-20260930-r1": ("2026.1", "gazpacho", 35, 37),
+        }
+        historical_toolchains = {
+            "gazpacho-20260813-r1": {"22.0.0"},
         }
         matrix = json.loads(
             (ROOT / "config" / "build-matrix.json").read_text(encoding="utf-8")
@@ -281,6 +285,9 @@ class SourceSetLoadingTest(unittest.TestCase):
                     for stream in matrix["streams"]
                     if stream["release"] == source_set.document["release"]
                 }
+                if source_set_id not in expected:
+                    # Historical revisions keep their original toolchain set.
+                    expected_versions = historical_toolchains[source_set_id]
                 self.assertEqual(
                     set(source_set.document["kolla_source_inputs"]),
                     expected_versions,
@@ -1059,7 +1066,7 @@ releases:
     "set KOLLA_SOURCE_SMOKE=1 to verify the exact pinned Kolla checkouts",
 )
 class ExactKollaClosureSmokeTest(unittest.TestCase):
-    def test_all_four_toolchains_expose_the_frozen_override_seams(self) -> None:
+    def test_all_pinned_toolchains_expose_the_frozen_override_seams(self) -> None:
         matrix = json.loads(
             (ROOT / "config" / "build-matrix.json").read_text(encoding="utf-8")
         )
@@ -1068,6 +1075,7 @@ class ExactKollaClosureSmokeTest(unittest.TestCase):
             "20.5.0": "d1c4dd49b92e68509a413c33667bbe87cc3d3a9e",
             "21.1.0": "436395ae3523ee925abac3338e63fc5822208744",
             "22.0.0": "dcc077f50eafc5849c7de3fdb800353684fe1210",
+            "22.2.0": "c4e23082aaf2329ffd1b1ddb3992a881aa53af3f",
         }
         self.assertEqual(
             {

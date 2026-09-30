@@ -21,6 +21,12 @@
       "source_path": "ansible/module_utils/kolla_container_worker.py",
       "module_sha256": "0cc53ffa96081cf6744bbe705652df381b3c4b4547728d01a471fbc0956ddfac",
       "parse_image_sha256": "378a902ce3ec0ed34256a5c35e82327de6655ce5d6026b92db2deba4164a8f9c"
+    },
+    "22.2.0": {
+      "distribution": "kolla-ansible==22.2.0",
+      "source_path": "ansible/module_utils/kolla_container_worker.py",
+      "module_sha256": "aeac129020c73c8e8434c1572664307189c0bba72ea39402bc971a09e0c0b397",
+      "parse_image_sha256": "378a902ce3ec0ed34256a5c35e82327de6655ce5d6026b92db2deba4164a8f9c"
     }
   }
 }

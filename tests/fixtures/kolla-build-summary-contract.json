@@ -27,6 +27,12 @@
       "source_path": "kolla/image/kolla_worker.py",
       "module_sha256": "a70c25776f2a10c73aa02fe90a9143fe269af1a1ca39bb2e6f989d737205ef9f",
       "summary_method_sha256": "02c656c628dc9f127ada22d993e0693feae6c94ee5f42c5d06e9a54fccd959f0"
+    },
+    "22.2.0": {
+      "distribution": "kolla==22.2.0",
+      "source_path": "kolla/image/kolla_worker.py",
+      "module_sha256": "cb377762f5bc5c46af46caa6571170fad2e77754164ae838fe5bdda4e3666ed7",
+      "summary_method_sha256": "02c656c628dc9f127ada22d993e0693feae6c94ee5f42c5d06e9a54fccd959f0"
     }
   },
   "top_level_keys": ["built", "failed", "not_matched", "skipped", "unbuildable"],

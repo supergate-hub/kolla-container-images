@@ -56,10 +56,14 @@ EXPECTED_STREAMS = {
         "24.04",
         "24.04",
     ),
+    "2026.1-rocky-10.2-22.2.0": ("2026.1", "22.2.0", "22.2.0", "rocky", "10.2", "10.2"),
+    "2026.1-ubuntu-24.04-22.2.0": (
+        "2026.1", "22.2.0", "22.2.0", "ubuntu", "24.04", "24.04"
+    ),
 }
 EXPECTED_RELEASE_METADATA = {
     "repository": "https://opendev.org/openstack/releases",
-    "commit": "b52dca944f47a401baa8f93a6994217d2a93ea56",
+    "commit": "2fb0c6c6f1cdf6a6801a6ab1f866ac629666e7c2",
 }
 EXPECTED_TOOLCHAINS = {
     "20.4.0": {
@@ -102,11 +106,21 @@ EXPECTED_TOOLCHAINS = {
             "commit": "e9e3c092a7b3c308581e7597404c72fcfd4dd485",
         },
     },
+    "22.2.0": {
+        "kolla": {
+            "repository": "https://opendev.org/openstack/kolla",
+            "commit": "c4e23082aaf2329ffd1b1ddb3992a881aa53af3f",
+        },
+        "kolla_ansible": {
+            "repository": "https://opendev.org/openstack/kolla-ansible",
+            "commit": "a3badc9325e53d875b30f3b89947e7e2e2863781",
+        },
+    },
 }
 EXPECTED_RELEASES = {
     "2025.1": {"series": "epoxy", "source_set": "epoxy-20260813-r1"},
     "2025.2": {"series": "flamingo", "source_set": "flamingo-20260813-r1"},
-    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20260813-r1"},
+    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20260930-r1"},
 }
 EXPECTED_BASES = {
     "rocky-9.8": {
@@ -155,6 +169,8 @@ DEPLOYMENT_EXPECTED_COUNTS = {
     "2025.2-ubuntu-24.04-21.1.0": 64,
     "2026.1-rocky-10.2-22.0.0": 65,
     "2026.1-ubuntu-24.04-22.0.0": 66,
+    "2026.1-rocky-10.2-22.2.0": 65,
+    "2026.1-ubuntu-24.04-22.2.0": 66,
 }
 REQUIRED_CINDER = {
     "cinder-api",

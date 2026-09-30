@@ -47,6 +47,12 @@ EXPECTED_VERSION_PROVENANCE = {
         "module_sha256": "a70c25776f2a10c73aa02fe90a9143fe269af1a1ca39bb2e6f989d737205ef9f",
         "summary_method_sha256": EXPECTED_METHOD_SHA256,
     },
+    "22.2.0": {
+        "distribution": "kolla==22.2.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "cb377762f5bc5c46af46caa6571170fad2e77754164ae838fe5bdda4e3666ed7",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
 }
 
 
