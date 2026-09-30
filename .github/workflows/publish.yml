@@ -56,6 +56,7 @@ jobs:
       group: ${{ inputs.operation == 'plan' && format('kolla-plan-{0}-{1}', github.ref_name, inputs.stream) || format('kolla-publish-plan-{0}', github.run_id) }}
       cancel-in-progress: ${{ inputs.operation == 'plan' }}
     outputs:
+      candidate_id: ${{ steps.frozen-plan.outputs.candidate_id }}
       parent_tier_0_matrix: ${{ steps.publish-matrices.outputs.parent_tier_0_matrix }}
       parent_tier_1_matrix: ${{ steps.publish-matrices.outputs.parent_tier_1_matrix }}
       parent_tier_2_matrix: ${{ steps.publish-matrices.outputs.parent_tier_2_matrix }}
@@ -114,7 +115,8 @@ jobs:
           fi
           git init --quiet "$CHECKOUT_PATH"
           git -C "$CHECKOUT_PATH" remote add origin "$RELEASES_REPOSITORY"
-          git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
+          python3 scripts/network_retry.py --timeout 300 -- \
+            git -C "$CHECKOUT_PATH" fetch --no-tags --depth=1 origin "$RELEASES_COMMIT"
           git -C "$CHECKOUT_PATH" checkout --quiet --detach FETCH_HEAD
 
       - name: Validate repository configuration
@@ -125,6 +127,7 @@ jobs:
           --release-metadata-checkout "$RELEASE_METADATA_CHECKOUT"
 
       - name: Render frozen publish plan
+        id: frozen-plan
         env:
           STREAM: ${{ inputs.stream }}
           SCOPE: ${{ inputs.scope }}
@@ -160,6 +163,7 @@ jobs:
             plan_args+=(--image "$image")
           fi
           python3 scripts/plan-publish.py "${plan_args[@]}" > artifacts/plan/publish-plan.json
+          printf 'candidate_id=%s\n' "$CANDIDATE_ID" >> "$GITHUB_OUTPUT"
 
       - name: Bind frozen plan to protected main
         if: ${{ inputs.operation == 'publish' }}
@@ -327,7 +331,7 @@ jobs:
       - name: Download publish plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
           path: artifacts/plan
 
       - name: Validate protected main publication context
@@ -344,12 +348,14 @@ jobs:
 
       - name: Validate frozen publish context
         env:
-          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          CANDIDATE_ID: ${{ needs.publish-plan.outputs.candidate_id }}
           PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --workflow-run-id "$GITHUB_RUN_ID"
+          --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
           --expected-scope "$PUBLISH_SCOPE"
 
   build-parent-tier-0:
@@ -362,11 +368,13 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.parent_tier_0_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-parent-tier-1:
@@ -379,12 +387,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.parent_tier_1_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-parent-tier-2:
@@ -397,12 +407,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.parent_tier_2_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-leaf-stage-0:
@@ -415,12 +427,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.leaf_stage_0_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-parent-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   build-leaf-stage-1:
@@ -433,12 +447,14 @@ jobs:
       matrix: ${{ fromJSON(needs.publish-plan.outputs.leaf_stage_1_matrix) }}
     uses: ./.github/workflows/build-unit.yml
     with:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
       unit: ${{ toJSON(matrix) }}
-      publish_plan_artifact: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
-      input_evidence_artifact_pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
+      publish_plan_artifact: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
+      input_evidence_artifact_pattern: unit-evidence-*-${{ needs.publish-plan.outputs.candidate_id }}
       publish_scope: ${{ inputs.scope }}
     permissions:
       contents: read
+      actions: read
       packages: write
 
   collect-native-evidence:
@@ -450,6 +466,9 @@ jobs:
            (needs.build-leaf-stage-1.result == 'skipped' &&
             needs.publish-plan.outputs.leaf_stage_1_count == '0')) }}
     needs: [publish-plan, build-leaf-stage-0, build-leaf-stage-1]
+    outputs:
+      candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}
+      artifact_suffix: ${{ github.run_id }}-${{ github.run_attempt }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -464,13 +483,13 @@ jobs:
       - name: Download publish plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: publish-plan-${{ needs.publish-plan.outputs.candidate_id }}
           path: artifacts/plan
 
       - name: Download all unit evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: unit-evidence-*-${{ needs.publish-plan.outputs.candidate_id }}
           path: artifacts/unit-evidence
           merge-multiple: true
 
@@ -518,19 +537,19 @@ jobs:
       - name: Download publish plan
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: publish-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          name: publish-plan-${{ needs.collect-native-evidence.outputs.candidate_id }}
           path: artifacts/plan
 
       - name: Download amd64 evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: native-amd64-${{ github.run_id }}-${{ github.run_attempt }}
+          name: native-amd64-${{ needs.collect-native-evidence.outputs.artifact_suffix }}
           path: artifacts/arch
 
       - name: Download arm64 evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: native-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          name: native-arm64-${{ needs.collect-native-evidence.outputs.artifact_suffix }}
           path: artifacts/arch
 
       - name: Revalidate protected main publication context
@@ -547,12 +566,14 @@ jobs:
 
       - name: Revalidate frozen publish context
         env:
-          CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          CANDIDATE_ID: ${{ needs.collect-native-evidence.outputs.candidate_id }}
           PUBLISH_SCOPE: ${{ inputs.scope }}
         run: >-
           python3 scripts/validate-publish-approval.py
           --publish-plan artifacts/plan/publish-plan.json
           --expected-candidate-id "$CANDIDATE_ID"
+          --workflow-run-id "$GITHUB_RUN_ID"
+          --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
           --expected-scope "$PUBLISH_SCOPE"
 
       - name: Prepare ephemeral Docker client state
@@ -575,7 +596,10 @@ jobs:
       - name: Log in to GHCR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        run: >-
+          printf '%s' "$GITHUB_TOKEN" |
+          python3 scripts/network_retry.py --timeout 60 --stdin --
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Create and verify final multi-architecture manifests
         run: |
@@ -585,6 +609,9 @@ jobs:
           import pathlib
           import re
           import subprocess
+
+          from scripts.registry_manifest import inspect_raw_manifest
+          from scripts.network_retry import run_network_command
 
           DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
           MULTIARCH_MEDIA_TYPES = {
@@ -804,7 +831,8 @@ jobs:
                   str(metadata_path),
                   *child_refs,
               ]
-              subprocess.run(create_command, check=True)
+              # Replaying this write uses the same frozen child digests and tag.
+              run_network_command(create_command, label="Publish revision manifest")
 
               manifest_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
               if not isinstance(manifest_metadata, dict):
@@ -835,19 +863,7 @@ jobs:
               if not separator or not repository or not revision_tag:
                   raise SystemExit(f"revision reference is invalid: {image_name}")
               immutable_manifest_ref = f"{repository}@{manifest_digest}"
-              raw_result = subprocess.run(
-                  [
-                      "docker",
-                      "buildx",
-                      "imagetools",
-                      "inspect",
-                      "--raw",
-                      immutable_manifest_ref,
-                  ],
-                  check=True,
-                  capture_output=True,
-              )
-              raw_bytes = raw_result.stdout
+              raw_bytes = inspect_raw_manifest(immutable_manifest_ref)
               raw_digest = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"
               if raw_digest != manifest_digest:
                   raise SystemExit(
@@ -858,12 +874,8 @@ jobs:
                       f"raw multi-architecture manifest size does not match metadata: {image_name}"
                   )
 
-              tagged_raw_result = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", revision_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              if tagged_raw_result.stdout != raw_bytes:
+              tagged_raw_bytes = inspect_raw_manifest(revision_ref)
+              if tagged_raw_bytes != raw_bytes:
                   raise SystemExit(
                       f"revision tag moved during manifest validation: {image_name}"
                   )
@@ -1042,6 +1054,9 @@ jobs:
           import re
           import subprocess
 
+          from scripts.registry_manifest import inspect_raw_manifest
+          from scripts.network_retry import run_network_command
+
           DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
           plan = json.loads(
               pathlib.Path("artifacts/plan/publish-plan.json").read_text(encoding="utf-8")
@@ -1080,12 +1095,8 @@ jobs:
               if published["immutable_ref"] != immutable_ref:
                   raise SystemExit(f"summary immutable ref is invalid: {image_name}")
 
-              revision_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", immutable_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              resolved_digest = f"sha256:{hashlib.sha256(revision_raw.stdout).hexdigest()}"
+              revision_raw = inspect_raw_manifest(immutable_ref)
+              resolved_digest = f"sha256:{hashlib.sha256(revision_raw).hexdigest()}"
               if resolved_digest != manifest_digest:
                   raise SystemExit(f"revision manifest digest moved: {image_name}")
               alias_refs = planned.get("alias_refs")
@@ -1097,7 +1108,7 @@ jobs:
                   or len(alias_refs) != len(set(alias_refs))
               ):
                   raise SystemExit(f"frozen alias refs are invalid: {image_name}")
-              subprocess.run(
+              run_network_command(
                   [
                       "docker",
                       "buildx",
@@ -1107,19 +1118,15 @@ jobs:
                       semantic_ref,
                       immutable_ref,
                   ],
-                  check=True,
+                  label="Publish semantic alias",
               )
-              semantic_raw = subprocess.run(
-                  ["docker", "buildx", "imagetools", "inspect", "--raw", semantic_ref],
-                  check=True,
-                  capture_output=True,
-              )
-              if semantic_raw.stdout != revision_raw.stdout:
+              semantic_raw = inspect_raw_manifest(semantic_ref)
+              if semantic_raw != revision_raw:
                   raise SystemExit(f"semantic alias digest verification failed: {image_name}")
               for alias_ref in alias_refs:
                   if alias_ref in {semantic_ref, revision_ref, immutable_ref}:
                       raise SystemExit(f"alias ref collides with revision ref: {image_name}")
-                  subprocess.run(
+                  run_network_command(
                       [
                           "docker",
                           "buildx",
@@ -1129,14 +1136,10 @@ jobs:
                           alias_ref,
                           immutable_ref,
                       ],
-                      check=True,
+                      label="Publish alias",
                   )
-                  alias_raw = subprocess.run(
-                      ["docker", "buildx", "imagetools", "inspect", "--raw", alias_ref],
-                      check=True,
-                      capture_output=True,
-                  )
-                  if alias_raw.stdout != revision_raw.stdout:
+                  alias_raw = inspect_raw_manifest(alias_ref)
+                  if alias_raw != revision_raw:
                       raise SystemExit(f"alias digest verification failed: {image_name}: {alias_ref}")
           PY
 
@@ -1177,6 +1180,7 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           STREAM: ${{ inputs.stream }}
           SCOPE: ${{ inputs.scope }}
+          CANDIDATE_ID: ${{ needs.publish-plan.outputs.candidate_id }}
           PLAN_RESULT: ${{ needs.publish-plan.result }}
           AUTHORIZATION_RESULT: ${{ needs.authorize-publish.result }}
           FINALIZE_RESULT: ${{ needs.finalize-publish.result }}
@@ -1188,9 +1192,14 @@ jobs:
             echo "- Stream: \`$STREAM\`"
             echo "- Scope: \`$SCOPE\`"
             echo "- Plan: \`$PLAN_RESULT\`"
+            echo "- Candidate: \`$CANDIDATE_ID\`"
+            echo "- Execution attempt: \`$GITHUB_RUN_ATTEMPT\`"
             if [ "$OPERATION" = "publish" ]; then
               echo "- Authorization: \`$AUTHORIZATION_RESULT\`"
               echo "- Finalize: \`$FINALIZE_RESULT\`"
+              if [ "$FINALIZE_RESULT" != "success" ]; then
+                echo "- Recovery: Re-run failed jobs preserves completed units. Re-run all jobs creates a new candidate."
+              fi
             else
               echo "- Registry mutation: \`skipped\`"
             fi

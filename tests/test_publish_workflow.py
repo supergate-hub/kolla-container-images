@@ -14,9 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
 BUILD_UNIT_WORKFLOW = ROOT / ".github" / "workflows" / "build-unit.yml"
 VALIDATE_WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
-SYNC_STREAM_OPTIONS_WORKFLOW = (
-    ROOT / ".github" / "workflows" / "sync-publish-stream-options.yml"
-)
 README = ROOT / "README.md"
 BUILD_READINESS = ROOT / "docs" / "build-readiness.md"
 PUBLISH_DOC = ROOT / "docs" / "publish.md"
@@ -39,10 +36,6 @@ EXPECTED_ACTIONS = {
     "actions/upload-artifact": ("043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", "v7"),
     "actions/download-artifact": ("3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", "v8"),
     "actions/setup-python": ("ece7cb06caefa5fff74198d8649806c4678c61a1", "v6"),
-    "actions/create-github-app-token": (
-        "bcd2ba49218906704ab6c1aa796996da409d3eb1",
-        "v3",
-    ),
     "docker/setup-buildx-action": ("bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "v4"),
 }
 ACTION_RE = re.compile(
@@ -89,9 +82,6 @@ class PublishWorkflowTest(unittest.TestCase):
         cls.publish = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
         cls.build_unit = BUILD_UNIT_WORKFLOW.read_text(encoding="utf-8")
         cls.validate = VALIDATE_WORKFLOW.read_text(encoding="utf-8")
-        cls.sync_stream_options = SYNC_STREAM_OPTIONS_WORKFLOW.read_text(
-            encoding="utf-8"
-        )
         cls.readme = README.read_text(encoding="utf-8")
         cls.build_readiness = BUILD_READINESS.read_text(encoding="utf-8")
         cls.publish_doc = PUBLISH_DOC.read_text(encoding="utf-8")
@@ -137,7 +127,6 @@ class PublishWorkflowTest(unittest.TestCase):
                 self.publish,
                 self.build_unit,
                 self.validate,
-                self.sync_stream_options,
             )
         )
         raw_uses = re.findall(r"(?m)^\s*uses:\s+.+$", combined)
@@ -391,15 +380,30 @@ class PublishWorkflowTest(unittest.TestCase):
             job.index(expected_action_use("actions/checkout")),
         )
 
-    def test_workflow_candidate_id_comes_only_from_run_context(self) -> None:
-        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
-        self.assertIn(f"CANDIDATE_ID: {candidate}", self.publish)
-        self.assertIn(f"CANDIDATE_ID: {candidate}", self.build_unit)
-        self.assertNotIn("candidate_id:", self.build_unit)
-        self.assertNotIn("candidate_id:", self.publish)
+    def test_workflow_candidate_id_comes_only_from_the_plan_producer(self) -> None:
+        producer = self.publish_job("publish-plan")
+        self.assertIn("CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}", producer)
+        self.assertIn("candidate_id: ${{ steps.frozen-plan.outputs.candidate_id }}", producer)
+        self.assertIn("CANDIDATE_ID: ${{ inputs.candidate_id }}", self.build_unit)
+        for name in ("build-parent-tier-0", "build-parent-tier-1", "build-parent-tier-2",
+                     "build-leaf-stage-0", "build-leaf-stage-1"):
+            self.assertIn("candidate_id: ${{ needs.publish-plan.outputs.candidate_id }}", self.publish_job(name))
+        for workflow in (self.publish, self.build_unit):
+            self.assertIn('--workflow-run-id "$GITHUB_RUN_ID"', workflow)
+            self.assertIn('--workflow-run-attempt "$GITHUB_RUN_ATTEMPT"', workflow)
         dispatch = yaml_block(self.publish, "  workflow_dispatch:")
         self.assertNotIn("candidate_id:", dispatch)
         self.assertNotIn("workflow_call:", self.publish)
+
+    def test_completed_checkpoint_skips_source_install_and_upload_but_rechecks_image(self) -> None:
+        for name in ("Set up Python", "Check out and install the frozen Kolla source", "Upload unit evidence"):
+            step = yaml_block(self.build_unit, "      - name: " + name)
+            self.assertIn("if: ${{ steps.checkpoint.outputs.found != 'true' }}", step)
+        self.assertIn("--reuse-evidence", self.build_unit)
+        self.assertIn("artifact-ids: ${{ steps.checkpoint.outputs.artifact_id }}", self.build_unit)
+        self.assertLess(self.build_unit.index("Revalidate frozen publish context"),
+                        self.build_unit.index("Find completed unit checkpoint"))
+        self.assertIn("actions: read", self.build_unit)
 
     def test_artifacts_are_unique_short_lived_and_build_artifacts_are_small(self) -> None:
         candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
@@ -412,7 +416,7 @@ class PublishWorkflowTest(unittest.TestCase):
             self.assertIn(f"name: {name}", self.publish)
         self.assertIn(
             "name: unit-evidence-${{ fromJSON(inputs.unit).id }}-"
-            "${{ github.run_id }}-${{ github.run_attempt }}",
+            "${{ inputs.candidate_id }}",
             self.build_unit,
         )
         self.assertIn(
@@ -663,7 +667,7 @@ class PublishWorkflowTest(unittest.TestCase):
         )
 
     def test_build_stages_download_only_the_evidence_available_to_them(self) -> None:
-        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
+        candidate = "${{ needs.publish-plan.outputs.candidate_id }}"
         parent_pattern = f"unit-evidence-*-parent-*-{candidate}"
         all_units_pattern = f"unit-evidence-*-{candidate}"
 
@@ -767,7 +771,7 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn("retention-days: 1", failure)
 
         native = self.publish_job("collect-native-evidence")
-        self.assertIn("pattern: unit-evidence-*-${{ github.run_id }}-${{ github.run_attempt }}", native)
+        self.assertIn("pattern: unit-evidence-*-${{ needs.publish-plan.outputs.candidate_id }}", native)
         self.assertIn("merge-multiple: true", native)
         self.assertNotIn("--mode", native)
         self.assertNotIn("--parent-evidence", native)
@@ -814,9 +818,9 @@ class PublishWorkflowTest(unittest.TestCase):
         job = self.publish_job("finalize-publish")
         self.assertIn("needs: collect-native-evidence", job)
         self.assertIn(expected_action_use("actions/checkout"), job)
-        candidate = "${{ github.run_id }}-${{ github.run_attempt }}"
-        for artifact in ("publish-plan", "native-amd64", "native-arm64"):
-            self.assertIn(f"name: {artifact}-{candidate}", job)
+        self.assertIn("name: publish-plan-${{ needs.collect-native-evidence.outputs.candidate_id }}", job)
+        for artifact in ("native-amd64", "native-arm64"):
+            self.assertIn(f"name: {artifact}-${{{{ needs.collect-native-evidence.outputs.artifact_suffix }}}}", job)
         self.assertNotIn("pattern:", job)
         self.assertNotIn("merge-multiple:", job)
         approval_validator = "python3 scripts/validate-publish-approval.py"
@@ -830,12 +834,28 @@ class PublishWorkflowTest(unittest.TestCase):
 
     def test_finalize_uses_recorded_children_and_verifies_exact_multiarch_manifest(self) -> None:
         job = self.publish_job("finalize-publish")
+        manifest_step = python_heredoc(
+            job,
+            "      - name: Create and verify final multi-architecture manifests",
+        )
         self.assertIn('child_ref = f"{repository}@{record[\'digest\']}"', job)
+        self.assertIn('run_network_command(create_command, label="Publish revision manifest")', manifest_step)
         self.assertRegex(
             job,
             r'"imagetools",\s+"create",\s+"--tag",\s+revision_ref',
         )
-        self.assertIn('"imagetools", "inspect", "--raw", revision_ref', job)
+        self.assertIn(
+            "from scripts.registry_manifest import inspect_raw_manifest",
+            manifest_step,
+        )
+        self.assertIn(
+            "raw_bytes = inspect_raw_manifest(immutable_manifest_ref)",
+            manifest_step,
+        )
+        self.assertIn(
+            "tagged_raw_bytes = inspect_raw_manifest(revision_ref)",
+            manifest_step,
+        )
         self.assertIn('len(index["manifests"]) != 2', job)
         self.assertIn('{"linux/amd64", "linux/arm64"}', job)
         self.assertIn("recorded_child_digests", job)
@@ -883,6 +903,14 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('image["semantic_tag"]', job)
         self.assertIn('architecture["revision_arch_ref"]', job)
         alias_step = yaml_block(job, "      - name: Update and verify semantic aliases")
+        alias_python = python_heredoc(
+            job,
+            "      - name: Update and verify semantic aliases",
+        )
+        self.assertIn(
+            "from scripts.registry_manifest import inspect_raw_manifest",
+            alias_python,
+        )
         self.assertIn('immutable_ref = f"{repository}@{manifest_digest}"', alias_step)
         self.assertRegex(
             alias_step,
@@ -893,8 +921,11 @@ class PublishWorkflowTest(unittest.TestCase):
             alias_step,
             r'"imagetools",\s+"create",\s+"--tag",\s+alias_ref,\s+immutable_ref',
         )
-        self.assertIn('"imagetools", "inspect", "--raw", semantic_ref', alias_step)
-        self.assertIn("if semantic_raw.stdout != revision_raw.stdout:", alias_step)
+        self.assertIn("revision_raw = inspect_raw_manifest(immutable_ref)", alias_python)
+        self.assertIn("semantic_raw = inspect_raw_manifest(semantic_ref)", alias_python)
+        self.assertIn("alias_raw = inspect_raw_manifest(alias_ref)", alias_python)
+        self.assertEqual(alias_python.count("run_network_command("), 2)
+        self.assertIn("if semantic_raw != revision_raw:", alias_step)
 
     def test_finalize_binds_summary_digest_to_exact_immutable_manifest_bytes(self) -> None:
         job = self.publish_job("finalize-publish")
@@ -908,9 +939,9 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('manifest_descriptor.get("mediaType")', job)
         self.assertIn('manifest_descriptor.get("size")', job)
         self.assertIn('immutable_manifest_ref = f"{repository}@{manifest_digest}"', job)
-        self.assertRegex(
+        self.assertIn(
+            "raw_bytes = inspect_raw_manifest(immutable_manifest_ref)",
             job,
-            r'"imagetools",\s+"inspect",\s+"--raw",\s+immutable_manifest_ref',
         )
         self.assertIn(
             'raw_digest = f"sha256:{hashlib.sha256(raw_bytes).hexdigest()}"',
@@ -918,17 +949,14 @@ class PublishWorkflowTest(unittest.TestCase):
         )
         self.assertIn("if raw_digest != manifest_digest:", job)
         self.assertIn("if manifest_size != len(raw_bytes):", job)
-        self.assertIn(
-            '["docker", "buildx", "imagetools", "inspect", "--raw", revision_ref]',
-            job,
-        )
-        self.assertIn("if tagged_raw_result.stdout != raw_bytes:", job)
+        self.assertIn("tagged_raw_bytes = inspect_raw_manifest(revision_ref)", job)
+        self.assertIn("if tagged_raw_bytes != raw_bytes:", job)
 
         metadata = job.index(
             'manifest_descriptor = manifest_metadata.get("containerimage.descriptor")'
         )
         immutable = job.index('immutable_manifest_ref = f"{repository}@{manifest_digest}"')
-        tag_match = job.index("if tagged_raw_result.stdout != raw_bytes:")
+        tag_match = job.index("if tagged_raw_bytes != raw_bytes:")
         self.assertLess(metadata, immutable)
         self.assertLess(immutable, tag_match)
 
@@ -1167,62 +1195,6 @@ class PublishWorkflowTest(unittest.TestCase):
         self.assertIn('"--image",\n                      "keystone"', self.validate)
         self.assertNotIn("--stream 2025.1-rocky-9", self.validate)
         self.assertIn("python3 -m unittest discover -s tests -v", self.validate)
-
-    def test_matrix_prs_receive_a_trusted_dropdown_stack_pr(self) -> None:
-        workflow = self.sync_stream_options
-        trigger = yaml_block(workflow, "on:")
-        self.assertIn("pull_request_target:", trigger)
-        self.assertIn("- main", trigger)
-        self.assertIn("- config/build-matrix.json", trigger)
-        for event_type in ("opened", "reopened", "synchronize"):
-            self.assertIn(f"- {event_type}", trigger)
-        self.assertRegex(workflow, r"(?m)^permissions:\n  contents: read$")
-        self.assertIn(
-            "sync-publish-stream-options-${{ github.event.pull_request.number }}",
-            workflow,
-        )
-        self.assertIn("cancel-in-progress: true", workflow)
-        job = yaml_block(workflow, "  synchronize:")
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            job,
-        )
-        self.assertIn("automation/sync-publish-stream-options/", job)
-        trusted_checkout = yaml_block(job, "      - name: Check out trusted main tools")
-        self.assertIn(expected_action_use("actions/checkout"), trusted_checkout)
-        self.assertIn(
-            "ref: ${{ github.event.pull_request.stack.base.sha || "
-            "github.event.pull_request.base.sha }}",
-            trusted_checkout,
-        )
-        self.assertIn("path: trusted", trusted_checkout)
-        self.assertIn("persist-credentials: false", trusted_checkout)
-        self.assertNotIn("ref: ${{ github.event.pull_request.head.sha }}", job)
-        token = yaml_block(job, "      - name: Create least-privilege catalog bot token")
-        self.assertIn(expected_action_use("actions/create-github-app-token"), token)
-        self.assertIn("PUBLISH_DROPDOWN_APP_CLIENT_ID", token)
-        self.assertIn("PUBLISH_DROPDOWN_APP_PRIVATE_KEY", token)
-        self.assertIn("permission-contents: write", token)
-        self.assertIn("permission-pull-requests: write", token)
-        create = yaml_block(
-            job,
-            "      - name: Create or refresh dropdown synchronization stack PR",
-        )
-        self.assertIn(
-            'python3 "$TRUSTED_REPOSITORY/scripts/sync-publish-stack-pr.py"',
-            create,
-        )
-        for argument in (
-            '--repository "$GITHUB_REPOSITORY"',
-            '--head-sha "$HEAD_SHA"',
-            '--source-branch "$SOURCE_BRANCH"',
-            '--pull-request-number "$PULL_REQUEST_NUMBER"',
-            '--repository-dir "$TRUSTED_REPOSITORY"',
-        ):
-            self.assertIn(argument, create)
-        self.assertNotIn("gh api", create)
-        self.assertNotIn("gh pr", create)
-        self.assertNotIn("git -C", create)
 
 
 if __name__ == "__main__":

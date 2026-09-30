@@ -1111,5 +1111,48 @@ class FrozenSourceWorkflowTest(unittest.TestCase):
         self.assertLess(workflow.index(install), workflow.index(verify))
 
 
+class FrozenFetchRecoveryTest(unittest.TestCase):
+    def test_transient_tls_failure_retries_the_same_exact_fetch(self):
+        from scripts import frozen_sources as sources
+        failed = subprocess.CompletedProcess([], 128, '',
+            'error: RPC failed; curl 56 GnuTLS recv error (-110): '
+            'The TLS connection was non-properly terminated.\nfatal: early EOF')
+        succeeded = subprocess.CompletedProcess([], 0, '', '')
+        with mock.patch.object(sources.subprocess, 'run', side_effect=[failed, succeeded]) as run, \
+             mock.patch('time.sleep') as sleep:
+            sources._run_git(Path('/tmp/frozen-source-test'),
+                             ['fetch', '--quiet', '--no-tags', 'https://opendev.org/openstack/cinder', 'b' * 40])
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+        sleep.assert_called_once_with(5)
+        self.assertEqual(run.call_args.kwargs['timeout'], 300)
+
+    def test_fetch_timeout_is_bounded_and_retried(self):
+        from scripts import frozen_sources as sources
+        with mock.patch.object(sources.subprocess, 'run',
+                               side_effect=subprocess.TimeoutExpired(['git', 'fetch'], 300)) as run, \
+             mock.patch('time.sleep') as sleep:
+            with self.assertRaisesRegex(FrozenSourceError, 'timed out'):
+                sources._run_git(Path('/tmp/frozen-source-test'), ['fetch', 'origin', 'b' * 40])
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 15, 30])
+
+    def test_permanent_git_errors_and_non_fetch_commands_are_not_retried(self):
+        from scripts import frozen_sources as sources
+        for command, message in [
+            (['fetch', 'origin', 'b' * 40], 'fatal: remote error: upload-pack: not our ref ' + 'b' * 40),
+            (['fetch', 'origin', 'b' * 40], 'fatal: Authentication failed'),
+            (['fetch', 'origin', 'b' * 40], 'SSL certificate problem: certificate has expired'),
+            (['checkout', 'b' * 40], 'connection reset'),
+        ]:
+            with self.subTest(command=command, message=message), \
+                 mock.patch.object(sources.subprocess, 'run', return_value=subprocess.CompletedProcess([], 128, '', message)) as run, \
+                 mock.patch('time.sleep') as sleep:
+                with self.assertRaises(FrozenSourceError):
+                    sources._run_git(Path('/tmp/frozen-source-test'), command)
+                run.assert_called_once()
+                sleep.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

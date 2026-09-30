@@ -14,6 +14,7 @@ from typing import Any
 from base_resolution import validate_resolved_base
 from profile_resolver import find_stream, load_matrix, validate_candidate_id
 from publish_approval import scope_selection
+from publish_resume import candidate_for_attempt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--publish-plan", required=True, type=Path)
     parser.add_argument("--expected-candidate-id", required=True)
+    parser.add_argument("--workflow-run-id")
+    parser.add_argument("--workflow-run-attempt")
     parser.add_argument(
         "--expected-scope",
         required=True,
@@ -187,6 +190,10 @@ def load_publish_plan(path: Path) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     try:
+        if args.workflow_run_id is not None or args.workflow_run_attempt is not None:
+            candidate_for_attempt(
+                args.expected_candidate_id, args.workflow_run_id, args.workflow_run_attempt
+            )
         plan = load_publish_plan(args.publish_plan)
         recompute_publish_context(
             plan,

@@ -132,8 +132,10 @@ class BaseResolutionTest(unittest.TestCase):
                 "quay.io/rockylinux/rockylinux:10.2",
             ],
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
+            text=False,
+            input=None,
+            timeout=60,
         )
         self.assertEqual(
             resolved["index_digest"],

@@ -226,15 +226,38 @@ the local planner CLI.
 The `stream` choices are generated from enabled matrix entries because GitHub
 Actions cannot populate a dispatch form dynamically. Update them with
 `python3 scripts/sync-publish-stream-options.py --write` whenever streams
-change; CI rejects a stale option block. Internal matrix PRs additionally get a
-bot-generated child stack PR that applies this update with trusted `main`
-tools. See [docs/publish.md](docs/publish.md#automatic-stack-prs).
+change, and include the generated `.github/workflows/publish.yml` update in the
+same change as the matrix. CI rejects a stale option block.
+
+For runs using the current workflow, **Re-run failed jobs** resumes the original
+plan and preserves completed image evidence. **Re-run all jobs** starts a fresh
+candidate. See [publish recovery](docs/publish.md) for validation and retention
+requirements.
 
 Use the workflow from `main`. `operation=plan` creates a frozen plan and Actions
 summary without registry mutation, publish summary, or lock. `operation=publish`
 also requires protected `main` and the `ghcr-publish` environment approval. See
 [docs/publish.md](docs/publish.md) for the operator contract and
 [docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
+
+The repository keeps four workflows:
+
+| Workflow | Purpose |
+| --- | --- |
+| `validate.yml` | Check configuration, source history, generated dropdown, and tests on pushes and PRs |
+| `publish.yml` | Manually plan or publish images, with recovery from verified completed units |
+| `build-unit.yml` | Reusable native image build called by the publish workflow |
+| `update-catalog.yml` | Refresh the Pages catalog after configuration changes or successful publication, or on manual request |
+
+Pages serves the `gh-pages` branch. The catalog workflow updates `catalog.json`
+and `catalog-data.js`; GitHub's Pages deployment publishes that snapshot. A
+successful plan does not change the catalog. See
+[catalog updates](docs/publish.md#catalog-updates) for refresh modes and manual
+reconciliation.
+
+To prepare a new immutable OpenStack source-set revision, use
+`python3 scripts/generate-openstack-source-set.py --help`. This is a manual
+maintenance tool; it is not part of each image build.
 
 ## Repository layout
 
@@ -251,8 +274,8 @@ scripts/validate-publish-summary.py   Publish-summary schema-v3 validator
 scripts/generate-lock.py              Generic candidate-lock schema-v3 renderer
 .github/workflows/validate.yml        Repository validation
 .github/workflows/publish.yml         Dispatch-only plan/publish workflow
-.github/workflows/sync-publish-stream-options.yml  Generated dropdown stack-PR bot
 .github/workflows/build-unit.yml      Reusable one-target native build job
+.github/workflows/update-catalog.yml  Configuration, publish, and manual catalog refresh
 ```
 
 ## Local validation

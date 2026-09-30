@@ -9,6 +9,10 @@ import subprocess
 from collections.abc import Callable, Mapping
 from typing import Any
 
+try:
+    from scripts.network_retry import run_network_command
+except ModuleNotFoundError:
+    from network_retry import run_network_command
 
 __all__ = ["BaseResolutionError", "resolve_base", "validate_resolved_base"]
 
@@ -63,13 +67,8 @@ def _inspect_raw_manifest(requested_ref: str) -> bytes:
         requested_ref,
     ]
     try:
-        result = subprocess.run(
-            command,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
+        result = run_network_command(command, label="Base manifest inspection", text=False, timeout=60)
+    except (OSError, subprocess.SubprocessError) as error:
         raise BaseResolutionError(
             f"cannot inspect base manifest for {requested_ref}"
         ) from error

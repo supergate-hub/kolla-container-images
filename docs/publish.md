@@ -4,8 +4,9 @@
 planning or publishing exact-version Kolla image streams. CI starts a separate
 workflow run with a repository-scoped GitHub App token (or equivalent
 short-lived credential) that has `Actions: write` and no package-write
-permission. Candidate identity is always derived from
-`github.run_id`-`github.run_attempt`; callers cannot provide it.
+permission. The plan producer derives candidate identity from its
+`github.run_id`-`github.run_attempt`; callers cannot provide it. Downstream
+reruns retain that producer candidate and its frozen inputs.
 
 ```text
 freeze plan -> environment authorization -> native revision children
@@ -27,30 +28,13 @@ The form contains exactly three inputs:
 GitHub Actions renders `choice` inputs from committed YAML, not dynamically from
 JSON. When an enabled stream changes, run
 `python3 scripts/sync-publish-stream-options.py --write` in the same change;
-validation rejects a stale dropdown.
+commit the generated `.github/workflows/publish.yml` update together with the
+matrix. Validation rejects a stale dropdown. No dropdown bot or GitHub App is
+required.
 
 Dispatch this workflow from `main` only. GitHub may display the form for another
 branch that contains the workflow file, but its first job rejects that ref before
 checkout or any networked planning work.
-
-### Automatic stack PRs
-
-When an internal PR targeting `main` changes `config/build-matrix.json`,
-`.github/workflows/sync-publish-stream-options.yml` reads the proposal as data,
-runs the trusted `main` synchronizer, and opens or refreshes a child stack PR
-that changes only `.github/workflows/publish.yml`. It never executes scripts
-from the proposal branch.
-
-Install a repository-scoped GitHub App with only **Contents: read/write** and
-**Pull requests: read/write** permissions. Store its client ID as the repository
-variable `PUBLISH_DROPDOWN_APP_CLIENT_ID` and its private key as the repository
-secret `PUBLISH_DROPDOWN_APP_PRIVATE_KEY`. The workflow obtains a short-lived,
-repository-scoped installation token; it does not use a package-write token.
-
-Review the original matrix PR and its generated child PR normally. Merge the
-**top child PR** after both pass: GitHub lands the complete same-repository stack
-atomically on `main`. Do not merge the lower matrix PR separately. Fork PRs and
-bot-generated child PRs are deliberately ignored by the synchronizer.
 
 The scope mapping is fixed:
 
@@ -191,10 +175,84 @@ tag is absent, and then uses `--skip-existing` to skip only those proven
 ancestors. `--skip-parents` is forbidden because it can also skip the selected
 target. There is no parent-index artifact.
 
-Do not use **Re-run failed jobs**. The run attempt participates in candidate
-and revision identity, so partial reruns fail closed against a mixed evidence
-set. Use **Re-run all jobs**, which creates a new candidate ID and a coherent
-revision.
+Use **Re-run failed jobs** to resume the same frozen plan. Successful jobs
+keep their original unit evidence and revision images; retried jobs consume the
+plan producer's candidate ID, not the new execution attempt. If a unit already
+uploaded its completed checkpoint, its source/base/toolchain identity, parent
+digests, build summary, registry digest, native platform and leaf smoke are
+verified before reusing it without rebuilding. Checkpoints are never overwritten.
+A different candidate, changed digest or invalid checkpoint fails closed.
+
+Use **Re-run all jobs** for a fresh plan and new candidate ID/revision, including
+when required plan/evidence artifacts have expired or been deleted. Plan and
+unit evidence are retained seven days. Automatic reuse applies only within the
+same workflow run and original plan; it is not a cross-run image cache. A pushed
+image without a completed evidence artifact is not accepted as a checkpoint.
+
+Repository-managed network operations retry transient connection/TLS interruption,
+DNS, timeout, HTTP 408/429 and HTTP 500/502/503/504 failures up to three times after
+5, 15 and 30 seconds. This covers Git fetch/ref lookup, Docker login/pull,
+base-manifest resolution, revision/alias manifest publication, GitHub artifact
+lookup, source/constraints downloads, catalog HTTP reads and the same catalog
+Git push. A manifest write reuses the same tag and frozen digest inputs, then
+performs the existing digest/content verification. HTTP body interruptions
+restart the GET; incomplete bytes never enter verification. HTTP `Retry-After`
+is honored up to 60 seconds (including explicit HTTP 403 throttling responses);
+a longer server wait fails this attempt instead of retrying prematurely.
+
+Each subprocess attempt has a timeout: 60 seconds for login, registry reads and
+API/ref lookups; 300 seconds for Git fetch/push and manifest writes; 900 seconds
+for Docker pull. HTTP downloads have a 30-second socket timeout. Newly published
+manifest visibility retains its separate 1/2/4/8/15-second retry schedule,
+including temporary missing manifests. Ordinary missing refs/HTTP 404,
+authentication, certificate, disk and verification errors are not retried by
+these wrappers. The exact commit, release ancestry and digest verification
+remain mandatory.
+
+Kolla 22.2.0 already retries individual build and push tasks three times by
+default, including failures inside Dockerfile package/download steps; pip and
+the pinned GitHub artifact actions also retain their own retry handling. We do
+not wrap the whole Kolla build/job in another retry loop. Cancellation, runner
+loss, exhausted retries and persistent errors still require **Re-run failed
+jobs**; successful unit checkpoints remain reusable as described above.
+
+These recovery rules apply to runs started with this workflow version. GitHub
+reruns retain the original workflow commit, so an older failed run must be
+replaced by a new dispatch to use the updated recovery behavior.
+
+## Catalog updates
+
+`.github/workflows/update-catalog.yml` is the single catalog writer. It reads the
+aggregate configuration from `main` and serializes refreshes with the
+`catalog-pages` concurrency group, without cancelling an active refresh.
+
+| Trigger | Refresh behavior |
+| --- | --- |
+| A `main` push changes `config/build-matrix.json` or `config/profiles/**` | `incremental`: reconcile configuration and inspect new or changed stream/profile entries |
+| A successful `Publish Kolla images` dispatch from `main` completes | `publish`: select the terminal artifact for that exact run and attempt, validate its publish summary, and refresh its published images |
+| Manual dispatch from `main` | `full` by default, or `incremental` when explicitly selected |
+
+A successful `operation=plan` run has no terminal publish artifact and does not
+change the catalog. Failed or cancelled publish runs do not run the refresh job.
+Malformed publish artifacts or summaries fail validation before catalog changes.
+
+The workflow generates both `catalog.json` and `catalog-data.js`, validates the
+JSON and site JavaScript, and commits the data to `gh-pages` only if it changed. GitHub Pages continues
+to deploy from the root of that branch. Its generated `pages-build-deployment`
+workflow is managed by GitHub and is not an additional workflow file to remove.
+The website displays the last catalog snapshot; opening the page does not query
+GHCR live.
+
+To reconcile all catalog entries against the registry:
+
+```bash
+gh workflow run update-catalog.yml --ref main --field refresh_mode=full
+```
+
+Use `--field refresh_mode=incremental` for a configuration reconciliation that
+preserves unchanged baseline entries. The optional `CATALOG_PACKAGES_TOKEN`
+continues to fall back to `github.token`. Transient network failures use the
+shared retry policy, including retries of the same `gh-pages` push.
 
 ## Tags, summary, and lock
 
@@ -234,10 +292,15 @@ Artifact names and terminal paths are deterministic:
 | --- | --- |
 | `publish-plan-<candidate-id>` | `artifacts/plan/publish-plan.json` |
 | `unit-evidence-<arch>-<kind>-<target>-<candidate-id>` | One unit's schema-v3 evidence |
-| `unit-diagnostics-<unit-id>-<candidate-id>` | One-day failure-only logs and local build diagnostics for a failed unit |
-| `native-amd64-<candidate-id>` | `artifacts/arch/native-amd64.json` |
-| `native-arm64-<candidate-id>` | `artifacts/arch/native-arm64.json` |
-| `publish-<stream>-<candidate-id>` | `artifacts/publish-summary-<stream>.json`, `artifacts/manifests/`, and an eligible `artifacts/kolla-ansible-image-lock-<stream>.yml` |
+| `unit-diagnostics-<unit-id>-<execution-id>` | One-day failure-only logs and local build diagnostics for a failed unit |
+| `native-amd64-<collection-execution-id>` | `artifacts/arch/native-amd64.json` |
+| `native-arm64-<collection-execution-id>` | `artifacts/arch/native-arm64.json` |
+| `publish-<stream>-<finalization-execution-id>` | `artifacts/publish-summary-<stream>.json`, `artifacts/manifests/`, and an eligible `artifacts/kolla-ansible-image-lock-<stream>.yml` |
+
+An execution ID is the executing job's `<run_id>-<run_attempt>`. The collector
+exports its artifact names to the finalizer, so a finalizer-only retry can use
+the earlier collection. Terminal artifact names use the finalizer's execution
+ID for catalog discovery; their summary and lock keep the original candidate ID.
 
 Only `deployment/all` may produce the generic candidate lock. Keystone, core,
 partial deployment, incomplete evidence, or invalid provenance cannot produce

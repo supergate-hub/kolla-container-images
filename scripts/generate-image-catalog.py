@@ -7,6 +7,7 @@ import argparse
 import copy
 from dataclasses import dataclass
 import hashlib
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,11 @@ from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
+
+try:
+    from scripts.network_retry import read_url
+except ModuleNotFoundError:
+    from network_retry import read_url
 
 try:
     from scripts.profile_resolver import (
@@ -81,14 +87,14 @@ class GhcrRegistryClient:
 
     def _request(self, request: Request, *, subject: str):
         try:
-            return self._opener(request, timeout=self._timeout)
+            return read_url(request, opener=self._opener, timeout=self._timeout)
         except HTTPError as error:
             if error.code == 404:
                 raise RegistryNotFound(subject) from error
             raise CatalogError(
                 f"GHCR request failed for {subject}: HTTP {error.code}"
             ) from error
-        except (URLError, TimeoutError, OSError) as error:
+        except (URLError, TimeoutError, OSError, HTTPException) as error:
             raise CatalogError(f"GHCR request failed for {subject}: {error}") from error
 
     def _token(self, repository: str) -> str:
@@ -101,11 +107,11 @@ class GhcrRegistryClient:
             }
         )
         request = Request(f"https://ghcr.io/token?{query}")
-        with self._request(request, subject=f"token for {repository}") as response:
-            try:
-                document = json.loads(response.read())
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise CatalogError("GHCR token response must be JSON") from error
+        raw, _ = self._request(request, subject=f"token for {repository}")
+        try:
+            document = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CatalogError("GHCR token response must be JSON") from error
         if not isinstance(document, dict):
             raise CatalogError("GHCR token response must be an object")
         token = document.get("token") or document.get("access_token")
@@ -129,11 +135,11 @@ class GhcrRegistryClient:
             "tags/list",
             accept="application/json",
         )
-        with self._request(request, subject=f"tags for {repository}") as response:
-            try:
-                document = json.loads(response.read())
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise CatalogError("GHCR tags response must be JSON") from error
+        raw, _ = self._request(request, subject=f"tags for {repository}")
+        try:
+            document = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CatalogError("GHCR tags response must be JSON") from error
         if not isinstance(document, dict):
             raise CatalogError("GHCR tags response must be an object")
         tags = document.get("tags", [])
@@ -147,12 +153,8 @@ class GhcrRegistryClient:
             f"manifests/{tag}",
             accept=", ".join(sorted(INDEX_MEDIA_TYPES)),
         )
-        with self._request(
-            request,
-            subject=f"manifest {repository}:{tag}",
-        ) as response:
-            raw = response.read()
-            digest = response.headers.get("Docker-Content-Digest")
+        raw, headers = self._request(request, subject=f"manifest {repository}:{tag}")
+        digest = headers.get("Docker-Content-Digest")
         if not isinstance(digest, str) or not digest:
             raise CatalogError("GHCR manifest response is missing Docker-Content-Digest")
         return RegistryManifest(raw=raw, digest=digest)
@@ -178,12 +180,12 @@ class GithubPackagesClient:
             },
         )
         try:
-            return self._opener(request, timeout=self._timeout)
+            return read_url(request, opener=self._opener, timeout=self._timeout)
         except HTTPError as error:
             raise CatalogError(
                 f"GitHub Packages request failed for {subject}: HTTP {error.code}"
             ) from error
-        except (URLError, TimeoutError, OSError) as error:
+        except (URLError, TimeoutError, OSError, HTTPException) as error:
             raise CatalogError(f"GitHub Packages request failed for {subject}: {error}") from error
 
     def list_container_packages(self, owner: str) -> dict[str, Package]:
@@ -194,11 +196,11 @@ class GithubPackagesClient:
         while True:
             query = urlencode({"package_type": "container", "per_page": "100", "page": str(page)})
             url = f"https://api.github.com/orgs/{owner}/packages?{query}"
-            with self._request(url, subject=f"container packages for {owner}") as response:
-                try:
-                    document = json.loads(response.read())
-                except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                    raise CatalogError("GitHub Packages response must be JSON") from error
+            raw, _ = self._request(url, subject=f"container packages for {owner}")
+            try:
+                document = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise CatalogError("GitHub Packages response must be JSON") from error
             if not isinstance(document, list):
                 raise CatalogError("GitHub Packages response must be a list")
             for item in document:
@@ -233,13 +235,13 @@ class GithubPackagesClient:
             },
         )
         try:
-            with self._opener(request, timeout=self._timeout) as response:
-                document = json.loads(response.read())
+            raw, _ = read_url(request, opener=self._opener, timeout=self._timeout)
+            document = json.loads(raw)
         except HTTPError as error:
             if error.code == 404:
                 return None
             raise CatalogError(f"GitHub Packages request failed for {name}: HTTP {error.code}") from error
-        except (URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        except (URLError, TimeoutError, OSError, HTTPException, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise CatalogError(f"GitHub Packages request failed for {name}: {error}") from error
         if not isinstance(document, dict) or document.get("name") != name:
             raise CatalogError("GitHub Packages entry does not match requested package")

@@ -50,8 +50,8 @@ python3 scripts/plan-publish.py \
   --dry-run
 ```
 
-The workflow candidate ID is `github.run_id`-`github.run_attempt`; users do not
-input it. The plan freezes:
+The plan producer sets candidate ID to its `github.run_id`-`github.run_attempt`;
+users do not input it. Downstream retries retain that original ID. The plan freezes:
 
 - protected main ref and pinned OpenStack Releases, Kolla, and Kolla-Ansible
   commits;
@@ -158,15 +158,15 @@ Before evidence is accepted, the unit:
    entrypoint.
 
 After every planned unit succeeds, aggregation validates the exact closure and
-creates `native-amd64-<candidate-id>` and
-`native-arm64-<candidate-id>`. Native evidence preserves the same base and
+creates `native-amd64-<collection-execution-id>` and
+`native-arm64-<collection-execution-id>`. Native evidence preserves the same base and
 source-set provenance; any source/config/base/child digest substitution fails.
 
 Plan, unit/native, and terminal success artifacts contain JSON/YAML evidence,
 not Docker layers, image tar files, Docker directories, pip caches, or build
 caches. Successful evidence is retained seven days; failure diagnostics are
 retained one day. A failed unit uploads its logs as the matching
-`unit-diagnostics-<unit-id>-<candidate-id>` artifact. Job-scoped
+`unit-diagnostics-<unit-id>-<execution-id>` artifact. Job-scoped
 `DOCKER_CONFIG` state is removed in cleanup.
 
 ## Manifest, summary, and lock evidence
@@ -196,7 +196,7 @@ index/child digests, scope, semantic/revision refs, manifest digest, immutable
 ref, and native child records. Only a complete `deployment/all` summary may
 produce `artifacts/kolla-ansible-image-lock-<stream>.yml`.
 
-The terminal artifact `publish-<stream>-<candidate-id>` contains the validated
+The terminal artifact `publish-<stream>-<finalization-execution-id>` contains the validated
 summary, raw manifests under `artifacts/manifests/`, and the eligible generic
 candidate lock. It is uploaded before the semantic alias is moved. A failed
 semantic write therefore cannot invalidate the immutable revision lock.
@@ -229,8 +229,23 @@ tags are not published. The semantic contract is
 tags add `-rev-<run_id>-<run_attempt>-<arch>`. Existing major/codename tags are
 retained but not updated or aliased to the exact-version images.
 
-Do not use **Re-run failed jobs**. Use **Re-run all jobs** so a new candidate ID
-and revision rebuild the entire closure.
+Use **Re-run failed jobs** to continue the original plan and candidate. Successful
+units retain their immutable evidence; a retried completed unit verifies its
+input identity, parent digests, live registry digest and native smoke before
+skipping the build. Missing/invalid evidence or digest substitution is never
+accepted as success. Required artifacts must still be within their seven-day
+retention window. **Re-run all jobs** creates a new plan and candidate revision.
+This behavior applies to new runs using this workflow version, not old runs
+pinned to an earlier commit.
+
+Execution IDs remain `<run_id>-<run_attempt>` for diagnostics, native collection
+and terminal artifact names. Consumers receive the producing job's artifact
+identity; summary/lock candidate IDs always remain bound to the original plan.
+Transient network failures are retried at the Git, Docker registry, HTTP download,
+GitHub API and catalog publication boundaries with bounded timeouts. The complete
+policy, exceptions and Kolla's existing build/push retries are documented in
+[the publish recovery guide](publish.md). Permanent errors and exact source
+verification failures remain fatal.
 
 ## Image smoke versus deployment smoke
 

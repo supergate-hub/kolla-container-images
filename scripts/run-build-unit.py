@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 try:
+    from scripts.network_retry import is_transient_network_error, retry_network, run_network_command
+except ModuleNotFoundError:
+    from network_retry import is_transient_network_error, retry_network, run_network_command
+
+try:
     from scripts.openstack_source_set import validate_frozen_source_contract
 except ModuleNotFoundError:
     from openstack_source_set import validate_frozen_source_contract
@@ -400,7 +405,9 @@ def validate_summary(summary: Any, unit: dict[str, Any]) -> dict[str, list[str]]
             name = entry.get("name")
             if type(name) is not str or not IMAGE_NAME_RE.fullmatch(name):
                 raise BuildUnitError(f"Kolla summary {bucket}[{index}] name is invalid")
-            if bucket == "failed" and entry.get("status") not in FAILED_STATUSES:
+            if bucket == "failed" and (
+                type(entry["status"]) is not str or entry["status"] not in FAILED_STATUSES
+            ):
                 raise BuildUnitError(f"Kolla summary failed[{index}] status is invalid")
             if name in names or name in seen:
                 raise BuildUnitError(f"Kolla summary repeats image {name!r}")
@@ -433,12 +440,19 @@ class CommandRunner:
     def run(self, argv: Sequence[str], *, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
         if not isinstance(argv, (list, tuple)) or not all(isinstance(part, str) for part in argv):
             raise BuildUnitError("command must be structured string argv")
+        if list(argv[:2]) == ["docker", "pull"]:
+            result = run_network_command(list(argv), label="Docker pull", timeout=900)
+            if not capture_output:
+                print(result.stdout, end="")
+                print(result.stderr, end="", file=sys.stderr)
+            return result
         return subprocess.run(
             list(argv),
             check=True,
             text=True,
             capture_output=capture_output,
             shell=False,
+            **({"timeout": 60} if list(argv[:4]) == ["docker", "buildx", "imagetools", "inspect"] else {}),
         )
 
     def run_monitored(
@@ -541,29 +555,7 @@ def verify_local_digest(runner: CommandRunner, ref: str, expected_immutable_ref:
 
 
 def is_transient_remote_descriptor_error(error: subprocess.CalledProcessError) -> bool:
-    output = "\n".join(
-        value
-        for value in (error.stdout, error.stderr)
-        if isinstance(value, str)
-    ).lower()
-    if any(marker in output for marker in ("unauthorized", "denied", "invalid reference")):
-        return False
-    return any(
-        marker in output
-        for marker in (
-            "manifest unknown",
-            "not found",
-            "too many requests",
-            "429",
-            "500",
-            "502",
-            "503",
-            "504",
-            "timeout",
-            "connection reset",
-            "temporary failure",
-        )
-    )
+    return is_transient_network_error(error, allow_missing_manifest=True)
 
 
 def remote_descriptor(
@@ -582,22 +574,11 @@ def remote_descriptor(
         "--format",
         "{{json .Manifest}}",
     ]
-    for attempt, delay in enumerate(REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS, start=1):
-        try:
-            result = runner.run(command, capture_output=True)
-            break
-        except subprocess.CalledProcessError as exc:
-            if not is_transient_remote_descriptor_error(exc):
-                raise
-            print(
-                f"Remote manifest for {arch_ref} is not visible yet; "
-                f"retry {attempt}/{len(REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS)} "
-                f"in {delay}s.",
-                file=sys.stderr,
-            )
-            sleep(delay)
-    else:
-        result = runner.run(command, capture_output=True)
+    result = retry_network(
+        lambda: runner.run(command, capture_output=True),
+        label="Remote manifest inspection", delays=REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS,
+        sleep=sleep, allow_missing_manifest=True,
+    )
     try:
         descriptor = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -724,6 +705,53 @@ def resolve_ancestors(
     return consumed
 
 
+def reuse_completed_unit(
+    runner: CommandRunner,
+    plan: dict[str, Any],
+    unit: dict[str, Any],
+    evidence_path: Path,
+    input_evidence_dir: Path,
+) -> dict[str, Any]:
+    """Verify a completed unit against its plan, parents and live registry digest."""
+    record = validate_input_record(load_json(evidence_path), plan, unit)
+    if record["ancestors"] != resolve_ancestors(plan, unit, input_evidence_dir):
+        raise BuildUnitError("completed unit ancestor digests do not match current evidence")
+    summary = record["summary"]
+    if (type(summary) is not dict or set(summary) != {"built", "skipped"}
+            or summary["built"] != [unit["target"]]
+            or type(summary["skipped"]) is not list
+            or not all(type(name) is str for name in summary["skipped"])
+            or len(summary["skipped"]) != len(set(summary["skipped"]))
+            or set(summary["skipped"]) != set(unit["ancestor_chain"])):
+        raise BuildUnitError("completed unit has no successful build summary")
+    smoke = record["smoke"]
+    if unit["kind"] == "parent":
+        if smoke is not None:
+            raise BuildUnitError("completed parent must not claim leaf smoke")
+    elif (type(smoke) is not dict or set(smoke) != {"platform", "entrypoint", "passed"}
+          or smoke["platform"] != unit["platform"] or smoke["entrypoint"] != "/bin/true"
+          or smoke["passed"] is not True):
+        raise BuildUnitError("completed unit has no successful smoke evidence")
+    disk = record["disk_free_bytes"]
+    disk_keys = {"initial", "after_prune", "after_ancestors", "minimum_during_build", "after_build"}
+    if (type(disk) is not dict or set(disk) != disk_keys
+            or any(type(value) is not int or value < 0 for value in disk.values())
+            or disk["after_prune"] < MIN_PREFLIGHT_FREE_BYTES
+            or min(disk["after_build"], disk["minimum_during_build"]) < MIN_BUILD_FREE_BYTES):
+        raise BuildUnitError("completed unit has invalid disk evidence")
+    digest, immutable = remote_descriptor(runner, unit["arch_ref"], unit["platform"])
+    if digest != record["digest"] or immutable != record["immutable_ref"]:
+        raise BuildUnitError("completed unit registry digest no longer matches its checkpoint")
+    runner.run(["docker", "pull", "--platform", unit["platform"], immutable])
+    inspect_local_platform(runner, immutable, unit["platform"])
+    verify_local_digest(runner, immutable, immutable)
+    if unit["kind"] == "leaf":
+        runner.run(["docker", "run", "--rm", "--platform", unit["platform"],
+                    "--entrypoint", "/bin/true", immutable])
+    print(f"Reused verified completed unit: {unit['id']} -> {immutable}")
+    return record
+
+
 def execute_build_unit(
     publish_plan: Path,
     unit_id: str,
@@ -733,6 +761,7 @@ def execute_build_unit(
     runner: CommandRunner | None = None,
     disk_sampler: Callable[[], int] | None = None,
     machine: str | None = None,
+    reuse_evidence: Path | None = None,
 ) -> dict[str, Any]:
     if Path.cwd().resolve() != REPOSITORY_ROOT.resolve():
         raise BuildUnitError(
@@ -751,6 +780,12 @@ def execute_build_unit(
             f"runner machine must be {unit['runner_machine']}, got {actual_machine}"
         )
     verify_native_docker_daemon(runner, unit)
+
+    if reuse_evidence is not None:
+        evidence = reuse_completed_unit(runner, plan, unit, reuse_evidence, input_evidence_dir)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return evidence
 
     initial_free = disk_sampler()
     runner.run(["docker", "system", "prune", "--all", "--force", "--volumes"])
@@ -865,6 +900,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unit-id", required=True)
     parser.add_argument("--input-evidence-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--reuse-evidence", type=Path)
     return parser.parse_args()
 
 
@@ -876,15 +912,18 @@ def main() -> int:
             args.unit_id,
             args.input_evidence_dir,
             args.output,
+            reuse_evidence=args.reuse_evidence,
         )
     except (
         BuildUnitError,
         OSError,
         ValueError,
         json.JSONDecodeError,
-        subprocess.CalledProcessError,
+        subprocess.SubprocessError,
     ) as exc:
         print(f"Build unit failed: {exc}", file=sys.stderr)
+        for note in getattr(exc, "__notes__", ()):
+            print(note, file=sys.stderr)
         return 1
     print(
         f"Build unit passed: {evidence['unit_id']} -> {evidence['immutable_ref']}"

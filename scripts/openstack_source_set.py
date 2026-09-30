@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import argparse
 import hashlib
+from http.client import HTTPException
 import json
 import os
 import re
@@ -14,6 +15,11 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+try:
+    from scripts.network_retry import read_url, run_network_command
+except ModuleNotFoundError:
+    from network_retry import read_url, run_network_command
 
 
 SOURCE_SET_KEYS = {
@@ -1192,18 +1198,15 @@ def _resolve_remote_git_ref(repository: str, track_ref: str) -> str:
         if not track_ref.startswith("refs/")
         else track_ref
     )
-    result = subprocess.run(
-        ["git", "ls-remote", "--refs", repository, expected_ref],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
-        raise OpenStackSourceSetError(
-            f"cannot resolve {repository} {expected_ref}: {detail}"
+    try:
+        result = run_network_command(
+            ["git", "ls-remote", "--refs", repository, expected_ref],
+            label="Git remote ref lookup", timeout=60,
         )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OpenStackSourceSetError(
+            f"cannot resolve {repository} {expected_ref}: {error}"
+        ) from error
     records = [line.split("\t", 1) for line in result.stdout.splitlines() if line]
     if len(records) != 1 or len(records[0]) != 2 or records[0][1] != expected_ref:
         raise OpenStackSourceSetError(
@@ -1221,13 +1224,9 @@ def _read_remote_constraints(commit: str) -> bytes:
     url = f"https://releases.openstack.org/constraints/upper/{commit}"
     request = Request(url, headers={"User-Agent": "kolla-source-set-generator/1"})
     try:
-        with urlopen(request, timeout=30) as response:
-            if response.status != 200:
-                raise OpenStackSourceSetError(
-                    f"constraints request returned HTTP {response.status}: {url}"
-                )
-            return response.read()
-    except (HTTPError, URLError, TimeoutError, OSError) as error:
+        raw, _ = read_url(request, opener=urlopen, timeout=30, expected_status=200)
+        return raw
+    except (HTTPError, URLError, TimeoutError, OSError, HTTPException) as error:
         raise OpenStackSourceSetError(
             f"cannot read immutable upper constraints {url}: {error}"
         ) from error
@@ -1236,13 +1235,9 @@ def _read_remote_constraints(commit: str) -> bytes:
 def _read_remote_artifact(url: str) -> bytes:
     request = Request(url, headers={"User-Agent": "kolla-source-set-generator/1"})
     try:
-        with urlopen(request, timeout=30) as response:
-            if response.status != 200:
-                raise OpenStackSourceSetError(
-                    f"direct artifact request returned HTTP {response.status}: {url}"
-                )
-            return response.read()
-    except (HTTPError, URLError, TimeoutError, OSError) as error:
+        raw, _ = read_url(request, opener=urlopen, timeout=30, expected_status=200)
+        return raw
+    except (HTTPError, URLError, TimeoutError, OSError, HTTPException) as error:
         raise OpenStackSourceSetError(
             f"cannot read commit-addressed direct artifact {url}: {error}"
         ) from error
