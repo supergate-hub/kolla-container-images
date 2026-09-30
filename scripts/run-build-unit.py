@@ -405,7 +405,9 @@ def validate_summary(summary: Any, unit: dict[str, Any]) -> dict[str, list[str]]
             name = entry.get("name")
             if type(name) is not str or not IMAGE_NAME_RE.fullmatch(name):
                 raise BuildUnitError(f"Kolla summary {bucket}[{index}] name is invalid")
-            if bucket == "failed" and entry.get("status") not in FAILED_STATUSES:
+            if bucket == "failed" and (
+                type(entry["status"]) is not str or entry["status"] not in FAILED_STATUSES
+            ):
                 raise BuildUnitError(f"Kolla summary failed[{index}] status is invalid")
             if name in names or name in seen:
                 raise BuildUnitError(f"Kolla summary repeats image {name!r}")

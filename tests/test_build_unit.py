@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -11,6 +12,8 @@ from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
+from scripts.profile_resolver import find_stream, load_matrix
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PLANNER = ROOT / "scripts" / "plan-publish.py"
@@ -19,6 +22,43 @@ BASE_INDEX_FIXTURE = ROOT / "tests" / "fixtures" / "oci-base-index.json"
 CANDIDATE_ID = "123456789-1"
 TEN_GIB = 10 * 1024**3
 THREE_GIB = 3 * 1024**3
+CONTRACT = ROOT / "tests" / "fixtures" / "kolla-build-summary-contract.json"
+EXPECTED_METHOD_SHA256 = (
+    "02c656c628dc9f127ada22d993e0693fe"
+    "ae6c94ee5f42c5d06e9a54fccd959f0"
+)
+EXPECTED_VERSION_PROVENANCE = {
+    "20.4.0": {
+        "distribution": "kolla==20.4.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "6a035d50858519474d9b60bf7e502621603c151375ca1bbfc9d06abb7fdf658a",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+    "20.5.0": {
+        "distribution": "kolla==20.5.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "de2428c30f3030c17855103cbc491203d6025fa7427093e41e9cbfe091b6325d",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+    "21.1.0": {
+        "distribution": "kolla==21.1.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "fbaac910754a33c79490d781f9c137953d40ef6ed1624cdd74661970c0d86721",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+    "22.0.0": {
+        "distribution": "kolla==22.0.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "a70c25776f2a10c73aa02fe90a9143fe269af1a1ca39bb2e6f989d737205ef9f",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+    "22.2.0": {
+        "distribution": "kolla==22.2.0",
+        "source_path": "kolla/image/kolla_worker.py",
+        "module_sha256": "cb377762f5bc5c46af46caa6571170fad2e77754164ae838fe5bdda4e3666ed7",
+        "summary_method_sha256": EXPECTED_METHOD_SHA256,
+    },
+}
 
 
 def active_stream_id() -> str:
@@ -625,6 +665,44 @@ class BuildUnitTest(unittest.TestCase):
                 )
             self.assertFalse(output.exists())
 
+    def test_invalid_or_stale_summary_cannot_accept_existing_remote_image(self) -> None:
+        for case in ("missing", "stale", "invalid-json", "duplicate-key", "incomplete"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                _, unit, plan_path, evidence_dir = self.prepare_leaf(temp_path)
+                runner = FakeRunner(unit, target_present=True)
+                summary_path = Path(unit["summary_file"])
+                if case == "stale":
+                    runner.run_monitored(unit["command"], lambda: TEN_GIB)
+                valid = {
+                    "built": [{"name": unit["target"]}], "failed": [], "not_matched": [],
+                    "skipped": [{"name": name} for name in unit["ancestor_chain"]],
+                    "unbuildable": [],
+                }
+                raw = json.dumps(valid)
+                raw = {
+                    "invalid-json": "{",
+                    "duplicate-key": raw.replace('{"built":', '{"built": [], "built":', 1),
+                    "incomplete": json.dumps({**valid, "built": []}),
+                }.get(case)
+
+                def write_summary(argv, disk_sampler):
+                    runner.commands.append(list(argv))
+                    self.assertFalse(summary_path.exists(), "stale summary must be removed before build")
+                    if raw is not None:
+                        summary_path.write_text(raw, encoding="utf-8")
+                    return THREE_GIB
+
+                output = temp_path / "unit.json"
+                with patch.object(runner, "run_monitored", side_effect=write_summary):
+                    with self.assertRaises((BUILD_UNIT.BuildUnitError, ValueError, FileNotFoundError)):
+                        BUILD_UNIT.execute_build_unit(
+                            plan_path, unit["id"], evidence_dir, output, runner=runner,
+                            disk_sampler=lambda: TEN_GIB, machine="x86_64",
+                        )
+                self.assertFalse(output.exists())
+                self.assertEqual(runner.remote_inspect_attempts, 0)
+
     def test_unrelated_unbuildable_catalog_entries_are_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -780,6 +858,180 @@ class BuildUnitTest(unittest.TestCase):
                     disk_sampler=lambda: next(low_disk_values),
                     machine="x86_64",
                 )
+
+
+class BuildUnitSummaryTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.plan = candidate_plan()
+
+    def valid_summary(self, arch: str = "amd64") -> tuple[dict, dict]:
+        unit = planned_unit(self.plan, f"{arch}-leaf-keystone")
+        summary = {
+            "built": [{"name": unit["target"]}],
+            "failed": [],
+            "not_matched": [{"name": "glance-api"}],
+            "skipped": [{"name": name} for name in unit["ancestor_chain"]],
+            "unbuildable": [],
+        }
+        return unit, summary
+
+    def test_fixture_covers_matrix_pins_and_exact_schema(self) -> None:
+        fixture = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        self.assertEqual(
+            set(fixture),
+            {
+                "schema_version",
+                "source_extraction",
+                "summary_method_source",
+                "summary_method_sha256",
+                "versions",
+                "top_level_keys",
+                "entry_keys",
+                "failed_status_values",
+            },
+        )
+        self.assertEqual(fixture["schema_version"], 1)
+        self.assertEqual(
+            fixture["source_extraction"],
+            "ast.get_source_segment for KollaWorker.summary",
+        )
+        matrix = load_matrix()
+        matrix_versions = {
+            find_stream(matrix, stream["id"])["kolla_version"]
+            for stream in matrix["streams"]
+        }
+        self.assertTrue(
+            matrix_versions.issubset(fixture["versions"]),
+            f"active matrix Kolla versions missing from fixture: "
+            f"{sorted(matrix_versions - set(fixture['versions']))!r}",
+        )
+        self.assertEqual(fixture["versions"], EXPECTED_VERSION_PROVENANCE)
+        source_text = fixture["summary_method_source"]
+        self.assertIs(type(source_text), str)
+        source = source_text.encode("utf-8")
+        self.assertFalse(source.endswith(b"\n"))
+        self.assertEqual(len(source), 4324)
+        self.assertTrue(source_text.startswith("def summary(self):"))
+        self.assertTrue(source_text.endswith("        return results"))
+        self.assertEqual(hashlib.sha256(source).hexdigest(), EXPECTED_METHOD_SHA256)
+        self.assertEqual(fixture["summary_method_sha256"], EXPECTED_METHOD_SHA256)
+        self.assertEqual(
+            fixture["top_level_keys"],
+            ["built", "failed", "not_matched", "skipped", "unbuildable"],
+        )
+        self.assertEqual(
+            fixture["entry_keys"],
+            {
+                "built": ["name"],
+                "failed": ["name", "status"],
+                "not_matched": ["name"],
+                "skipped": ["name"],
+                "unbuildable": ["name"],
+            },
+        )
+        self.assertEqual(
+            fixture["failed_status_values"],
+            ["connection_error", "error", "parent_error", "push_error"],
+        )
+
+        self.assertEqual(fixture["top_level_keys"], list(BUILD_UNIT.SUMMARY_BUCKETS))
+        self.assertEqual(
+            {key: set(value) for key, value in fixture["entry_keys"].items()},
+            BUILD_UNIT.SUMMARY_ENTRY_KEYS,
+        )
+        self.assertEqual(set(fixture["failed_status_values"]), BUILD_UNIT.FAILED_STATUSES)
+
+    def test_exact_native_summaries_pass(self) -> None:
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch):
+                unit, summary = self.valid_summary(arch)
+                self.assertEqual(BUILD_UNIT.validate_summary(summary, unit), {
+                    "built": [unit["target"]], "skipped": unit["ancestor_chain"],
+                })
+
+    def test_built_and_skipped_sets_must_match_the_frozen_plan(self) -> None:
+        for bucket in ("built", "skipped"):
+            for change in ("missing", "extra"):
+                with self.subTest(bucket=bucket, change=change):
+                    unit, summary = self.valid_summary()
+                    if change == "missing":
+                        summary[bucket].pop()
+                    else:
+                        summary[bucket].append({"name": "unexpected-image"})
+                    with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, f"{bucket} set"):
+                        BUILD_UNIT.validate_summary(summary, unit)
+
+    def test_all_failure_statuses_reject_the_current_build(self) -> None:
+        for status in BUILD_UNIT.FAILED_STATUSES:
+            with self.subTest(status=status):
+                unit, summary = self.valid_summary()
+                summary["failed"] = [{"name": "other-image", "status": status}]
+                with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "failed bucket must be empty"):
+                    BUILD_UNIT.validate_summary(summary, unit)
+
+    def test_planned_targets_and_ancestors_cannot_be_unmatched_or_unbuildable(self) -> None:
+        unit, _ = self.valid_summary()
+        for name in [unit["target"], *unit["ancestor_chain"]]:
+            for bucket in ("not_matched", "unbuildable"):
+                with self.subTest(name=name, bucket=bucket):
+                    _, summary = self.valid_summary()
+                    for entries in summary.values():
+                        entries[:] = [entry for entry in entries if entry["name"] != name]
+                    summary[bucket].append({"name": name})
+                    with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, f"planned images.*{bucket}"):
+                        BUILD_UNIT.validate_summary(summary, unit)
+
+    def test_duplicate_and_cross_bucket_names_are_rejected(self) -> None:
+        for bucket in ("built", "not_matched"):
+            with self.subTest(bucket=bucket):
+                unit, summary = self.valid_summary()
+                summary[bucket].append(copy.deepcopy(summary["built"][0]))
+                with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "repeats image"):
+                    BUILD_UNIT.validate_summary(summary, unit)
+
+    def test_root_bucket_and_entry_schemas_are_exact(self) -> None:
+        changes = [
+            ("missing bucket", lambda s: s.pop("skipped")),
+            ("extra bucket", lambda s: s.update(extra=[])),
+            ("non-list bucket", lambda s: s.update(skipped={})),
+            ("non-object entry", lambda s: s.update(built=["keystone"])),
+            ("extra entry field", lambda s: s["built"][0].update(status="error")),
+            ("missing entry field", lambda s: s["built"][0].clear()),
+            ("invalid name", lambda s: s["built"][0].update(name="Bad/Image")),
+            ("non-string name", lambda s: s["built"][0].update(name=[])),
+        ]
+        for label, change in changes:
+            with self.subTest(case=label):
+                unit, summary = self.valid_summary()
+                change(summary)
+                with self.assertRaises(BUILD_UNIT.BuildUnitError):
+                    BUILD_UNIT.validate_summary(summary, unit)
+        for root in (None, [], "summary"):
+            with self.subTest(root=root), self.assertRaises(BUILD_UNIT.BuildUnitError):
+                BUILD_UNIT.validate_summary(root, unit)
+        for status in ("unknown", None, [], {}, 0):
+            with self.subTest(status=status):
+                unit, summary = self.valid_summary()
+                summary["failed"] = [{"name": "other-image", "status": status}]
+                with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "status is invalid"):
+                    BUILD_UNIT.validate_summary(summary, unit)
+
+    def test_malformed_unit_commands_and_mismatched_summary_path_are_rejected(self) -> None:
+        for command in (None, [], "kolla-build", {}):
+            with self.subTest(command=command):
+                unit = copy.deepcopy(self.valid_summary()[0])
+                unit["command"] = command
+                with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "not structured argv"):
+                    BUILD_UNIT.validate_unit(unit)
+        unit = copy.deepcopy(self.valid_summary()[0])
+        unit["summary_file"] = "another-summary.json"
+        with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "summary path does not match"):
+            BUILD_UNIT.validate_unit(unit)
+
+    def test_unknown_unit_is_rejected(self) -> None:
+        with self.assertRaisesRegex(BUILD_UNIT.BuildUnitError, "exactly one.*ppc64le"):
+            BUILD_UNIT.select_unit(self.plan, "ppc64le-leaf-keystone")
 
 
 if __name__ == "__main__":
