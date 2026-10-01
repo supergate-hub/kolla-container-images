@@ -812,6 +812,12 @@ def _pbr_project_version(
     return version
 
 
+def _egg_info_directory(package_name: str) -> str:
+    """Return the egg-info directory name setuptools derives for a project."""
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", package_name)
+    return safe_name.replace("-", "_").strip("_") + ".egg-info"
+
+
 def _archive_member(
     archive: tarfile.TarFile,
     *,
@@ -945,34 +951,52 @@ def prepare_project_archive(
                 f"{root_name}/{relative}": worktree / relative
                 for relative in tracked
             }
+            generated_members: dict[str, bytes] = {}
             if package_name is not None and package_version is not None:
                 pkg_info_name = f"{root_name}/PKG-INFO"
                 if pkg_info_name in source_members:
                     raise FrozenSourceError(
                         "project export commit already contains root PKG-INFO"
                     )
-                pkg_info = (
+                generated_members[pkg_info_name] = (
                     "Metadata-Version: 2.1\n"
                     f"Name: {package_name}\n"
                     f"Version: {package_version}\n"
                 ).encode("utf-8")
-            else:
-                pkg_info_name = ""
-                pkg_info = b""
+                # Without `.git`, PBR reuses an existing egg-info SOURCES.txt
+                # as the package manifest, exactly as it does for an upstream
+                # sdist.  Projects that declare only their top-level package
+                # (for example `[tool.setuptools] packages = ["keystone"]`)
+                # ship every subpackage through that manifest, so omitting it
+                # silently installs only the top-level modules.
+                egg_info_name = f"{root_name}/{_egg_info_directory(package_name)}"
+                if egg_info_name in directory_names:
+                    raise FrozenSourceError(
+                        "project export commit already contains "
+                        f"{_egg_info_directory(package_name)}"
+                    )
+                if any("\n" in path or "\r" in path for path in tracked):
+                    raise FrozenSourceError(
+                        "project export tracked path cannot be listed in SOURCES.txt"
+                    )
+                directory_names.add(egg_info_name)
+                generated_members[f"{egg_info_name}/SOURCES.txt"] = "\n".join(
+                    tracked
+                ).encode("utf-8")
             all_member_names = sorted(
-                directory_names | set(source_members) | ({pkg_info_name} if pkg_info_name else set())
+                directory_names | set(source_members) | set(generated_members)
             )
             with tarfile.open(temporary_path, "w", format=tarfile.PAX_FORMAT) as archive:
                 for member_name in all_member_names:
                     if member_name in directory_names:
                         _archive_member(archive, name=member_name, mode=0o755)
                         continue
-                    if member_name == pkg_info_name:
+                    if member_name in generated_members:
                         _archive_member(
                             archive,
                             name=member_name,
                             mode=0o644,
-                            data=pkg_info,
+                            data=generated_members[member_name],
                         )
                         continue
                     source = source_members[member_name]

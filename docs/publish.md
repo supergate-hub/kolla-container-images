@@ -122,7 +122,9 @@ toolchain commits against its deliverables.
 project `build_commit` SHAs. Before registry login, each unit fetches only its
 required project commits without remote tags, derives PBR versions from the
 frozen release tag and ancestry with the hash-locked build engine, and creates
-sorted, normalized local source archives without `.git` metadata. Kolla never
+sorted, normalized local source archives without `.git` metadata. Each PBR
+archive carries `PKG-INFO` and an egg-info `SOURCES.txt` manifest so the
+installed package matches an upstream sdist. Kolla never
 clones a moving upstream source. The unit validates the pinned Kolla source
 closure before writing the frozen configuration. A missing
 service/addition/plugin or moving source reference fails before registry

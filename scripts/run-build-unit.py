@@ -91,6 +91,47 @@ MIN_BUILD_FREE_BYTES = 2 * GIB
 DISK_POLL_INTERVAL_SECONDS = 0.25
 REMOTE_DESCRIPTOR_RETRY_DELAYS_SECONDS = (1, 2, 4, 8, 15)
 DOCKER_ROOT_OVERRIDE = os.environ.get("KOLLA_DOCKER_ROOT")
+KOLLA_VENV_PYTHON = "/var/lib/kolla/venv/bin/python3"
+# Kolla pip-installs each frozen source archive from a local directory, which
+# pip records as a PEP 610 `dir_info` direct URL.  Resolving every console
+# script of those distributions catches a package that installed successfully
+# but shipped without its subpackages (keystone-manage -> keystone.cmd).
+SOURCE_INSTALL_CHECK = """\
+import importlib.metadata
+import importlib.util
+import json
+import sys
+
+checked = 0
+failures = []
+for dist in importlib.metadata.distributions():
+    direct_url = dist.read_text("direct_url.json")
+    if not direct_url or "dir_info" not in json.loads(direct_url):
+        continue
+    for entry_point in dist.entry_points:
+        if entry_point.group != "console_scripts":
+            continue
+        checked += 1
+        try:
+            found = importlib.util.find_spec(entry_point.module) is not None
+            detail = "module not found"
+        except Exception as error:
+            found = False
+            detail = f"{type(error).__name__}: {error}"
+        if not found:
+            failures.append(
+                f"{dist.metadata['Name']}: {entry_point.name} -> "
+                f"{entry_point.value}: {detail}"
+            )
+for failure in failures:
+    print(f"source install check failed: {failure}", file=sys.stderr)
+if failures:
+    sys.exit(1)
+print(f"source install check passed: {checked} console scripts")
+"""
+SOURCE_INSTALL_SHELL = (
+    f'[ -x {KOLLA_VENV_PYTHON} ] || exit 0; exec {KOLLA_VENV_PYTHON} -c "$1"'
+)
 KOLLA_BUILD_CONFIG_FILE = "artifacts/config/kolla-build.conf"
 KOLLA_TEMPLATE_OVERRIDE_FILE = "artifacts/config/template-overrides.j2"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -705,6 +746,29 @@ def resolve_ancestors(
     return consumed
 
 
+def smoke_leaf_image(runner: CommandRunner, platform: str, image: str) -> None:
+    """Start a leaf image and resolve its source-installed console scripts."""
+    runner.run(
+        ["docker", "run", "--rm", "--platform", platform, "--entrypoint", "/bin/true", image]
+    )
+    runner.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--platform",
+            platform,
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            SOURCE_INSTALL_SHELL,
+            "source-install-check",
+            SOURCE_INSTALL_CHECK,
+        ]
+    )
+
+
 def reuse_completed_unit(
     runner: CommandRunner,
     plan: dict[str, Any],
@@ -746,8 +810,7 @@ def reuse_completed_unit(
     inspect_local_platform(runner, immutable, unit["platform"])
     verify_local_digest(runner, immutable, immutable)
     if unit["kind"] == "leaf":
-        runner.run(["docker", "run", "--rm", "--platform", unit["platform"],
-                    "--entrypoint", "/bin/true", immutable])
+        smoke_leaf_image(runner, unit["platform"], immutable)
     print(f"Reused verified completed unit: {unit['id']} -> {immutable}")
     return record
 
@@ -840,18 +903,7 @@ def execute_build_unit(
 
     smoke: dict[str, Any] | None = None
     if unit["kind"] == "leaf":
-        runner.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--platform",
-                unit["platform"],
-                "--entrypoint",
-                "/bin/true",
-                target_immutable_ref,
-            ]
-        )
+        smoke_leaf_image(runner, unit["platform"], target_immutable_ref)
         smoke = {
             "platform": unit["platform"],
             "entrypoint": "/bin/true",

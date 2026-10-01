@@ -90,9 +90,13 @@ the build. Toolbox constraint bytes are checked the same way.
 Each native unit fetches only the projects required by its selected target.
 The fetch excludes remote tags and exposes only the frozen commit plus its
 recorded release tag. The hash-locked PBR installation derives the exact
-package version from that closed graph. Tracked files and a matching
-`PKG-INFO` are then exported to a sorted, metadata-normalized local archive
-without `.git`; Kolla consumes the archive through `--locals-base`. Archive
+package version from that closed graph. Tracked files, a matching
+`PKG-INFO`, and an egg-info `SOURCES.txt` listing the tracked files are then
+exported to a sorted, metadata-normalized local archive without `.git`; Kolla
+consumes the archive through `--locals-base`. Without `.git`, PBR takes the
+package manifest from that `SOURCES.txt`, as it does for an upstream sdist;
+projects that declare only their top-level package ship their subpackages
+through it. Archive
 bytes are regenerated and compared before registry login.
 
 The matrix stores a base tag, not a digest. Plan generation resolves it exactly
@@ -155,7 +159,10 @@ Before evidence is accepted, the unit:
 7. verifies the pushed target descriptor, immutable digest, and native
    platform; and
 8. for a leaf, starts the immutable image with `/bin/true` as the overridden
-   entrypoint.
+   entrypoint, then resolves the module of every console script that the
+   Kolla venv installed from a local source directory. A package that installs
+   without its subpackages (for example `keystone-manage` without
+   `keystone.cmd`) fails the unit before evidence is written.
 
 After every planned unit succeeds, aggregation validates the exact closure and
 creates `native-amd64-<collection-execution-id>` and
