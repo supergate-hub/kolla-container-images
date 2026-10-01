@@ -169,8 +169,10 @@ class FakeRunner:
         remote_inspect_error: str = "not found",
         target_present: bool = False,
         unbuildable: tuple[str, ...] = (),
+        source_install_failure: bool = False,
     ) -> None:
         self.unit = unit
+        self.source_install_failure = source_install_failure
         self.bad_summary = bad_summary
         self.docker_hub_familiar_repo_digest = docker_hub_familiar_repo_digest
         self.repo_digest_override = repo_digest_override
@@ -222,6 +224,12 @@ class FakeRunner:
             )
         elif command[:3] == ["docker", "info", "--format"]:
             stdout = f"linux/{self.unit['runner_machine']}\n"
+        elif (
+            command[:2] == ["docker", "run"]
+            and BUILD_UNIT.SOURCE_INSTALL_CHECK in command
+            and self.source_install_failure
+        ):
+            raise subprocess.CalledProcessError(1, command)
         return SimpleNamespace(stdout=stdout, returncode=0)
 
     def run_monitored(self, argv, disk_sampler):
@@ -478,6 +486,84 @@ class BuildUnitTest(unittest.TestCase):
                 command for command in runner.commands if command[:2] == ["docker", "run"]
             )
             self.assertEqual(smoke_command[-1], evidence["immutable_ref"])
+            self.assertIn(
+                [
+                    "docker", "run", "--rm", "--platform", "linux/amd64",
+                    "--entrypoint", "/bin/sh", evidence["immutable_ref"],
+                    "-c", BUILD_UNIT.SOURCE_INSTALL_SHELL,
+                    "source-install-check", BUILD_UNIT.SOURCE_INSTALL_CHECK,
+                ],
+                runner.commands,
+            )
+
+    def test_leaf_with_a_broken_source_install_writes_no_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            _, unit, plan_path, evidence_dir = self.prepare_leaf(temp_path)
+            output = temp_path / "unit.json"
+            with self.assertRaises(subprocess.CalledProcessError):
+                BUILD_UNIT.execute_build_unit(
+                    plan_path,
+                    unit["id"],
+                    evidence_dir,
+                    output,
+                    runner=FakeRunner(unit, source_install_failure=True),
+                    disk_sampler=lambda: TEN_GIB,
+                    machine="x86_64",
+                )
+            self.assertFalse(output.exists())
+
+            completed = temp_path / "completed.json"
+            BUILD_UNIT.execute_build_unit(
+                plan_path, unit["id"], evidence_dir, completed,
+                runner=FakeRunner(unit), disk_sampler=lambda: TEN_GIB, machine="x86_64")
+            # A checkpoint from before the source-install gate cannot be reused
+            # once its image fails the gate.
+            with self.assertRaises(subprocess.CalledProcessError):
+                BUILD_UNIT.execute_build_unit(
+                    plan_path, unit["id"], evidence_dir, temp_path / "reused.json",
+                    runner=FakeRunner(unit, source_install_failure=True),
+                    disk_sampler=lambda: TEN_GIB, machine="x86_64",
+                    reuse_evidence=completed)
+            self.assertFalse((temp_path / "reused.json").exists())
+
+    def test_source_install_check_flags_missing_console_script_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            site = Path(temp_dir)
+            for name, files in (
+                ("broken", {"broken/__init__.py": ""}),
+                ("healthy", {"healthy/__init__.py": "", "healthy/cmd.py": ""}),
+            ):
+                for relative, content in files.items():
+                    (site / relative).parent.mkdir(parents=True, exist_ok=True)
+                    (site / relative).write_text(content, encoding="utf-8")
+                dist_info = site / f"{name}-1.0.dist-info"
+                dist_info.mkdir()
+                (dist_info / "METADATA").write_text(
+                    f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n",
+                    encoding="utf-8",
+                )
+                (dist_info / "entry_points.txt").write_text(
+                    f"[console_scripts]\n{name}-manage = {name}.cmd:main\n",
+                    encoding="utf-8",
+                )
+                (dist_info / "direct_url.json").write_text(
+                    json.dumps({"url": f"file:///{name}", "dir_info": {}}),
+                    encoding="utf-8",
+                )
+            result = subprocess.run(
+                [sys.executable, "-S", "-c", BUILD_UNIT.SOURCE_INSTALL_CHECK],
+                env={"PYTHONPATH": str(site)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(
+                "broken: broken-manage -> broken.cmd:main: module not found",
+                result.stderr,
+            )
+            self.assertNotIn("healthy", result.stderr)
 
     def test_base_unit_pulls_the_frozen_child_digest_before_nopull_build(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

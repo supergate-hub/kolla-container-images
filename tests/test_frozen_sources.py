@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from scripts.frozen_sources import (
+    _egg_info_directory,
     _pbr_project_version,
     _verify_requirements_constraints,
     FrozenSourceError,
@@ -503,6 +504,14 @@ class FrozenProjectMirrorTest(unittest.TestCase):
                     "Name: demo-service\n"
                     "Version: 1.2.4.dev1\n",
                 )
+                sources = archive.extractfile(
+                    f"{archive_root}/demo_service.egg-info/SOURCES.txt"
+                )
+                self.assertIsNotNone(sources)
+                self.assertEqual(
+                    sources.read().decode("utf-8"),
+                    "README.rst\nbin/service\nsetup.cfg",
+                )
                 modes = {member.name: member.mode for member in members}
                 self.assertEqual(modes[f"{archive_root}/bin/service"], 0o755)
                 self.assertTrue(all(member.mtime == 0 for member in members))
@@ -511,6 +520,7 @@ class FrozenProjectMirrorTest(unittest.TestCase):
             for label, old, new in (
                 ("tracked source", b"snapshot\n", b"tampered\n"),
                 ("PKG-INFO", b"1.2.4.dev1", b"9.9.9.dev9"),
+                ("SOURCES.txt", b"README.rst\nbin/service", b"README.rst\nbin/servicX"),
             ):
                 with self.subTest(label=label), mock.patch(
                     "scripts.frozen_sources._pbr_project_version",
@@ -528,6 +538,58 @@ class FrozenProjectMirrorTest(unittest.TestCase):
                             python_executable=Path("/verified/python"),
                         )
                     archive_one.write_bytes(original_bytes)
+
+    def test_pbr_manifest_uses_setuptools_egg_info_name_and_fails_closed(self) -> None:
+        self.assertEqual(_egg_info_directory("keystone"), "keystone.egg-info")
+        self.assertEqual(
+            _egg_info_directory("networking-generic-switch"),
+            "networking_generic_switch.egg-info",
+        )
+        self.assertEqual(_egg_info_directory("oslo.config"), "oslo.config.egg-info")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            origin = root / "origin"
+            origin.mkdir()
+            self.git(origin, "init", "--quiet")
+            self.git(origin, "config", "user.name", "Frozen Source Test")
+            self.git(
+                origin,
+                "config",
+                "user.email",
+                "frozen-source@example.invalid",
+            )
+            (origin / "setup.cfg").write_text(
+                "[metadata]\nname = demo-service\n",
+                encoding="utf-8",
+            )
+            stale = origin / "demo_service.egg-info" / "top_level.txt"
+            stale.parent.mkdir()
+            stale.write_text("demo\n", encoding="utf-8")
+            self.git(origin, "add", ".")
+            self.git(origin, "commit", "--quiet", "-m", "release")
+            build_commit = self.git(origin, "rev-parse", "HEAD")
+            project = {
+                "repository": str(origin),
+                "build_commit": build_commit,
+                "nearest_release": {"version": "1.0.0", "commit": build_commit},
+            }
+            mirror = root / "mirror.git"
+            prepare_project_mirror(mirror, project)
+            with mock.patch(
+                "scripts.frozen_sources._pbr_project_version",
+                return_value="1.0.0",
+            ), self.assertRaisesRegex(
+                FrozenSourceError, "already contains demo_service.egg-info"
+            ):
+                prepare_project_archive(
+                    mirror,
+                    root / "archive.tar",
+                    project,
+                    archive_root=f"demo-service-archive-{build_commit}",
+                    python_executable=Path("/verified/python"),
+                )
+            self.assertFalse((root / "archive.tar").exists())
 
     def test_unit_archives_preserve_each_kolla_section_clone_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
