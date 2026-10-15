@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "configuration_digest": "sha256:8b71b8e495f8b680d2777a7c052635f81a98292d3760f34b2919b524cd13146d",
+  "configuration_digest": "sha256:e0e94d1e2e56c1a9c2867676f77dc431ed1391f5339d1f7be930df3fec332625",
   "registry": "ghcr.io",
   "owner": "supergate-hub",
   "repository": "kolla-container-images",
