@@ -120,7 +120,7 @@ EXPECTED_TOOLCHAINS = {
 EXPECTED_RELEASES = {
     "2025.1": {"series": "epoxy", "source_set": "epoxy-20260813-r1"},
     "2025.2": {"series": "flamingo", "source_set": "flamingo-20260813-r1"},
-    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20260930-r1"},
+    "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20261015-r1"},
 }
 EXPECTED_BASES = {
     "rocky-9.8": {
@@ -167,10 +167,10 @@ DEPLOYMENT_EXPECTED_COUNTS = {
     "2025.1-ubuntu-24.04-20.5.0": 64,
     "2025.2-rocky-10.2-21.1.0": 63,
     "2025.2-ubuntu-24.04-21.1.0": 64,
-    "2026.1-rocky-10.2-22.0.0": 65,
-    "2026.1-ubuntu-24.04-22.0.0": 66,
-    "2026.1-rocky-10.2-22.2.0": 65,
-    "2026.1-ubuntu-24.04-22.2.0": 66,
+    "2026.1-rocky-10.2-22.0.0": 71,
+    "2026.1-ubuntu-24.04-22.0.0": 72,
+    "2026.1-rocky-10.2-22.2.0": 71,
+    "2026.1-ubuntu-24.04-22.2.0": 72,
 }
 REQUIRED_CINDER = {
     "cinder-api",
@@ -210,9 +210,16 @@ NEW_2026_EXPORTERS = {
     "prometheus-valkey-exporter",
 }
 EXCLUDED_DEPLOYMENT_LEAVES = {"etcd", "multipathd", "redis", "redis-sentinel"}
+DESIGNATE_2026_LEAVES = {
+    "designate-api",
+    "designate-backend-bind9",
+    "designate-central",
+    "designate-mdns",
+    "designate-producer",
+    "designate-worker",
+}
 EXCLUDED_DEPLOYMENT_PREFIXES = (
     "ceph-",
-    "designate-",
     "swift-",
     "ironic-",
     "redis-",
@@ -677,6 +684,14 @@ class ConfigValidationTest(unittest.TestCase):
                 )
                 if stream["release"] != "2026.1":
                     self.assertTrue(NEW_2026_EXPORTERS.isdisjoint(image_names))
+                self.assertEqual(
+                    DESIGNATE_2026_LEAVES <= image_names,
+                    stream["release"] == "2026.1",
+                )
+                if stream["release"] != "2026.1":
+                    self.assertFalse(
+                        any(image.startswith("designate-") for image in image_names)
+                    )
                 self.assertTrue(EXCLUDED_DEPLOYMENT_LEAVES.isdisjoint(image_names))
                 self.assertFalse(
                     any(
@@ -976,13 +991,13 @@ class ConfigValidationTest(unittest.TestCase):
         image = next(
             image for image in profile["images"] if image["name"] == "cinder-api"
         )
-        image["name"] = "designate-api"
-        image["kolla_ansible_variables"] = ["designate_api_image_full"]
+        image["name"] = "swift-proxy-server"
+        image["kolla_ansible_variables"] = ["swift_proxy_server_image_full"]
         group = next(
             group for group in profile["build_groups"] if group["name"] == "cinder"
         )
         group["images"] = [
-            "designate-api" if name == "cinder-api" else name
+            "swift-proxy-server" if name == "cinder-api" else name
             for name in group["images"]
         ]
 

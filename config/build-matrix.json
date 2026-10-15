@@ -19,7 +19,7 @@
     },
     "2026.1": {
       "series": "gazpacho",
-      "source_set": "gazpacho-20260930-r1"
+      "source_set": "gazpacho-20261015-r1"
     }
   },
   "toolchains": {

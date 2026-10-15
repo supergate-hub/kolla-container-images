@@ -19,10 +19,10 @@ EXPECTED_COUNTS = {
     "2025.1-ubuntu-24.04-20.5.0": 64,
     "2025.2-rocky-10.2-21.1.0": 63,
     "2025.2-ubuntu-24.04-21.1.0": 64,
-    "2026.1-rocky-10.2-22.0.0": 65,
-    "2026.1-ubuntu-24.04-22.0.0": 66,
-    "2026.1-rocky-10.2-22.2.0": 65,
-    "2026.1-ubuntu-24.04-22.2.0": 66,
+    "2026.1-rocky-10.2-22.0.0": 71,
+    "2026.1-ubuntu-24.04-22.0.0": 72,
+    "2026.1-rocky-10.2-22.2.0": 71,
+    "2026.1-ubuntu-24.04-22.2.0": 72,
 }
 
 BASE_LEAVES = {
@@ -123,8 +123,16 @@ NEUTRON_ALIASES = [
     "neutron_periodic_worker_image_full",
     "neutron_ovn_maintenance_worker_image_full",
 ]
+DESIGNATE_2026_LEAVES = {
+    "designate-api",
+    "designate-backend-bind9",
+    "designate-central",
+    "designate-mdns",
+    "designate-producer",
+    "designate-worker",
+}
 EXCLUDED_LEAVES = {"etcd", "multipathd", "redis", "redis-sentinel"}
-EXCLUDED_FAMILY_PREFIXES = ("ceph-", "designate-", "swift-", "ironic-")
+EXCLUDED_FAMILY_PREFIXES = ("ceph-", "swift-", "ironic-")
 EXPECTED_OVN_IMAGE_ORDER = [
     "ovn-controller",
     "ovn-nb-db-server",
@@ -270,7 +278,7 @@ class DeploymentProfileTest(unittest.TestCase):
                 if stream["distro"] == "ubuntu":
                     expected_names |= {"tgtd"}
                 if stream["release"] == "2026.1":
-                    expected_names |= NEW_2026_EXPORTERS
+                    expected_names |= NEW_2026_EXPORTERS | DESIGNATE_2026_LEAVES
 
                 self.assertEqual(len(image_names), expected_count)
                 self.assertEqual(image_names, expected_names)
@@ -292,6 +300,15 @@ class DeploymentProfileTest(unittest.TestCase):
                 )
                 if stream["release"] != "2026.1":
                     self.assertTrue(NEW_2026_EXPORTERS.isdisjoint(image_names))
+
+                self.assertEqual(
+                    DESIGNATE_2026_LEAVES <= image_names,
+                    stream["release"] == "2026.1",
+                )
+                if stream["release"] != "2026.1":
+                    self.assertFalse(
+                        any(image.startswith("designate-") for image in image_names)
+                    )
 
                 self.assertTrue(EXCLUDED_LEAVES.isdisjoint(image_names))
                 self.assertFalse(

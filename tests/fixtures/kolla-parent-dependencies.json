@@ -312,7 +312,8 @@
           "prometheus-base",
           "valkey-base",
           "cinder-base",
-          "manila-base"
+          "manila-base",
+          "designate-base"
         ]
       }
     },
@@ -350,7 +351,8 @@
           "prometheus-base",
           "valkey-base",
           "cinder-base",
-          "manila-base"
+          "manila-base",
+          "designate-base"
         ]
       }
     },
@@ -388,7 +390,8 @@
           "prometheus-base",
           "valkey-base",
           "cinder-base",
-          "manila-base"
+          "manila-base",
+          "designate-base"
         ]
       }
     },
@@ -426,7 +429,8 @@
           "prometheus-base",
           "valkey-base",
           "cinder-base",
-          "manila-base"
+          "manila-base",
+          "designate-base"
         ]
       }
     }
