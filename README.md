@@ -66,15 +66,18 @@ The aggregate `main` catalog contains exactly these eleven active streams:
 | `2025.1-ubuntu-24.04-20.5.0` | Kolla / Kolla-Ansible `20.5.0` | Ubuntu `24.04` | 64 |
 | `2025.2-rocky-10.2-21.1.0` | Kolla / Kolla-Ansible `21.1.0` | Rocky `10.2` | 63 |
 | `2025.2-ubuntu-24.04-21.1.0` | Kolla / Kolla-Ansible `21.1.0` | Ubuntu `24.04` | 64 |
-| `2026.1-rocky-10.2-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 65 |
-| `2026.1-ubuntu-24.04-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 66 |
-| `2026.1-rocky-10.2-22.2.0` | Kolla / Kolla-Ansible `22.2.0` | Rocky `10.2` | 65 |
-| `2026.1-ubuntu-24.04-22.2.0` | Kolla / Kolla-Ansible `22.2.0` | Ubuntu `24.04` | 66 |
+| `2026.1-rocky-10.2-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Rocky `10.2` | 71 |
+| `2026.1-ubuntu-24.04-22.0.0` | Kolla / Kolla-Ansible `22.0.0` | Ubuntu `24.04` | 72 |
+| `2026.1-rocky-10.2-22.2.0` | Kolla / Kolla-Ansible `22.2.0` | Rocky `10.2` | 71 |
+| `2026.1-ubuntu-24.04-22.2.0` | Kolla / Kolla-Ansible `22.2.0` | Ubuntu `24.04` | 72 |
 
 The `core` profile resolves to 18 leaves for every stream. It is a strict
 subset of `deployment`: legacy ML2 agents (`neutron-dhcp-agent`,
 `neutron-l3-agent`, and `neutron-openvswitch-agent`) are excluded because the
-reviewed deployment uses OVN. The two 2025.1
+reviewed deployment uses OVN. On 2026.1, `deployment` also includes the six
+Designate leaves Kolla-Ansible starts with its default BIND 9 backend
+(`designate-api`, `-backend-bind9`, `-central`, `-mdns`, `-producer`, and
+`-worker`); earlier releases still exclude Designate. The two 2025.1
 Rocky 10.2 streams demonstrate why a release cannot own only one toolchain:
 20.4.0 and 20.5.0 coexist without overwriting each other. When Rocky 10.3 is
 needed, add a new `rocky-10.3` base and new streams; do not mutate the 10.2
@@ -117,7 +120,7 @@ Kolla-Ansible pins, the pinned `sources.py` digest, and the normalized source
 closure digest. Stream resolution rejects a toolchain that is absent or differs
 from this record, so adding a toolchain requires a new source-set revision.
 
-The active 2026.1 source-set, [gazpacho-20260930-r1](config/openstack-sources/gazpacho-20260930-r1.json), pins the September 30 service and requirements snapshot from `stable/2026.1` for both 22.0.0 and 22.2.0 toolchains. Because source-sets are selected per release, future builds of either toolchain use this snapshot. The [August snapshot](config/openstack-sources/gazpacho-20260813-r1.json) and previously published revision images and locks retain their original provenance.
+The active 2026.1 source-set, [gazpacho-20261015-r1](config/openstack-sources/gazpacho-20261015-r1.json), pins the October 15 service and requirements snapshot from `stable/2026.1` for both 22.0.0 and 22.2.0 toolchains and adds `openstack/designate` for the Designate leaves. Because source-sets are selected per release, future builds of either toolchain use this snapshot. The [August](config/openstack-sources/gazpacho-20260813-r1.json) and [September](config/openstack-sources/gazpacho-20260930-r1.json) snapshots and previously published revision images and locks retain their original provenance.
 
 Validation and publish planning also check out the matrix-pinned
 `openstack/releases` commit and compare every Kolla/Kolla-Ansible version and

@@ -190,6 +190,12 @@ EXPECTED_DEPLOYMENT_COMMON_IMAGES = {
     "valkey-server",
 }
 EXPECTED_2026_DEPLOYMENT_IMAGES = {
+    "designate-api",
+    "designate-backend-bind9",
+    "designate-central",
+    "designate-mdns",
+    "designate-producer",
+    "designate-worker",
     "prometheus-openstack-network-exporter",
     "prometheus-valkey-exporter",
 }
@@ -969,6 +975,8 @@ def validate_resolved_policy(
             "mariadb-base",
             *EXPECTED_DEPLOYMENT_PARENTS[11:],
         ]
+    elif profile_name == "deployment" and stream["release"] == "2026.1":
+        expected_parents = [*EXPECTED_DEPLOYMENT_PARENTS, "designate-base"]
     actual_parents = resolved_parent_sequence(build_groups, actual_names)
     if actual_parents != expected_parents:
         errors.append(

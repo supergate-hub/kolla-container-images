@@ -328,6 +328,28 @@
                 "manila-scheduler",
                 "manila-share"
             ]
+        },
+        {
+            "name": "designate",
+            "parent": "designate-base",
+            "parents": [
+                "base",
+                "openstack-base",
+                "designate-base"
+            ],
+            "images": [
+                "designate-api",
+                "designate-backend-bind9",
+                "designate-central",
+                "designate-mdns",
+                "designate-producer",
+                "designate-worker"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
         }
     ],
     "images": [
@@ -764,6 +786,72 @@
             "name": "prometheus-valkey-exporter",
             "kolla_ansible_variables": [
                 "prometheus_valkey_exporter_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "designate-api",
+            "kolla_ansible_variables": [
+                "designate_api_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "designate-backend-bind9",
+            "kolla_ansible_variables": [
+                "designate_backend_bind9_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "designate-central",
+            "kolla_ansible_variables": [
+                "designate_central_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "designate-mdns",
+            "kolla_ansible_variables": [
+                "designate_mdns_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "designate-producer",
+            "kolla_ansible_variables": [
+                "designate_producer_image_full"
+            ],
+            "applies_to": {
+                "releases": [
+                    "2026.1"
+                ]
+            }
+        },
+        {
+            "name": "designate-worker",
+            "kolla_ansible_variables": [
+                "designate_worker_image_full"
             ],
             "applies_to": {
                 "releases": [
