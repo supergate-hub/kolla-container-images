@@ -342,6 +342,73 @@ class ImageCatalogTest(unittest.TestCase):
         )
         self.assertEqual(sum(url.startswith("https://ghcr.io/token?") for url in requested), 1)
 
+    def test_ghcr_client_follows_every_tag_page(self) -> None:
+        requested: list[str] = []
+        repository = "supergate-hub/kolla-container-images/keystone"
+        next_link = (
+            f'</v2/{repository}/tags/list?last=page-one-last&n=0>; rel="next"'
+        )
+
+        class Response:
+            def __init__(self, body: bytes, *, headers: dict[str, str] | None = None):
+                self.body = body
+                self.headers = headers or {}
+
+            def read(self) -> bytes:
+                return self.body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                return None
+
+        def opener(request, *, timeout: int):
+            requested.append(request.full_url)
+            if request.full_url.startswith("https://ghcr.io/token?"):
+                return Response(b'{"token":"catalog-token"}')
+            if request.full_url.endswith("/tags/list"):
+                return Response(
+                    json.dumps({"tags": ["page-one-last"]}).encode("utf-8"),
+                    headers={"Link": next_link},
+                )
+            if request.full_url.endswith("/tags/list?last=page-one-last&n=1000"):
+                return Response(json.dumps({"tags": [TAG]}).encode("utf-8"))
+            raise AssertionError(f"unexpected registry request: {request.full_url}")
+
+        client = self.generator.GhcrRegistryClient(opener=opener)
+
+        self.assertEqual(client.list_tags(repository), {"page-one-last", TAG})
+        self.assertEqual(sum("/tags/list" in url for url in requested), 2)
+
+    def test_ghcr_client_rejects_a_repeating_tag_page_cursor(self) -> None:
+        repository = "supergate-hub/kolla-container-images/keystone"
+        next_link = f'</v2/{repository}/tags/list?last=same&n=0>; rel="next"'
+
+        class Response:
+            def __init__(self, body: bytes, *, headers: dict[str, str] | None = None):
+                self.body = body
+                self.headers = headers or {}
+
+            def read(self) -> bytes:
+                return self.body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback) -> None:
+                return None
+
+        def opener(request, *, timeout: int):
+            if request.full_url.startswith("https://ghcr.io/token?"):
+                return Response(b'{"token":"catalog-token"}')
+            return Response(b'{"tags":["same"]}', headers={"Link": next_link})
+
+        client = self.generator.GhcrRegistryClient(opener=opener)
+
+        with self.assertRaisesRegex(self.generator.CatalogError, "pagination repeats"):
+            client.list_tags(repository)
+
     def test_cli_writes_a_static_catalog_json(self) -> None:
         class EmptyRegistry:
             def list_tags(self, repository: str) -> set[str]:

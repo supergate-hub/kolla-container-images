@@ -15,7 +15,7 @@ import re
 import time
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 try:
@@ -41,6 +41,10 @@ INDEX_MEDIA_TYPES = {
 }
 ARCHITECTURES = ("amd64", "arm64")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+# GHCR returns at most 100 tags per page and points to the rest with an OCI
+# distribution `Link: <...?last=...>; rel="next"` header.
+NEXT_TAGS_LINK_RE = re.compile(r'<([^>]+)>\s*;\s*rel="?next"?')
+TAGS_PAGE_SIZE = 1000
 
 
 class CatalogError(ValueError):
@@ -75,6 +79,19 @@ class PackageClient(Protocol):
     def list_container_packages(self, owner: str) -> dict[str, Package]: ...
 
     def get_container_package(self, owner: str, name: str) -> Package | None: ...
+
+
+def _next_tags_cursor(link: str | None) -> str | None:
+    """Return the `last` cursor of a registry tag-list `rel="next"` link."""
+    if not link:
+        return None
+    match = NEXT_TAGS_LINK_RE.search(link)
+    if match is None:
+        return None
+    cursor = parse_qs(urlparse(match.group(1)).query).get("last")
+    if not cursor or not cursor[0]:
+        raise CatalogError("GHCR tag pagination link has no last cursor")
+    return cursor[0]
 
 
 class GhcrRegistryClient:
@@ -130,22 +147,35 @@ class GhcrRegistryClient:
         )
 
     def list_tags(self, repository: str) -> set[str]:
-        request = self._registry_request(
-            repository,
-            "tags/list",
-            accept="application/json",
-        )
-        raw, _ = self._request(request, subject=f"tags for {repository}")
-        try:
-            document = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise CatalogError("GHCR tags response must be JSON") from error
-        if not isinstance(document, dict):
-            raise CatalogError("GHCR tags response must be an object")
-        tags = document.get("tags", [])
-        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
-            raise CatalogError("GHCR tags response must contain a string tag list")
-        return set(tags)
+        tags: set[str] = set()
+        path = "tags/list"
+        cursors: set[str] = set()
+        while True:
+            request = self._registry_request(
+                repository,
+                path,
+                accept="application/json",
+            )
+            raw, headers = self._request(request, subject=f"tags for {repository}")
+            try:
+                document = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise CatalogError("GHCR tags response must be JSON") from error
+            if not isinstance(document, dict):
+                raise CatalogError("GHCR tags response must be an object")
+            page = document.get("tags", [])
+            if page is None:
+                page = []
+            if not isinstance(page, list) or not all(isinstance(tag, str) for tag in page):
+                raise CatalogError("GHCR tags response must contain a string tag list")
+            tags.update(page)
+            cursor = _next_tags_cursor(headers.get("Link") if headers else None)
+            if cursor is None:
+                return tags
+            if cursor in cursors:
+                raise CatalogError(f"GHCR tag pagination repeats for {repository}")
+            cursors.add(cursor)
+            path = "tags/list?" + urlencode({"last": cursor, "n": TAGS_PAGE_SIZE})
 
     def fetch_manifest(self, repository: str, tag: str) -> RegistryManifest:
         request = self._registry_request(
