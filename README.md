@@ -122,6 +122,8 @@ from this record, so adding a toolchain requires a new source-set revision.
 
 The active 2026.1 source-set, [gazpacho-20261015-r1](config/openstack-sources/gazpacho-20261015-r1.json), pins the October 15 service and requirements snapshot from `stable/2026.1` for both 22.0.0 and 22.2.0 toolchains and adds `openstack/designate` for the Designate leaves. Because source-sets are selected per release, future builds of either toolchain use this snapshot. The [August](config/openstack-sources/gazpacho-20260813-r1.json) and [September](config/openstack-sources/gazpacho-20260930-r1.json) snapshots and previously published revision images and locks retain their original provenance.
 
+The active 2025.1 and 2025.2 source-sets, [epoxy-20261015-r1](config/openstack-sources/epoxy-20261015-r1.json) and [flamingo-20261015-r1](config/openstack-sources/flamingo-20261015-r1.json), take the same October 15 snapshot. Each unit proves every recorded `nearest_release` against the single matrix-pinned `openstack/releases` commit, so moving that pin requires a new revision for every release whose latest stable release changed; otherwise that release's units fail before archiving sources.
+
 Validation and publish planning also check out the matrix-pinned
 `openstack/releases` commit and compare every Kolla/Kolla-Ansible version and
 commit against its release deliverables before environment approval.

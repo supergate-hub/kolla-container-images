@@ -118,8 +118,8 @@ EXPECTED_TOOLCHAINS = {
     },
 }
 EXPECTED_RELEASES = {
-    "2025.1": {"series": "epoxy", "source_set": "epoxy-20260813-r1"},
-    "2025.2": {"series": "flamingo", "source_set": "flamingo-20260813-r1"},
+    "2025.1": {"series": "epoxy", "source_set": "epoxy-20261015-r1"},
+    "2025.2": {"series": "flamingo", "source_set": "flamingo-20261015-r1"},
     "2026.1": {"series": "gazpacho", "source_set": "gazpacho-20261015-r1"},
 }
 EXPECTED_BASES = {
@@ -332,7 +332,7 @@ class ConfigValidationTest(unittest.TestCase):
             "releases": {
                 "2025.1": {
                     "series": "epoxy",
-                    "source_set": "epoxy-20260813-r1",
+                    "source_set": EXPECTED_RELEASES["2025.1"]["source_set"],
                 }
             },
             "toolchains": {

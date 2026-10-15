@@ -252,11 +252,15 @@ class SourceSetLoadingTest(unittest.TestCase):
         catalog = {
             "epoxy-20260813-r1": ("2025.1", "epoxy", 36, 37),
             "flamingo-20260813-r1": ("2025.2", "flamingo", 36, 37),
+            "epoxy-20261015-r1": ("2025.1", "epoxy", 36, 37),
+            "flamingo-20261015-r1": ("2025.2", "flamingo", 36, 37),
             "gazpacho-20260813-r1": ("2026.1", "gazpacho", 35, 37),
             "gazpacho-20260930-r1": ("2026.1", "gazpacho", 35, 37),
             "gazpacho-20261015-r1": ("2026.1", "gazpacho", 36, 38),
         }
         historical_toolchains = {
+            "epoxy-20260813-r1": {"20.4.0", "20.5.0"},
+            "flamingo-20260813-r1": {"21.1.0"},
             "gazpacho-20260813-r1": {"22.0.0"},
             "gazpacho-20260930-r1": {"22.0.0", "22.2.0"},
         }
