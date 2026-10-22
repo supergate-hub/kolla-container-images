@@ -171,8 +171,8 @@ source-set provenance; any source/config/base/child digest substitution fails.
 
 Plan, unit/native, and terminal success artifacts contain JSON/YAML evidence,
 not Docker layers, image tar files, Docker directories, pip caches, or build
-caches. Successful evidence is retained seven days; failure diagnostics are
-retained one day. A failed unit uploads its logs as the matching
+caches. Plan and unit/native evidence are retained seven days and the terminal
+publish artifact 90 days; failure diagnostics are retained one day. A failed unit uploads its logs as the matching
 `unit-diagnostics-<unit-id>-<execution-id>` artifact. Job-scoped
 `DOCKER_CONFIG` state is removed in cleanup.
 

@@ -1043,7 +1043,7 @@ jobs:
             artifacts/kolla-ansible-image-lock-${{ inputs.stream }}.yml
             artifacts/manifests/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
 
       - name: Update and verify semantic aliases
         run: |

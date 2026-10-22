@@ -187,7 +187,9 @@ A different candidate, changed digest or invalid checkpoint fails closed.
 
 Use **Re-run all jobs** for a fresh plan and new candidate ID/revision, including
 when required plan/evidence artifacts have expired or been deleted. Plan and
-unit evidence are retained seven days. Automatic reuse applies only within the
+unit evidence are retained seven days. The terminal `publish-<stream>` artifact
+(summary, lock and manifests) is retained 90 days, the repository maximum, so
+the downstream copy does not race a one-week expiry. Automatic reuse applies only within the
 same workflow run and original plan; it is not a cross-run image cache. A pushed
 image without a completed evidence artifact is not accepted as a checkpoint.
 
@@ -388,7 +390,8 @@ run.
 ## Handoff and secret boundary
 
 The validated publish summary and generic candidate lock are the terminal
-outputs. `openstack-infra-ops` copies and validates the lock, chooses an
+outputs, kept as a workflow artifact for 90 days. `openstack-infra-ops` copies
+the lock into its own history before then, validates it, chooses an
 environment, creates environment-specific locks or pointers, runs matching-OS
 deployment smoke, and owns promotion, deployment, and rollback.
 
