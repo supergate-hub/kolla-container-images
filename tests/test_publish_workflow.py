@@ -424,7 +424,10 @@ class PublishWorkflowTest(unittest.TestCase):
             "${{ github.run_id }}-${{ github.run_attempt }}",
             self.build_unit,
         )
-        self.assertEqual(self.publish.count("retention-days: 7"), 4)
+        self.assertEqual(self.publish.count("retention-days: 7"), 3)
+        handoff = yaml_block(self.publish, "      - name: Upload publish artifacts")
+        self.assertIn("retention-days: 90", handoff)
+        self.assertEqual(self.publish.count("retention-days: 90"), 1)
         self.assertEqual(self.build_unit.count("retention-days: 7"), 1)
         self.assertEqual(self.publish.count("retention-days: 1"), 0)
         self.assertEqual(self.build_unit.count("retention-days: 1"), 1)
