@@ -1,0 +1,59 @@
+name: Check Kolla-Ansible toolchain image
+run-name: Toolchain check · ${{ github.head_ref || github.ref_name }}
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - toolchain/**
+      - scripts/toolchain_image.py
+      - scripts/base_resolution.py
+      - .github/workflows/toolchain.yml
+      - .github/workflows/toolchain-check.yml
+
+concurrency:
+  group: toolchain-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: Build and smoke-check every toolchain (amd64, not pushed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build and smoke-check each toolchain
+        run: |
+          set -euo pipefail
+          python3 scripts/toolchain_image.py validate
+          for directory in toolchain/*/; do
+            toolchain="$(basename "$directory")"
+            plan="artifacts/plan-$toolchain.json"
+            python3 scripts/toolchain_image.py plan \
+              --toolchain "$toolchain" \
+              --candidate-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+              --output "$plan"
+            base_ref="$(python3 scripts/toolchain_image.py native --plan "$plan" --arch amd64 | sed -n 's/^base_ref=//p')"
+            docker buildx build \
+              --platform linux/amd64 \
+              --provenance=false \
+              --sbom=false \
+              --build-arg "BASE_IMAGE=$base_ref" \
+              --build-arg "TOOLCHAIN=$toolchain" \
+              --build-arg "SOURCE_COMMIT=$GITHUB_SHA" \
+              --tag "kolla-ansible-check:$toolchain" \
+              --load \
+              toolchain
+            python3 scripts/toolchain_image.py smoke --plan "$plan" --image "kolla-ansible-check:$toolchain"
+          done

@@ -21,6 +21,13 @@ selection, environment-specific locks and pointers, deployment validation,
 promotion, deployment orchestration, rollback, Ceph, credentials, and
 site-specific configuration. None of that state or automation belongs here.
 
+The same boundary covers the Kolla-Ansible toolchain image
+(`ghcr.io/supergate-hub/kolla-container-images/kolla-ansible`). It packages one
+exact Kolla-Ansible release with its hashed Python environment and pinned
+Ansible collections, so the consumer runs that release as a container. This
+repository builds it, checks its versions and hands off a toolchain lock; it
+never runs the tool against hosts. See [the toolchain image](docs/toolchain.md).
+
 ## Branch and configuration model
 
 `config/build-matrix.json` uses schema v4. Protected `main` is the single
@@ -245,7 +252,7 @@ also requires protected `main` and the `ghcr-publish` environment approval. See
 [docs/publish.md](docs/publish.md) for the operator contract and
 [docs/build-readiness.md](docs/build-readiness.md) for native evidence gates.
 
-The repository keeps four workflows:
+The repository keeps six workflows:
 
 | Workflow | Purpose |
 | --- | --- |
@@ -253,6 +260,8 @@ The repository keeps four workflows:
 | `publish.yml` | Manually plan or publish images, with recovery from verified completed units |
 | `build-unit.yml` | Reusable native image build called by the publish workflow |
 | `update-catalog.yml` | Refresh the Pages catalog after configuration changes or successful publication, or on manual request |
+| `toolchain.yml` | Manually plan or publish the Kolla-Ansible toolchain image and its lock ([toolchain image](docs/toolchain.md)) |
+| `toolchain-check.yml` | Build and smoke-check the toolchain image, unpublished, on pull requests that change it |
 
 Pages serves the `gh-pages` branch. The catalog workflow updates `catalog.json`
 and `catalog-data.js`; GitHub's Pages deployment publishes that snapshot. A
@@ -281,6 +290,10 @@ scripts/generate-lock.py              Generic candidate-lock schema-v3 renderer
 .github/workflows/publish.yml         Dispatch-only plan/publish workflow
 .github/workflows/build-unit.yml      Reusable one-target native build job
 .github/workflows/update-catalog.yml  Configuration, publish, and manual catalog refresh
+toolchain/                            Kolla-Ansible toolchain Dockerfile and per-version pins
+scripts/toolchain_image.py            Toolchain pin validation, plan, smoke check, and lock
+.github/workflows/toolchain.yml       Dispatch-only toolchain plan/publish workflow
+.github/workflows/toolchain-check.yml Unpublished toolchain build check on pull requests
 ```
 
 ## Local validation
@@ -293,6 +306,7 @@ python3 scripts/plan-publish.py \
   --profile deployment \
   --candidate-id local-dry-run \
   --dry-run
+python3 scripts/toolchain_image.py validate
 python3 -m unittest discover -s tests -v
 ```
 

@@ -265,6 +265,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
                     "/.github/workflows/ @supergate-hsyun @supergate-jhbyun",
                     "/scripts/           @supergate-hsyun @supergate-jhbyun",
                     "/config/            @supergate-hsyun @supergate-jhbyun",
+                    "/toolchain/         @supergate-hsyun @supergate-jhbyun",
                     "",
                 )
             ),

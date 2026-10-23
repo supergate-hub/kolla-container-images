@@ -3,3 +3,7 @@ paths:
     ignore:
       # GitHub supports concurrency.queue; actionlint support is still pending.
       - 'unexpected key "queue" for "concurrency" section'
+  .github/workflows/toolchain.yml:
+    ignore:
+      # Same concurrency.queue setting as publish.yml.
+      - 'unexpected key "queue" for "concurrency" section'

@@ -1,0 +1,377 @@
+name: Publish Kolla-Ansible toolchain image
+run-name: Toolchain ${{ inputs.operation }} · ${{ github.ref_name }} · ${{ inputs.toolchain }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "plan: validate pins and render the plan only; publish: build and publish from main after environment approval"
+        required: true
+        type: choice
+        options:
+          - plan
+          - publish
+        default: plan
+      toolchain:
+        description: Kolla-Ansible toolchain with reviewed pins under toolchain/
+        required: true
+        type: choice
+        options:
+          # One entry per toolchain/<version>/; tests/test_toolchain_image.py checks the list.
+          - 22.2.0
+
+concurrency:
+  group: ${{ inputs.operation == 'publish' && format('kolla-toolchain-publish-{0}', inputs.toolchain) || format('kolla-toolchain-plan-{0}', github.run_id) }}
+  queue: max
+
+permissions:
+  contents: read
+
+jobs:
+  toolchain-plan:
+    name: Render toolchain plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      candidate_id: ${{ steps.plan.outputs.candidate_id }}
+
+    steps:
+      - name: Require repository-owned main invocation
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          CALLER_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REPOSITORY" != "supergate-hub/kolla-container-images" ]; then
+            echo "This toolchain workflow only accepts repository-owned dispatches." >&2
+            exit 1
+          fi
+          if [ "$CALLER_REF" != "refs/heads/main" ]; then
+            echo "This toolchain workflow may run only from the main branch." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Validate toolchain pins
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: python3 scripts/toolchain_image.py validate --toolchain "$TOOLCHAIN"
+
+      - name: Render frozen toolchain plan
+        id: plan
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: |
+          set -euo pipefail
+          candidate_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          python3 scripts/toolchain_image.py plan \
+            --toolchain "$TOOLCHAIN" \
+            --candidate-id "$candidate_id" \
+            --output artifacts/plan/toolchain-plan.json
+          printf 'candidate_id=%s\n' "$candidate_id" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Kolla-Ansible toolchain $TOOLCHAIN"
+            echo
+            echo "Candidate \`$candidate_id\`, revision \`$(python3 -c 'import json; print(json.load(open("artifacts/plan/toolchain-plan.json"))["revision_ref"])')\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload toolchain plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: toolchain-plan-${{ steps.plan.outputs.candidate_id }}
+          path: artifacts/plan/toolchain-plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+  authorize-toolchain:
+    name: Authorize toolchain publication
+    if: ${{ inputs.operation == 'publish' }}
+    needs: toolchain-plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ghcr-publish
+    permissions:
+      contents: read
+
+    steps:
+      - name: Require protected main
+        env:
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Toolchain publication requires the protected main branch." >&2
+            exit 1
+          fi
+
+  build-native:
+    name: Build ${{ matrix.arch }} toolchain image
+    if: ${{ inputs.operation == 'publish' }}
+    needs: [toolchain-plan, authorize-toolchain]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Require protected main
+        env:
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Toolchain publication requires the protected main branch." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download toolchain plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: toolchain-plan-${{ needs.toolchain-plan.outputs.candidate_id }}
+          path: artifacts/plan
+
+      - name: Read native build inputs
+        id: native
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: >-
+          python3 scripts/toolchain_image.py native
+          --plan artifacts/plan/toolchain-plan.json
+          --arch "$ARCH" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare ephemeral Docker client state
+        env:
+          DOCKER_CONFIG_SUFFIX: toolchain-${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/kolla-docker-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$DOCKER_CONFIG_SUFFIX"
+          case "$docker_config" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config path: $docker_config" >&2; exit 1 ;;
+          esac
+          rm -rf -- "$docker_config"
+          install -d -m 0700 "$docker_config"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          printf '%s' "$GITHUB_TOKEN" |
+          python3 scripts/network_retry.py --timeout 60 --stdin --
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Prove the revision tag is new
+        env:
+          ARCH_REF: ${{ steps.native.outputs.revision_arch_ref }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect --raw "$ARCH_REF" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing $ARCH_REF." >&2
+            exit 1
+          fi
+
+      - name: Build and push native image
+        env:
+          PLATFORM: ${{ steps.native.outputs.platform }}
+          BASE_REF: ${{ steps.native.outputs.base_ref }}
+          ARCH_REF: ${{ steps.native.outputs.revision_arch_ref }}
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: >-
+          docker buildx build
+          --platform "$PLATFORM"
+          --provenance=false
+          --sbom=false
+          --pull
+          --build-arg "BASE_IMAGE=$BASE_REF"
+          --build-arg "TOOLCHAIN=$TOOLCHAIN"
+          --build-arg "SOURCE_COMMIT=$GITHUB_SHA"
+          --metadata-file artifacts/build-metadata.json
+          --tag "$ARCH_REF"
+          --push
+          toolchain
+
+      - name: Smoke-check the pushed image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          repository="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["repository"])' artifacts/plan/toolchain-plan.json)"
+          digest="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' artifacts/build-metadata.json)"
+          image="$repository@$digest"
+          python3 scripts/network_retry.py --timeout 900 -- docker pull "$image"
+          python3 scripts/toolchain_image.py smoke \
+            --plan artifacts/plan/toolchain-plan.json \
+            --image "$image"
+          python3 scripts/toolchain_image.py evidence \
+            --plan artifacts/plan/toolchain-plan.json \
+            --arch "$ARCH" \
+            --metadata-file artifacts/build-metadata.json \
+            --output "artifacts/evidence/$ARCH.json"
+
+      - name: Upload native evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: toolchain-native-${{ matrix.arch }}-${{ needs.toolchain-plan.outputs.candidate_id }}
+          path: artifacts/evidence/${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove ephemeral Docker client state
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKER_CONFIG:-}" ]; then
+            case "$DOCKER_CONFIG" in
+              "$RUNNER_TEMP"/kolla-docker-*) rm -rf -- "$DOCKER_CONFIG" ;;
+              *) echo "Refusing unsafe Docker config cleanup: $DOCKER_CONFIG" >&2; exit 1 ;;
+            esac
+          fi
+
+  finalize-toolchain:
+    name: Publish manifest and toolchain lock
+    if: ${{ inputs.operation == 'publish' }}
+    needs: [toolchain-plan, build-native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Require protected main
+        env:
+          CALLER_REF: ${{ github.ref }}
+          CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          set -euo pipefail
+          if [ "$CALLER_REF" != "refs/heads/main" ] || [ "$CALLER_REF_PROTECTED" != "true" ]; then
+            echo "Toolchain publication requires the protected main branch." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download toolchain plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: toolchain-plan-${{ needs.toolchain-plan.outputs.candidate_id }}
+          path: artifacts/plan
+
+      - name: Download amd64 evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: toolchain-native-amd64-${{ needs.toolchain-plan.outputs.candidate_id }}
+          path: artifacts/evidence
+
+      - name: Download arm64 evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: toolchain-native-arm64-${{ needs.toolchain-plan.outputs.candidate_id }}
+          path: artifacts/evidence
+
+      - name: Prepare ephemeral Docker client state
+        env:
+          DOCKER_CONFIG_SUFFIX: toolchain-finalize
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/kolla-docker-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$DOCKER_CONFIG_SUFFIX"
+          case "$docker_config" in
+            "$RUNNER_TEMP"/kolla-docker-*) ;;
+            *) echo "Refusing unsafe Docker config path: $docker_config" >&2; exit 1 ;;
+          esac
+          rm -rf -- "$docker_config"
+          install -d -m 0700 "$docker_config"
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Log in to GHCR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          printf '%s' "$GITHUB_TOKEN" |
+          python3 scripts/network_retry.py --timeout 60 --stdin --
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Create the multi-architecture revision manifest
+        run: |
+          set -euo pipefail
+          read -r revision_ref amd64 arm64 < <(python3 - <<'PY'
+          import json
+          plan = json.load(open("artifacts/plan/toolchain-plan.json"))
+          refs = [json.load(open(f"artifacts/evidence/{arch}.json"))["immutable_ref"] for arch in ("amd64", "arm64")]
+          print(plan["revision_ref"], *refs)
+          PY
+          )
+          if docker buildx imagetools inspect --raw "$revision_ref" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing $revision_ref." >&2
+            exit 1
+          fi
+          python3 scripts/network_retry.py --timeout 300 -- \
+            docker buildx imagetools create \
+              --tag "$revision_ref" \
+              --metadata-file artifacts/manifest-metadata.json \
+              "$amd64" "$arm64"
+
+      - name: Write toolchain lock
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain }}
+        run: |
+          set -euo pipefail
+          python3 scripts/toolchain_image.py lock \
+            --plan artifacts/plan/toolchain-plan.json \
+            --evidence-dir artifacts/evidence \
+            --manifest-metadata-file artifacts/manifest-metadata.json \
+            --source-commit "$GITHUB_SHA" \
+            --raw-manifest-output "artifacts/handoff/kolla-ansible-$TOOLCHAIN-manifest.json" \
+            --output "artifacts/handoff/kolla-ansible-toolchain-lock-$TOOLCHAIN.json"
+          immutable_ref="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image"]["immutable_ref"])' \
+            "artifacts/handoff/kolla-ansible-toolchain-lock-$TOOLCHAIN.json")"
+          printf '### Kolla-Ansible toolchain %s published\n\n%s\n' "$TOOLCHAIN" "$immutable_ref" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload toolchain lock
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: toolchain-${{ inputs.toolchain }}-${{ needs.toolchain-plan.outputs.candidate_id }}
+          path: artifacts/handoff/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove ephemeral Docker client state
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKER_CONFIG:-}" ]; then
+            case "$DOCKER_CONFIG" in
+              "$RUNNER_TEMP"/kolla-docker-*) rm -rf -- "$DOCKER_CONFIG" ;;
+              *) echo "Refusing unsafe Docker config cleanup: $DOCKER_CONFIG" >&2; exit 1 ;;
+            esac
+          fi
